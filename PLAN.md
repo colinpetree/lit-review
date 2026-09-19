@@ -84,14 +84,17 @@ localhost.
   runtime).
 - **DB**: SQLite (stdlib `sqlite3`, or `SQLAlchemy`/`sqlmodel` if an ORM layer is
   wanted) — local file, zero config, matches local-only/no-networking requirement.
-  Persists runs, candidate papers, scores/rationale, and yes/no/maybe labels so past
-  results are always browsable.
+  Persists retrieved papers, datasets, analysis runs, scores/rationale, and (future)
+  yes/no/maybe labels so past results are always browsable. See Data model (Phase 3)
+  below for the actual table design.
 - **Cost tracking**: every LLM call (query expansion + scoring) logs provider, model,
-  input/output token counts, and computed $ cost against the run it belongs to. Not
-  necessarily shown anywhere in the main results UI — the user doesn't need to think
-  about it per search — but kept in the DB so a separate view (e.g. a simple "usage" page,
-  or just a direct query against the SQLite file) can show total spend over time. This is what makes the still-open per-search cost cap/estimate question
-  (see Open questions) answerable from real data instead of guessing.
+  input/output token counts, and computed $ cost against whichever dataset or analysis
+  run it belongs to (see `LlmCall` in Data model below). Not necessarily shown anywhere
+  in the main results UI — the user doesn't need to think about it per search — but kept
+  in the DB so a separate view (e.g. a simple "usage" page, or just a direct query against
+  the SQLite file) can show total spend over time. This is what makes the still-open
+  per-search cost cap/estimate question (see Open questions) answerable from real data
+  instead of guessing.
 - **API keys, general**: any credential the app needs — AI provider keys and the optional
   Semantic Scholar key — is entered once via the UI and persisted to a single encrypted
   local file (via `cryptography`'s Fernet, key file at 0600 perms), located with
@@ -118,6 +121,70 @@ localhost.
   question (Cohere's ranking vs. the LLM's own judgment could disagree on what's
   "relevant"). Not worth designing in before real usage data shows per-search LLM
   cost is actually a problem — revisit in Phase 4 if so.
+
+## Data model (Phase 3)
+
+Retrieval and LLM judgment are modeled as two separate, independently reusable things -
+not one row per "search" - so the same pulled-in pool of papers can be graded by several
+different prompts/models without re-querying the scholarly APIs, and so a paper's data is
+never duplicated just because it showed up in more than one dataset.
+
+- **`Paper`** (global, source-agnostic, one row per real paper): `id`, `source` (e.g.
+  `"openalex"` - `"pubmed"`/`"semantic_scholar"` later), `source_id`, `doi`, `title`,
+  `abstract`, `year`, `citation_count`, `venue`, `authors`, `url`, `is_review`,
+  `first_seen_at`. Dedup key is `doi` if present, else normalized `(title, year)` - the
+  same rule `openalex.dedupe()` already applies in-memory per-request, just enforced once
+  at insert time instead of every run. Once a paper is in this table it's "already loaded
+  and ready to go" for any future dataset that pulls it in again - no re-fetch, no re-dedupe.
+- **`Dataset`**: `id`, `name`, `verbose_query` (the free-text research question the user
+  typed), `expanded_queries` (the LLM's keyword breakdown that produced it, kept for
+  auditability), `created_at` (so the user can tell when a dataset might be stale - see
+  Open questions for what "stale" should actually do).
+- **`DatasetPaper`** (join table, dataset membership + soft delete): `dataset_id`,
+  `paper_id`, `added_at`, `excluded_at` (nullable - set when the user manually removes a
+  paper from the dataset; `NULL` means still in the dataset). Excluded papers are kept,
+  not hard-deleted, so removal is reversible and never breaks a past analysis run that
+  already scored them.
+- **`AnalysisRun`**: `id`, `dataset_id`, `grading_prompt` (the exact prompt text used to
+  judge relevance for this run - saved in full so the user can reuse or refine it later
+  and compare results), `ai_api`, `ai_model`, `status` (`running` / `completed`),
+  `created_at`, `completed_at`. Because `ai_api`/`ai_model` are stored per run, the same
+  dataset + grading prompt can be run against different providers/models and compared
+  side by side.
+- **`AnalysisResult`**: `id`, `run_id`, `paper_id`, `rationale`, `score`, `created_at`.
+  Rationale is generated *before* score (both in the LLM's structured-output schema field
+  order and in the prompt) so the model reasons before committing to a number, rather than
+  justifying a number it already picked. **Unique constraint on `(run_id, paper_id)`** -
+  this single constraint is what makes an interrupted run resumable (see below), and is
+  also what the final results view sorts by score (desc) and joins back to `Paper` to
+  display.
+- **`LlmCall`** (cost log - the concrete mechanism behind the Cost tracking bullet above):
+  `id`, `purpose` (`query_expansion` or `scoring`), `dataset_id` (set for expansion
+  calls), `run_id` (set for scoring calls), `ai_api`, `ai_model`, `input_tokens`,
+  `output_tokens`, `usd`, `created_at`. Total spend for a dataset or a run is just
+  `SUM(usd)` filtered by the right id.
+
+**Scoring in resumable chunks**: candidates are scored in batches (the same
+`SCORE_CHUNK_SIZE`-style chunking already used in Phase 2, sized to control cost/latency
+without hitting output-token limits), and each chunk's `AnalysisResult` rows + its
+`LlmCall` row are written in one DB transaction immediately after that chunk's LLM call
+succeeds - not batched up and written all at once at the end. This means:
+
+1. If the run is interrupted (crash, app closed, network drop) partway through, only
+   fully-completed chunks exist in the DB - there's no half-written chunk to clean up,
+   because the insert only happens after the LLM call already returned successfully.
+2. "Resuming" a run isn't a special code path - it's re-running the same processing step.
+   Re-select dataset papers (`excluded_at IS NULL`) that have no `AnalysisResult` yet
+   under this `run_id` (a `LEFT JOIN ... WHERE AnalysisResult.id IS NULL`), chunk only the
+   remainder, and continue. When nothing's left unscored, mark the run `completed`.
+3. At the API level this is one endpoint (e.g. `POST /api/analysis-runs/<id>/process`)
+   that processes remaining chunks - calling it once does a full run, calling it again
+   after an interruption just picks up where it stopped.
+
+This setup is also what enables comparing different AI providers/models against each
+other: run the same dataset through multiple `AnalysisRun`s with different `ai_api`/
+`ai_model` (and optionally different grading prompts) and compare their `AnalysisResult`
+rankings side by side.
 
 ## Dependencies
 
@@ -150,7 +217,11 @@ Add LLM-based query expansion and relevance scoring on top of Phase 1's results.
 shortlist view with rationale.
 
 **Phase 3 — persistence + feedback loop**
-Save searches and labels to DB. Use labels to bias re-ranking and future query expansion.
+Persist retrieval (datasets of papers) and LLM judgment (analysis runs that grade a
+dataset against a prompt) as two separate, independently reusable models - see Data
+model (Phase 3) above for the full table design and the resumable-chunk-processing
+approach. Once that's in place, use yes/no/maybe labels to bias re-ranking and future
+query expansion.
 
 **Phase 4 (optional, later)**
 Semantic Scholar citation-graph exploration ("show me what cites/references this shortlisted
@@ -237,3 +308,10 @@ Target user has never used a command line or downloaded code from GitHub before,
 - Whether/how to surface a per-search cost estimate or cap in the main UI (the underlying
   data will exist either way — see Cost tracking above — so this is a UI/UX decision to
   make once real per-run cost numbers are in hand, not a data-modeling one).
+- What a "stale" `Dataset` should actually let the user do: just start a fresh dataset
+  (simplest, fine for Phase 3), or later support re-expanding/appending newly-published
+  results since `created_at` into the existing dataset instead of starting over (more
+  useful for the "periodically check a field for new publications" use case in Problem,
+  but adds real complexity - e.g. does an appended paper get retroactively scored by past
+  analysis runs?). Deliberately deferred until the app has been used enough to see what
+  "stale" actually feels like in practice, rather than guessing now.

@@ -93,11 +93,16 @@ localhost.
   or just a direct query against the SQLite file) can show total spend over time. This is what makes the still-open per-search cost cap/estimate question
   (see Open questions) answerable from real data instead of guessing.
 - **API keys, general**: any credential the app needs — AI provider keys and the optional
-  Semantic Scholar key — is entered once via the UI and persisted with `keyring` (OS
-  Credential Manager/Keychain/Secret Service), never written to SQLite or a plaintext file.
-  Semantic Scholar's key is optional (the API works unauthenticated at low volume); if
-  omitted, the app just runs retrieval against it at the lower unauthenticated rate limit
-  instead of blocking the feature.
+  Semantic Scholar key — is entered once via the UI and persisted to a single encrypted
+  local file (via `cryptography`'s Fernet, key file at 0600 perms), located with
+  `platformdirs`'s per-user config dir. Deliberately *not* the OS-native credential
+  manager (Windows Credential Manager/macOS Keychain/Secret Service): those differ enough
+  across platforms — Linux Secret Service in particular is often unavailable on headless/
+  minimal installs — that "same code, same behavior on every OS" wins over integrating
+  with each OS's native store. Never written to SQLite or in plaintext. Semantic Scholar's
+  key is optional (the API works unauthenticated at low volume); if omitted, the app just
+  runs retrieval against it at the lower unauthenticated rate limit instead of blocking
+  the feature.
 - **LLM**: user supplies their own API key at runtime (never bundled/hardcoded) and
   picks their provider from four supported options — Claude (`anthropic` SDK), OpenAI
   (`openai` SDK), Google Gemini (`google-genai` SDK), and Groq (OpenAI-compatible API,
@@ -123,7 +128,9 @@ localhost.
 - `openai` — OpenAI API SDK (also reused for Groq, which is OpenAI-API-compatible)
 - `google-genai` — Google Gemini API SDK
 - `sqlite3` (stdlib) — DB; add `sqlalchemy` only if the schema grows enough to want an ORM
-- `keyring` — OS-native secure storage for the user's AI provider API key
+- `cryptography` + `platformdirs` — cross-platform encrypted local-file storage for the
+  user's AI provider API key (deliberately not `keyring`/OS credential managers — see
+  Architecture)
 
 **Frontend (JS)**
 - `react` 18, `vite` — existing, familiar
@@ -218,10 +225,11 @@ Target user has never used a command line or downloaded code from GitHub before,
   Actions, downloaded from GitHub Releases — no command line or `git clone` required of
   the end user (see Distribution / packaging above).
 - **AI provider**: user's choice of Claude, OpenAI, Gemini, or Groq, using their own API
-  key, persisted via `keyring` (OS-native secure storage). Cohere Rerank considered and
-  deferred (see architecture section above).
+  key, persisted to a single cross-platform encrypted local file (see Architecture — not
+  the OS-native keyring/credential manager). Cohere Rerank considered and deferred (see
+  architecture section above).
 - **Semantic Scholar key**: supported (optional) so users can get higher rate limits;
-  stored via `keyring` like the AI provider keys, but the app still works without it at
+  stored the same way as the AI provider keys, but the app still works without it at
   the unauthenticated rate limit.
 
 ## Open questions to resolve before/while building

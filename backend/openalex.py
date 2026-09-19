@@ -82,3 +82,24 @@ def search_works(query, per_page=DEFAULT_PER_PAGE, from_year=None, to_year=None)
         ) from exc
 
     return [_work_to_result(work) for work in data.get("results", [])]
+
+
+def dedupe(results_lists):
+    """Merge several result lists (e.g. one per expanded query), deduplicating
+    by DOI first, then by normalized title+year - the same matching plan
+    calls for across sources (see PLAN.md's Core pipeline), kept here even
+    though every list currently comes from OpenAlex so it doesn't need
+    reworking when PubMed/Semantic Scholar are added."""
+    seen = set()
+    merged = []
+    for results in results_lists:
+        for result in results:
+            if result.get("doi"):
+                key = ("doi", result["doi"].lower())
+            else:
+                key = ("title", (result.get("title") or "").strip().lower(), result.get("year"))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(result)
+    return merged

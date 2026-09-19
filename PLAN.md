@@ -2,23 +2,28 @@
 
 ## Problem
 
-Literature review for a STEM PhD is slow: broad keyword
-searches return hundreds of loosely-relevant papers, and manually reading abstracts to find
-the handful that are actually novel/relevant is tedious. Goal: an app that takes a research
-question or topic, pulls a wide candidate set from real scholarly databases, and uses an LLM
-to filter/rank that set down to a small, high-yield shortlist — with reasoning attached, not
-a black-box score.
+Literature review for a STEM PhD is slow: broad keyword searches return hundreds of
+loosely-relevant papers, and manually reading abstracts to find the handful that are
+actually novel/relevant is tedious. Goal: an app that takes a research question or topic,
+pulls a wide candidate set from real scholarly databases, and uses an LLM to filter/rank
+that set down to a small, high-yield shortlist — with reasoning attached, not a black-box
+score. Also useful beyond active lit review: any researcher wanting to stay current on new
+publications in their field can run the same search periodically to surface recent
+additions.
 
 Non-goal: this is not a tool that lets an LLM "discover" papers from its own knowledge.
 Discovery must come from real API results; the LLM's job is judging relevance/novelty against
 those real abstracts, to avoid hallucinated citations.
 
-**Primary user**: a STEM graduate student this is being built for — the UX, setup,
-and packaging decisions throughout this plan are optimized for someone who has never used a
-command line or downloaded code from GitHub before. Secondary user: the maintainer, who will
-also use it occasionally and is comfortable with more technical setups, but isn't the one the
-zero-setup/no-terminal requirements are protecting. (Repo is planned for public release, so
-this plan uses gender-neutral language throughout regardless of the actual user's gender.)
+**Primary user**: any STEM graduate student or researcher doing literature review or
+tracking new publications in their field — the UX, setup, and packaging decisions throughout
+this plan are optimized for someone who has never used a command line or downloaded code
+from GitHub before. Test data/candidates span multiple fields on purpose, so the design
+can't assume one discipline's databases or vocabulary: engineering (physical sciences), biology, and health/medicine. Secondary user: the maintainer, who
+will also use it occasionally and is comfortable with more technical setups, but isn't the
+one the zero-setup/no-terminal requirements are protecting. (Repo is planned for public
+release, so this plan uses gender-neutral language throughout regardless of the actual
+user's gender.)
 
 ## Data sources
 
@@ -31,8 +36,11 @@ this plan uses gender-neutral language throughout regardless of the actual user'
   pipeline batch-queries it every run. Strong in STEM, has a built-in "recommendations"
   endpoint and citation-graph lookups (citations/references of a given paper) that OpenAlex
   also supports but S2's are convenient. Good cross-check / dedupe source.
-- **PubMed** — skip initially; only relevant if the research touches biology
-  (e.g. microbial biofuel production). Easy to add later via NCBI E-utilities if needed.
+- **PubMed** — needed given health/medicine and biology are target test fields, not just
+  an edge case; add via NCBI E-utilities. Free, no key required for low-volume use (an
+  NCBI API key raises rate limits, same pattern as Semantic Scholar's). Authoritative for
+  biomedical literature (MeSH terms, clinical studies) in a way OpenAlex/Semantic Scholar's
+  broader coverage doesn't guarantee.
 - **Web of Science / Scopus** — optional future addition, gated behind whether the primary
   user's institution has an API license (not just a browser subscription — those are separate
   entitlements). Worth one email to the library; don't block the build on this.

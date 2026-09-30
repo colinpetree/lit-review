@@ -86,6 +86,27 @@ CREATE TABLE IF NOT EXISTS analysis_result (
     UNIQUE (run_id, paper_id)
 );
 
+CREATE TABLE IF NOT EXISTS prompt (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    title_pending INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS prompt_example (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prompt_id INTEGER NOT NULL REFERENCES prompt(id),
+    paper_id INTEGER NOT NULL REFERENCES paper(id),
+    source_run_id INTEGER REFERENCES analysis_run(id),
+    score INTEGER NOT NULL,
+    rationale TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (prompt_id, paper_id)
+);
+
 CREATE TABLE IF NOT EXISTS llm_call (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     purpose TEXT NOT NULL,
@@ -103,6 +124,11 @@ CREATE TABLE IF NOT EXISTS llm_call (
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _placeholder_title(text):
+    """Stand-in title (first few words of the text) for a prompt or dataset."""
+    return " ".join(text.split()[:4])[:60] or "Untitled"
 
 
 def _migrate(conn):
@@ -124,6 +150,56 @@ def _migrate(conn):
         if "deleted_at" not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
             conn.commit()
+
+    # Datasets from before titles existed get the first few words of their
+    # topic as a title (editable later). New datasets always set a name.
+    for row in conn.execute("SELECT id, verbose_query FROM dataset WHERE name IS NULL").fetchall():
+        conn.execute(
+            "UPDATE dataset SET name = ? WHERE id = ?",
+            (_placeholder_title(row["verbose_query"]), row["id"]),
+        )
+    conn.commit()
+
+    # A run keeps its own copy of the prompt text (grading_prompt) and of the
+    # examples it was scored with (examples_snapshot), so editing a prompt
+    # later never changes what an old run's results mean.
+    run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_run)")}
+    for column, ddl in (("prompt_id", "INTEGER"), ("examples_snapshot", "TEXT")):
+        if column not in run_columns:
+            conn.execute(f"ALTER TABLE analysis_run ADD COLUMN {column} {ddl}")
+            conn.commit()
+
+    # Runs from before saved prompts existed get a prompt made from their
+    # grading text. New runs always set prompt_id, so a NULL one is legacy.
+    # If every run that used the text is already deleted, the prompt is made
+    # hidden too, so a deleted run doesn't resurface as a listed prompt.
+    legacy = conn.execute(
+        """
+        SELECT grading_prompt, MIN(created_at) AS created_at,
+               SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS live_runs
+        FROM analysis_run WHERE prompt_id IS NULL GROUP BY grading_prompt
+        """
+    ).fetchall()
+    for row in legacy:
+        cur = conn.execute(
+            """
+            INSERT INTO prompt (name, description, title_pending, created_at, updated_at, deleted_at)
+            VALUES (?, ?, 0, ?, ?, ?)
+            """,
+            (
+                _placeholder_title(row["grading_prompt"]),
+                row["grading_prompt"],
+                row["created_at"],
+                row["created_at"],
+                None if row["live_runs"] else _now(),
+            ),
+        )
+        conn.execute(
+            "UPDATE analysis_run SET prompt_id = ? WHERE prompt_id IS NULL AND grading_prompt = ?",
+            (cur.lastrowid, row["grading_prompt"]),
+        )
+    if legacy:
+        conn.commit()
 
 
 def _connect():
@@ -272,6 +348,9 @@ def update_paper(paper_id, fields):
 
 
 def create_dataset(verbose_query, expanded_queries, from_year=None, to_year=None, name=None):
+    """name is the short title (AI-written at expansion time); without one, the
+    first few words of the topic stand in."""
+    name = (name or "").strip() or _placeholder_title(verbose_query)
     with _LOCK, closing(_connect()) as conn:
         cur = conn.execute(
             """
@@ -370,6 +449,14 @@ def exclude_dataset_paper(dataset_id, paper_id):
         conn.commit()
 
 
+def rename_dataset(dataset_id, name):
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE dataset SET name = ? WHERE id = ? AND deleted_at IS NULL", (name, dataset_id)
+        )
+        conn.commit()
+
+
 def delete_dataset(dataset_id):
     """Soft-deletes only the dataset grouping. Runs that scored it are kept
     (they still list it by name), as are papers and LLM call logs."""
@@ -391,16 +478,58 @@ def delete_analysis_run(run_id):
         conn.commit()
 
 
-def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model):
+# Each example adds input tokens to every scoring chunk, so only the most
+# recently added ones are sent to the judge.
+EXAMPLE_LIMIT = 6
+
+
+def _scoring_examples(conn, prompt_id):
+    rows = conn.execute(
+        """
+        SELECT p.title, p.abstract, pe.score, pe.rationale
+        FROM prompt_example pe
+        JOIN paper p ON p.id = pe.paper_id
+        WHERE pe.prompt_id = ?
+        ORDER BY pe.created_at DESC, pe.id DESC
+        LIMIT ?
+        """,
+        (prompt_id, EXAMPLE_LIMIT),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id=None):
     """A run can span several datasets - scores the union of their papers in
-    one pass. dataset_ids must be non-empty (validated by the caller)."""
+    one pass. dataset_ids must be non-empty (validated by the caller).
+
+    With prompt_id, the run uses that saved prompt: its description becomes the
+    run's grading_prompt (a snapshot) and its current examples are snapshotted
+    too. Without one, a new prompt is created from grading_prompt in the same
+    transaction, with a placeholder name and title_pending set so the first
+    scoring call supplies a real title."""
     with _LOCK, closing(_connect()) as conn:
+        now = _now()
+        if prompt_id is None:
+            cur = conn.execute(
+                """
+                INSERT INTO prompt (name, description, title_pending, created_at, updated_at)
+                VALUES (?, ?, 1, ?, ?)
+                """,
+                (_placeholder_title(grading_prompt), grading_prompt, now, now),
+            )
+            prompt_id = cur.lastrowid
+            examples = []
+        else:
+            prompt = conn.execute("SELECT description FROM prompt WHERE id = ?", (prompt_id,)).fetchone()
+            grading_prompt = prompt["description"]
+            examples = _scoring_examples(conn, prompt_id)
         cur = conn.execute(
             """
-            INSERT INTO analysis_run (grading_prompt, ai_api, ai_model, status, created_at)
-            VALUES (?, ?, ?, 'running', ?)
+            INSERT INTO analysis_run
+                (grading_prompt, ai_api, ai_model, status, created_at, prompt_id, examples_snapshot)
+            VALUES (?, ?, ?, 'running', ?, ?, ?)
             """,
-            (grading_prompt, ai_api, ai_model, _now()),
+            (grading_prompt, ai_api, ai_model, now, prompt_id, json.dumps(examples)),
         )
         run_id = cur.lastrowid
         conn.executemany(
@@ -416,7 +545,7 @@ def get_run_datasets(run_id):
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            SELECT d.id, d.verbose_query, d.created_at
+            SELECT d.id, d.name, d.verbose_query, d.created_at
             FROM analysis_run_dataset ard
             JOIN dataset d ON d.id = ard.dataset_id
             WHERE ard.run_id = ?
@@ -437,7 +566,7 @@ def list_all_runs():
             """
             SELECT run.id, run.grading_prompt, run.ai_api, run.ai_model, run.status,
                    run.created_at, run.completed_at,
-                   GROUP_CONCAT(DISTINCT d.verbose_query) AS dataset_names,
+                   json_group_array(json_object('name', d.name, 'created_at', d.created_at)) AS datasets,
                    (SELECT COALESCE(SUM(usd), 0) FROM llm_call WHERE run_id = run.id)
                    + (SELECT COALESCE(SUM(usd), 0) FROM llm_call
                         WHERE run_id IS NULL
@@ -452,7 +581,12 @@ def list_all_runs():
             ORDER BY run.created_at DESC
             """
         ).fetchall()
-        return [dict(row) for row in rows]
+        runs = []
+        for row in rows:
+            run = dict(row)
+            run["datasets"] = json.loads(run["datasets"])
+            runs.append(run)
+        return runs
 
 
 def get_analysis_run(run_id, include_deleted=False):
@@ -461,16 +595,150 @@ def get_analysis_run(run_id, include_deleted=False):
         query += " AND deleted_at IS NULL"
     with closing(_connect()) as conn:
         row = conn.execute(query, (run_id,)).fetchone()
+        if not row:
+            return None
+        run = dict(row)
+        run["examples_snapshot"] = json.loads(run["examples_snapshot"] or "[]")
+        return run
+
+
+def get_run_result(run_id, paper_id):
+    """One scored paper's score and reasoning in a run, or None if unscored."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT score, rationale FROM analysis_result WHERE run_id = ? AND paper_id = ?",
+            (run_id, paper_id),
+        ).fetchone()
         return dict(row) if row else None
+
+
+# Prompts
+
+def create_prompt(name, description):
+    with _LOCK, closing(_connect()) as conn:
+        now = _now()
+        cur = conn.execute(
+            "INSERT INTO prompt (name, description, title_pending, created_at, updated_at) VALUES (?, ?, 0, ?, ?)",
+            (name, description, now, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_prompts():
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT pr.id, pr.name, pr.description, pr.created_at, pr.updated_at,
+                   (SELECT COUNT(*) FROM prompt_example pe WHERE pe.prompt_id = pr.id) AS example_count
+            FROM prompt pr
+            WHERE pr.deleted_at IS NULL
+            ORDER BY pr.updated_at DESC, pr.id DESC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_prompt(prompt_id, include_deleted=False):
+    query = "SELECT * FROM prompt WHERE id = ?"
+    if not include_deleted:
+        query += " AND deleted_at IS NULL"
+    with closing(_connect()) as conn:
+        row = conn.execute(query, (prompt_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_prompt(prompt_id, name, description):
+    """Saving any edit also clears title_pending, so a title the user just set
+    can never be overwritten by the AI-generated one."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            """
+            UPDATE prompt SET name = ?, description = ?, title_pending = 0, updated_at = ?
+            WHERE id = ? AND deleted_at IS NULL
+            """,
+            (name, description, _now(), prompt_id),
+        )
+        conn.commit()
+
+
+def set_generated_prompt_title(prompt_id, title):
+    """Applies the AI's title only while the prompt is still awaiting one
+    (title_pending), and clears the flag either way."""
+    with _LOCK, closing(_connect()) as conn:
+        if title:
+            conn.execute(
+                "UPDATE prompt SET name = ? WHERE id = ? AND title_pending = 1",
+                (title, prompt_id),
+            )
+        conn.execute("UPDATE prompt SET title_pending = 0 WHERE id = ?", (prompt_id,))
+        conn.commit()
+
+
+def delete_prompt(prompt_id):
+    """Soft delete. Runs keep their own snapshot of the prompt and examples."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE prompt SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+            (_now(), prompt_id),
+        )
+        conn.commit()
+
+
+def list_prompt_examples(prompt_id):
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT pe.id, pe.paper_id, pe.source_run_id, pe.score, pe.rationale, pe.created_at,
+                   p.title, p.year
+            FROM prompt_example pe
+            JOIN paper p ON p.id = pe.paper_id
+            WHERE pe.prompt_id = ?
+            ORDER BY pe.created_at DESC, pe.id DESC
+            """,
+            (prompt_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def add_prompt_example(prompt_id, paper_id, run_id, score, rationale):
+    """Marking a paper that is already an example replaces the old one (newest
+    score and reasoning win)."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            """
+            INSERT INTO prompt_example (prompt_id, paper_id, source_run_id, score, rationale, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (prompt_id, paper_id) DO UPDATE SET
+                source_run_id = excluded.source_run_id,
+                score = excluded.score,
+                rationale = excluded.rationale,
+                created_at = excluded.created_at
+            """,
+            (prompt_id, paper_id, run_id, score, rationale, _now()),
+        )
+        conn.commit()
+
+
+def remove_prompt_example(prompt_id, example_id):
+    with _LOCK, closing(_connect()) as conn:
+        cur = conn.execute(
+            "DELETE FROM prompt_example WHERE id = ? AND prompt_id = ?", (example_id, prompt_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def get_run_results(run_id):
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            SELECT p.*, ar.paper_id, ar.rationale, ar.score
+            SELECT p.*, ar.paper_id, ar.rationale, ar.score,
+                   (pe.id IS NOT NULL) AS is_example
             FROM analysis_result ar
             JOIN paper p ON p.id = ar.paper_id
+            JOIN analysis_run run ON run.id = ar.run_id
+            LEFT JOIN prompt_example pe ON pe.prompt_id = run.prompt_id AND pe.paper_id = ar.paper_id
             WHERE ar.run_id = ?
             ORDER BY ar.score DESC
             """,
@@ -481,6 +749,7 @@ def get_run_results(run_id):
             paper = _paper_row_to_dict(row)
             paper["score"] = row["score"]
             paper["rationale"] = row["rationale"]
+            paper["is_example"] = bool(row["is_example"])
             results.append(paper)
         return results
 

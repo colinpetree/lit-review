@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import DeleteMenu from '../components/DeleteMenu'
 import { deleteJson } from '../lib/api'
-import { formatYearRange } from '../lib/format'
+import { formatDateTime, formatYearRange } from '../lib/format'
 
 export default function PaperDataSetsPage() {
   const [datasets, setDatasets] = useState(null)
@@ -36,10 +36,12 @@ export default function PaperDataSetsPage() {
             <div key={d.id} className="relative">
               <Link to={`/datasets/${d.id}`}>
                 <Card className="h-full hover:border-gray-300">
-                  <p className="font-medium text-gray-900 pr-8">{d.verbose_query}</p>
-                  <p className="mt-2 text-sm text-gray-500">
+                  <p className="font-medium text-gray-900 pr-8">{d.name}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-gray-500">{d.verbose_query}</p>
+                  <p className="mt-2 text-sm text-gray-400">
                     {d.paper_count} paper{d.paper_count === 1 ? '' : 's'}
                     {yearRange ? ` · ${yearRange}` : ''}
+                    {formatDateTime(d.created_at) ? ` · created ${formatDateTime(d.created_at)}` : ''}
                   </p>
                 </Card>
               </Link>

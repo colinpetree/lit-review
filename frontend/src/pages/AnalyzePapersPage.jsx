@@ -4,8 +4,11 @@ import { PageShell, Card } from '../components/ui'
 import { StageIndicator } from '../components/Spinner'
 import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from '../components/AiModelSelect'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
+import PromptCombobox, { NEW_PROMPT } from '../components/PromptCombobox'
+import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import { postJson } from '../lib/api'
 import { driveAnalysisRun } from '../lib/driveAnalysisRun'
+import { formatDateTime } from '../lib/format'
 
 export default function AnalyzePapersPage() {
   const navigate = useNavigate()
@@ -19,6 +22,9 @@ export default function AnalyzePapersPage() {
   // they're actually looking for, which can (and often should) differ from
   // whatever question retrieved the dataset in the first place.
   const [gradingPrompt, setGradingPrompt] = useState('')
+  // NEW_PROMPT (write a research question below) or a saved prompt's id.
+  const [promptChoice, setPromptChoice] = useState(NEW_PROMPT)
+  const [prompts, setPrompts] = useState([])
   const [aiChoice, setAiChoice] = useState(null)
   const [status, setStatus] = useState('idle') // idle | loading | error
   const [error, setError] = useState(null)
@@ -34,7 +40,15 @@ export default function AnalyzePapersPage() {
       .then((res) => res.json())
       .then((data) => setDatasets(data.datasets ?? []))
       .catch((err) => setError(err.message))
+    fetch('/api/prompts')
+      .then((res) => res.json())
+      .then((data) => setPrompts(data.prompts ?? []))
+      .catch((err) => setError(err.message))
   }, [])
+
+  const isNewPrompt = promptChoice === NEW_PROMPT
+  const savedPrompt = isNewPrompt ? null : prompts.find((p) => p.id === promptChoice)
+  const promptReady = isNewPrompt ? Boolean(gradingPrompt.trim()) : Boolean(savedPrompt)
 
   const toggle = (id) => {
     setSelected((prev) => {
@@ -54,7 +68,7 @@ export default function AnalyzePapersPage() {
       navigate('/settings')
       return
     }
-    if (!selected.size || !gradingPrompt.trim()) return
+    if (!selected.size || !promptReady) return
 
     activeRequestRef.current?.abort()
     const controller = new AbortController()
@@ -69,7 +83,7 @@ export default function AnalyzePapersPage() {
         '/api/analysis-runs',
         {
           dataset_ids: [...selected],
-          grading_prompt: gradingPrompt.trim(),
+          ...(isNewPrompt ? { grading_prompt: gradingPrompt.trim() } : { prompt_id: promptChoice }),
           ai_api: choice.ai_api,
           ai_model: choice.ai_model,
         },
@@ -94,15 +108,20 @@ export default function AnalyzePapersPage() {
             <span className="block text-sm font-medium text-gray-700">Datasets to analyze</span>
             <div className="mt-1 flex flex-col gap-1 max-h-64 overflow-auto">
               {(datasets ?? []).map((d) => (
-                <label key={d.id} className="flex items-center gap-2 text-sm text-gray-700">
+                <label key={d.id} className="flex items-start gap-2 text-sm text-gray-700">
                   <input
                     type="checkbox"
                     checked={selected.has(d.id)}
                     onChange={() => toggle(d.id)}
-                    className="rounded"
+                    className="mt-0.5 rounded"
                   />
-                  {d.verbose_query}
-                  <span className="text-gray-400">({d.paper_count})</span>
+                  <span>
+                    {d.name} <span className="text-gray-400">({d.paper_count})</span>
+                    {/* Titles aren't unique, so the created time (then the topic) tells two similarly titled data sets apart. */}
+                    <span className="block line-clamp-1 text-xs text-gray-400">
+                      {formatDateTime(d.created_at)} · {d.verbose_query}
+                    </span>
+                  </span>
                 </label>
               ))}
               {datasets && datasets.length === 0 ? (
@@ -112,19 +131,38 @@ export default function AnalyzePapersPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Research question</label>
-            <textarea
-              value={gradingPrompt}
-              onChange={(e) => setGradingPrompt(e.target.value)}
-              placeholder="Precisely what are you looking for in this literature review?"
-              rows={3}
-              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <span className="block text-sm font-medium text-gray-700">Scoring prompt</span>
+            <div className="mt-1 max-w-xs">
+              <PromptCombobox prompts={prompts} value={promptChoice} onChange={setPromptChoice} />
+            </div>
           </div>
+
+          {isNewPrompt ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Research question</label>
+              <AutoGrowTextarea
+                value={gradingPrompt}
+                onChange={(e) => setGradingPrompt(e.target.value)}
+                placeholder="Precisely what are you looking for in this literature review?"
+                rows={3}
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+              />
+              <p className="mt-1 text-xs text-gray-400">
+                A saved prompt is created from this, with a short title the AI writes.
+              </p>
+            </div>
+          ) : savedPrompt ? (
+            <div className="rounded-md bg-gray-50 p-3">
+              <p className="whitespace-pre-wrap text-sm text-gray-700">{savedPrompt.description}</p>
+              <p className="mt-2 text-xs text-gray-400">
+                {savedPrompt.example_count} example{savedPrompt.example_count === 1 ? '' : 's'}
+              </p>
+            </div>
+          ) : null}
 
           <div>
             <span className="block text-sm font-medium text-gray-700">AI model</span>
-            <div className="mt-1">
+            <div className="mt-1 max-w-xs">
               {configured ? (
                 <AiModelSelect providers={providers} value={choice} onChange={setAiChoice} />
               ) : (
@@ -146,7 +184,7 @@ export default function AnalyzePapersPage() {
 
           <button
             type="submit"
-            disabled={status === 'loading' || (configured && (!selected.size || !gradingPrompt.trim()))}
+            disabled={status === 'loading' || (configured && (!selected.size || !promptReady))}
             className="self-start rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {!configured ? 'Configure API key' : status === 'loading' ? 'Analyzing…' : 'Run Analysis'}

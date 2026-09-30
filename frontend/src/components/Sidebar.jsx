@@ -4,6 +4,7 @@ const NAV_ITEMS = [
   { to: '/discover', label: 'Discover Papers' },
   { to: '/datasets', label: 'Paper Data Sets' },
   { to: '/analyze', label: 'Analyze Papers' },
+  { to: '/prompts', label: 'Scoring Prompts' },
   { to: '/results', label: 'Past Results' },
 ]
 

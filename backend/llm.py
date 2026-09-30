@@ -100,10 +100,20 @@ def _parsed_json(response):
         raise LLMError(f"Anthropic returned unparseable JSON: {exc}") from exc
 
 
+MAX_TITLE_CHARS = 60
+
+
+def _clean_title(raw):
+    """A model-written title, whitespace-collapsed and length-capped, or None
+    if it came back empty."""
+    return " ".join(str(raw or "").split())[:MAX_TITLE_CHARS] or None
+
+
 def expand_query(research_question, model, n=4):
     """Turn a free-text research question into a handful of literal keyword
     queries suitable for OpenAlex's search param (which is literal, not
-    semantic)."""
+    semantic), plus a 2-4 word title naming the topic (used as the dataset's
+    name). Returns (queries, Usage, title); title is None if unusable."""
     client = _client()
     response = _call(
         client,
@@ -114,7 +124,8 @@ def expand_query(research_question, model, n=4):
             "literal keyword search queries for a scholarly database (OpenAlex). "
             "Each query should be a short phrase using terminology a paper's title or "
             "abstract would actually contain - not a rephrasing of the question itself. "
-            "Vary vocabulary/synonyms across queries to broaden recall."
+            "Vary vocabulary/synonyms across queries to broaden recall. Also return a "
+            "`title`: a 2-4 word title that names the topic."
         ),
         messages=[{"role": "user", "content": research_question}],
         output_config={
@@ -123,19 +134,21 @@ def expand_query(research_question, model, n=4):
                 "schema": {
                     "type": "object",
                     "properties": {
+                        "title": {"type": "string"},
                         "queries": {
                             "type": "array",
                             "items": {"type": "string"},
-                        }
+                        },
                     },
-                    "required": ["queries"],
+                    "required": ["title", "queries"],
                     "additionalProperties": False,
                 },
             }
         },
     )
-    queries = _parsed_json(response)["queries"]
-    return queries, Usage(response.usage.input_tokens, response.usage.output_tokens, model=model)
+    parsed = _parsed_json(response)
+    usage = Usage(response.usage.input_tokens, response.usage.output_tokens, model=model)
+    return parsed["queries"], usage, _clean_title(parsed.get("title"))
 
 
 # (name, low, high) - ordered best to worst. The prompt text below and the
@@ -198,20 +211,51 @@ def _enforce_bracket(score, bracket, has_abstract):
     return score
 
 
-def score_batch(grading_prompt, candidates, model):
+MAX_EXAMPLE_ABSTRACT_CHARS = 1200
+
+
+def _examples_block(examples):
+    """Calibration text for the user message. Each example is a paper whose
+    score and reasoning the user confirmed as a good judgment."""
+    if not examples:
+        return ""
+    parts = []
+    for i, ex in enumerate(examples, 1):
+        abstract = (ex.get("abstract") or "").strip()[:MAX_EXAMPLE_ABSTRACT_CHARS]
+        parts.append(
+            f"[Example {i}] {ex.get('title') or '(no title)'}\n"
+            f"{abstract or '(no abstract available)'}\n"
+            f"Score: {ex['score']}\n"
+            f"Reasoning: {ex['rationale']}"
+        )
+    return (
+        "Calibration examples: papers the user confirmed were scored well for this "
+        "grading prompt. Use them only to calibrate how strictly to score. Do not score "
+        "a paper higher because its topic resembles an example.\n\n"
+        + "\n\n".join(parts)
+        + "\n\n"
+    )
+
+
+def score_batch(grading_prompt, candidates, model, examples=None, want_title=False):
     """Score a batch of candidate papers (each needs at least id/title/abstract)
     against the user's grading prompt. Returns
-    ({id: {"score": 0-100 or None, "rationale": str}}, Usage), with one entry
-    for every candidate id. The model's `comparison` text is the rationale.
+    ({id: {"score": 0-100 or None, "rationale": str}}, Usage, title), with one
+    entry for every candidate id. The model's `comparison` text is the
+    rationale. `title` is a 2-4 word title for the grading prompt when
+    want_title is set and the model returned a usable one, else None.
+
+    `examples` ({title, abstract, score, rationale} dicts) are calibration
+    only and never scored themselves.
 
     A paper the model skips is retried once on its own. If it is skipped
     again it gets score None with an explanatory rationale, so the run can
     finish instead of re-selecting the same unscored paper forever."""
-    scores, usage = _score_call(grading_prompt, candidates, model)
+    scores, usage, title = _score_call(grading_prompt, candidates, model, examples, want_title)
 
     missing = [c for c in candidates if str(c["id"]) not in scores]
     if missing:
-        retry_scores, retry_usage = _score_call(grading_prompt, missing, model)
+        retry_scores, retry_usage, _ = _score_call(grading_prompt, missing, model, examples, False)
         scores.update(retry_scores)
         usage.add(retry_usage)
 
@@ -219,10 +263,10 @@ def score_batch(grading_prompt, candidates, model):
         scores.setdefault(
             str(c["id"]), {"score": None, "rationale": NO_JUDGMENT_RATIONALE}
         )
-    return scores, usage
+    return scores, usage, title
 
 
-def _score_call(grading_prompt, candidates, model):
+def _score_call(grading_prompt, candidates, model, examples=None, want_title=False):
     """One LLM call. Only ids that belong to `candidates` are returned, so a
     made-up or non-numeric id from the model is dropped here."""
     client = _client()
@@ -233,6 +277,16 @@ def _score_call(grading_prompt, candidates, model):
         f"{_usable_abstract(c) or '(no abstract available)'}"
         for c in candidates
     )
+    title_instruction = (
+        "Also return `title`: a 2-4 word title that names what the grading prompt "
+        "is looking for.\n\n"
+        if want_title
+        else ""
+    )
+    properties = {}
+    if want_title:
+        properties["title"] = {"type": "string"}
+    required = ["title", "scores"] if want_title else ["scores"]
 
     response = _call(
         client,
@@ -242,7 +296,10 @@ def _score_call(grading_prompt, candidates, model):
         messages=[
             {
                 "role": "user",
-                "content": f"Grading prompt: {grading_prompt}\n\nPapers:\n\n{papers_block}",
+                "content": (
+                    f"{title_instruction}{_examples_block(examples)}"
+                    f"Grading prompt: {grading_prompt}\n\nPapers:\n\n{papers_block}"
+                ),
             }
         ],
         output_config={
@@ -251,6 +308,7 @@ def _score_call(grading_prompt, candidates, model):
                 "schema": {
                     "type": "object",
                     "properties": {
+                        **properties,
                         "scores": {
                             "type": "array",
                             "items": {
@@ -271,14 +329,18 @@ def _score_call(grading_prompt, candidates, model):
                             },
                         }
                     },
-                    "required": ["scores"],
+                    "required": required,
                     "additionalProperties": False,
                 },
             }
         },
     )
+    parsed = _parsed_json(response)
+    title = None
+    if want_title:
+        title = _clean_title(parsed.get("title"))
     scores = {}
-    for row in _parsed_json(response)["scores"]:
+    for row in parsed["scores"]:
         paper_id = str(row["id"]).strip()
         if paper_id not in has_abstract:
             continue
@@ -286,4 +348,4 @@ def _score_call(grading_prompt, candidates, model):
             "score": _enforce_bracket(row["score"], row["bracket"], has_abstract[paper_id]),
             "rationale": row["comparison"],
         }
-    return scores, Usage(response.usage.input_tokens, response.usage.output_tokens, model=model)
+    return scores, Usage(response.usage.input_tokens, response.usage.output_tokens, model=model), title

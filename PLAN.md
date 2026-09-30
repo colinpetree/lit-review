@@ -244,9 +244,10 @@ flag the result as "auto-filled, unverified" (a paywall/JS-rendered page/redirec
 yield wrong or truncated text) rather than making it indistinguishable from a real
 OpenAlex-sourced abstract.
 
-## Saved prompts with examples (proposed, needs review)
+## Saved prompts with examples (decided, being built)
 
-Status: idea only, not scheduled. Captured so it can be reviewed before any build work.
+Status: design settled, see "Decided design" at the end of this section. The original
+proposal is kept below for context.
 
 **Problem.** The judge's strictness is now fixed by a system prompt with score brackets
 (see `backend/llm.py`), but a user has no way to teach it what "relevant" means for their
@@ -288,10 +289,41 @@ saves confirmed good calls as well.
    `score_batch`. Needs a UX mockup of the results page first.
 3. Later: use examples to inform query expansion.
 
-**Open questions.**
+**Open questions (resolved below).**
 - How should examples be edited or removed once saved?
 - Do corrections re-score the current run, or only apply to later runs?
 - Does a prompt belong to one dataset, or is it reusable across datasets?
+
+**Decided design.**
+- **Scoring Prompts page** (sidebar link). Lists prompts; each card has a more-horizontal
+  menu with Edit (name and description) and Delete (soft delete, like runs and datasets).
+  A detail page lists the prompt's examples; removing an example is the only change
+  allowed there. Examples are never added from the prompt itself.
+- **Prompts are reusable across datasets** and not tied to one. A run picks a prompt.
+- **Creating prompts.** (1) "New prompt" on the Scoring Prompts page: a modal with a title
+  and the research question. (2) Running an analysis on Analyze with the "New prompt"
+  option and a research question. In case 2 the first scoring call of the run also
+  returns a 2-4 word title, and the server names the prompt with it (a placeholder of
+  the question's first four words is used until then, or if no title comes back). A title
+  is only ever requested for a prompt created this way, never for an existing prompt, and
+  it never replaces a title the user set: saving any edit clears the pending flag.
+- **Analyze picker.** The research question field becomes a type-to-filter dropdown of
+  saved prompts with "New prompt" first, which reveals the research question text box.
+  Choosing an existing prompt shows its description and example count.
+- **Examples** are added only from a run's results, through a more-horizontal menu on a
+  scored paper ("Mark as example", with a confirmation modal explaining the paper's score
+  and reasoning will be used as a good example for future runs of that prompt). An
+  example stores its own copy of the score and reasoning. Marking a paper already marked
+  for that prompt replaces the old example. Removing an example is a hard delete.
+- **Snapshot per run.** A run stores the prompt text and the examples it was scored with,
+  so editing a prompt never changes old results and a resumed run scores consistently.
+- **Cap.** Only the 6 most recent examples are sent to the judge.
+- **Existing runs** are backfilled into prompts named after their first four words.
+- **Soft deletes.** Deleting a run or prompt only hides it, so a deleted run's scored
+  papers can still be used as examples. Corrections apply to later runs only, they do not
+  re-score the current run.
+- **Paper menu parity.** Paper cards use the same more-horizontal menu everywhere: Edit on
+  dataset lists, Edit plus Mark as example on run results.
 
 ## Distribution / packaging
 

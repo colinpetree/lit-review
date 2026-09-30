@@ -1,46 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { PageShell, Card } from '../components/ui'
 import EditableCardHeader from '../components/EditableCardHeader'
-
-function useSavedState() {
-  const [editing, setEditing] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState('')
-  // Guards every state update in commit() below against firing after
-  // unmount (e.g. the user navigates away within the ~1-3s the "Saved"
-  // confirmation is showing) - also clears the pending "hide Saved" timer
-  // on unmount so it never fires at all in that case.
-  const mountedRef = useRef(true)
-  const savedTimerRef = useRef(null)
-
-  useEffect(
-    () => () => {
-      mountedRef.current = false
-      clearTimeout(savedTimerRef.current)
-    },
-    []
-  )
-
-  async function commit(action) {
-    setSaving(true)
-    setError('')
-    try {
-      await action()
-      await new Promise((r) => setTimeout(r, 700))
-      if (!mountedRef.current) return
-      setSaved(true)
-      setEditing(false)
-      savedTimerRef.current = setTimeout(() => mountedRef.current && setSaved(false), 2500)
-    } catch (err) {
-      if (mountedRef.current) setError(err.message || 'Save failed')
-    } finally {
-      if (mountedRef.current) setSaving(false)
-    }
-  }
-
-  return { editing, setEditing, saving, saved, error, setError, commit }
-}
+import useSavedState from '../lib/useSavedState'
 
 function ProviderKeyCard({ provider, label, description, keyUrl, keyPlaceholder = 'API key...', hasKey, onSave, onDelete }) {
   const [input, setInput] = useState('')
@@ -93,7 +54,7 @@ function ProviderKeyCard({ provider, label, description, keyUrl, keyPlaceholder 
             onChange={(e) => setInput(e.target.value)}
             disabled={removing}
             placeholder={hasKey ? '••••••••' : keyPlaceholder}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400 w-full disabled:bg-gray-50 disabled:text-gray-400"
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 w-full disabled:bg-gray-50 disabled:text-gray-400"
           />
           {hasKey && !removing && (
             <div className="flex items-center justify-between">

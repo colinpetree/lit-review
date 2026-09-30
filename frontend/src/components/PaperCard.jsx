@@ -1,5 +1,9 @@
 import { useState } from 'react'
+import { BookmarkPlus, Pencil } from 'lucide-react'
 import { patchJson } from '../lib/api'
+import MoreMenu from './MoreMenu'
+import ConfirmModal from './ConfirmModal'
+import AutoGrowTextarea from './AutoGrowTextarea'
 
 export function ScoreBadge({ score }) {
   if (score === null || score === undefined) return null
@@ -46,7 +50,7 @@ function EditForm({ result, onSave, onCancel }) {
     }
   }
 
-  const field = 'rounded-md border border-gray-300 px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500'
+  const field = 'rounded-md border border-gray-300 px-2 py-1.5 text-sm w-full'
   const label = 'text-xs font-medium text-gray-500'
 
   return (
@@ -58,7 +62,7 @@ function EditForm({ result, onSave, onCancel }) {
         </div>
         <div>
           <label className={label}>Abstract</label>
-          <textarea value={form.abstract} onChange={set('abstract')} rows={4} className={field} />
+          <AutoGrowTextarea value={form.abstract} onChange={set('abstract')} rows={4} className={field} />
         </div>
         <div className="flex gap-3">
           <div className="flex-1">
@@ -102,9 +106,18 @@ function EditForm({ result, onSave, onCancel }) {
   )
 }
 
-export default function PaperCard({ result, onUpdate }) {
+// onUpdate enables the Edit action. onMarkExample (run results only) enables
+// "Mark as example" for a scored paper that isn't already one.
+export default function PaperCard({ result, onUpdate, onMarkExample }) {
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [markingExample, setMarkingExample] = useState(false)
+
+  const menuItems = []
+  if (onUpdate) menuItems.push({ label: 'Edit', icon: Pencil, onClick: () => setEditing(true) })
+  if (onMarkExample && result.score != null && !result.is_example) {
+    menuItems.push({ label: 'Mark as example', icon: BookmarkPlus, onClick: () => setMarkingExample(true) })
+  }
 
   if (editing) {
     return (
@@ -137,8 +150,14 @@ export default function PaperCard({ result, onUpdate }) {
           )}
         </h3>
         <div className="flex shrink-0 items-center gap-2">
+          {result.is_example ? (
+            <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
+              Example
+            </span>
+          ) : null}
           <ScoreBadge score={result.score} />
           <span className="text-sm text-gray-500">{result.year ?? '—'}</span>
+          {menuItems.length ? <MoreMenu items={menuItems} /> : null}
         </div>
       </div>
 
@@ -179,14 +198,15 @@ export default function PaperCard({ result, onUpdate }) {
         <p className="mt-2 text-sm text-gray-400 italic">No abstract available</p>
       )}
 
-      {onUpdate ? (
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className="mt-2 text-sm text-gray-500 hover:underline"
-        >
-          Edit
-        </button>
+      {markingExample ? (
+        <ConfirmModal
+          title="Mark as example?"
+          message="This paper's score and reasoning will be added as a good example for this run's prompt. Future runs of the prompt will compare papers against it."
+          confirmLabel="Mark as example"
+          busyLabel="Saving..."
+          onConfirm={() => onMarkExample(result)}
+          onClose={() => setMarkingExample(false)}
+        />
       ) : null}
     </li>
   )

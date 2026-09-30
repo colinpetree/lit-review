@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import DeleteMenu from '../components/DeleteMenu'
 import { deleteJson } from '../lib/api'
-import { formatDate } from '../lib/format'
+import { datasetLabels, formatDate } from '../lib/format'
 
 export default function PastResultsPage() {
   const [runs, setRuns] = useState(null)
@@ -35,7 +35,7 @@ export default function PastResultsPage() {
             <Link to={`/results/${run.id}`}>
               <Card className="hover:border-gray-300">
                 <p className="pr-8 font-medium text-gray-900">{run.grading_prompt}</p>
-                <p className="mt-1 text-sm text-gray-500">{run.dataset_names}</p>
+                <p className="mt-1 text-sm text-gray-500">{datasetLabels(run.datasets).join(', ')}</p>
                 <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-sm text-gray-400">
                   <span>
                     {formatDate(run.created_at)} · {run.ai_model} · ${run.cost.toFixed(4)}

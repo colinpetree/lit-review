@@ -1,42 +1,54 @@
+import { useMemo } from 'react'
+import Combobox from './Combobox'
 import { MODELS_BY_PROVIDER } from '../lib/models'
 
-// Lists every provider `providers` reports as configured, grouped by
-// provider so a future non-Anthropic provider just adds another optgroup.
-// Renders nothing if no provider is configured - callers use
-// hasConfiguredProvider(providers) to decide whether to show this or a
-// "Configure API key" fallback instead.
+// The providers that can be chosen for AI work: configured AND having models
+// listed. `providers` also reports non-AI credentials (e.g. openalex), which
+// must never show up as a model choice.
+function aiProviders(providers) {
+  return Object.keys(providers || {}).filter((p) => providers[p] && MODELS_BY_PROVIDER[p])
+}
+
+// Callers use hasConfiguredProvider(providers) to decide whether to show the
+// picker or a "Configure API key" fallback instead.
 export function hasConfiguredProvider(providers) {
-  return Boolean(providers) && Object.values(providers).some(Boolean)
+  return aiProviders(providers).length > 0
 }
 
 export function defaultAiChoice(providers) {
-  const provider = Object.keys(providers || {}).find((p) => providers[p])
+  const provider = aiProviders(providers)[0]
   if (!provider) return null
   return { ai_api: provider, ai_model: MODELS_BY_PROVIDER[provider][0].id }
 }
 
+// Lists the models of every configured AI provider, grouped by provider once
+// there is more than one. Renders nothing if none is configured.
 export default function AiModelSelect({ providers, value, onChange }) {
-  const configured = Object.keys(providers || {}).filter((p) => providers[p])
+  const configured = aiProviders(providers)
+
+  const options = useMemo(
+    () =>
+      configured.flatMap((provider) =>
+        MODELS_BY_PROVIDER[provider].map((m) => ({
+          value: `${provider}::${m.id}`,
+          label: m.label,
+          group: provider,
+        }))
+      ),
+    [configured.join(',')]
+  )
+
   if (!configured.length) return null
 
   return (
-    <select
+    <Combobox
+      options={options}
       value={`${value.ai_api}::${value.ai_model}`}
-      onChange={(e) => {
-        const [ai_api, ai_model] = e.target.value.split('::')
+      onChange={(v) => {
+        const [ai_api, ai_model] = v.split('::')
         onChange({ ai_api, ai_model })
       }}
-      className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-    >
-      {configured.map((provider) => (
-        <optgroup key={provider} label={provider}>
-          {(MODELS_BY_PROVIDER[provider] || []).map((m) => (
-            <option key={m.id} value={`${provider}::${m.id}`}>
-              {m.label}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
+      placeholder="Choose a model"
+    />
   )
 }

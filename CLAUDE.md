@@ -92,13 +92,25 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
 
 - `paper` is deduped globally (by DOI, else title+year). A `dataset` is a retrieved pool
   (verbose query + LLM-expanded queries + year range) linked via `dataset_paper`, where
-  exclusion is a soft `excluded_at`.
+  exclusion is a soft `excluded_at`. A dataset's short `name` (2-4 words) is written by the
+  same LLM call that expands the query (`/api/datasets/expand` returns `title`, passed on
+  to `POST /api/datasets` so a retried retrieval keeps it) and is editable via
+  `PATCH /api/datasets/<id>`; the long topic stays in `verbose_query` (read-only).
 - An `analysis_run` scores one or more datasets with a grading prompt and model, and
   writes one `analysis_result` (score + rationale) per paper. `llm_call` logs token usage
   and USD for every LLM call.
 - Runs are resumable. The client repeatedly POSTs `/api/analysis-runs/<id>/process`, and
   each call scores one chunk (`SCORE_CHUNK_SIZE`=20) of still-unscored papers until the
   run's status is `completed`. `frontend/src/lib/driveAnalysisRun.js` is that loop.
+
+- A `prompt` (name + description/research question) is reusable across datasets. Each
+  run points at one via `prompt_id` but keeps its own snapshot: `grading_prompt` (the text)
+  and `examples_snapshot` (the examples used), so editing a prompt never changes old runs.
+  `prompt_example` rows are added only from a run's results ("Mark as example", which
+  copies that paper's score and reasoning); only the newest `db.EXAMPLE_LIMIT` are sent to
+  the judge. A prompt created from Analyze gets an AI title (requested in the run's first
+  scoring call via `title_pending`; never for existing prompts, and any user edit clears
+  the flag). Prompts, runs and datasets are soft-deleted (`deleted_at`).
 
 Keep retrieval and LLM judgment strictly separate: the LLM only scores real
 API-returned abstracts and must never invent citations.
@@ -107,4 +119,5 @@ API-returned abstracts and must never invent citations.
 
 React 19 + Vite + Tailwind v4 (`@tailwindcss/vite`) + react-router. Routes are in
 `src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), analyze,
-results (+ `:id`), settings. Backend calls go through `src/lib/api.js`.
+prompts (+ `:id`), results (+ `:id`), settings. Shared UI: `MoreMenu` (more-horizontal
+popover), `Modal`/`ConfirmModal`, `DeleteMenu`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.

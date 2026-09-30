@@ -29,6 +29,8 @@ CREDENTIAL_PROVIDERS = SUPPORTED_PROVIDERS | {"openalex"}
 # model (Phase 3).
 SCORE_CHUNK_SIZE = 20
 
+MAX_DATASET_NAME_CHARS = 120
+
 STATIC_DIR = Path(__file__).parent / "static"
 PORT = 5175
 
@@ -185,7 +187,7 @@ def expand_dataset_query():
             return jsonify({"reused": True, "dataset": _dataset_to_dict(dataset_row, papers)})
 
     try:
-        queries, expand_usage = llm.expand_query(question, ai_model)
+        queries, expand_usage, title = llm.expand_query(question, ai_model)
     except llm.LLMError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -193,6 +195,7 @@ def expand_dataset_query():
         {
             "reused": False,
             "queries": queries,
+            "title": title,
             "usage": {
                 "input_tokens": expand_usage.input_tokens,
                 "output_tokens": expand_usage.output_tokens,
@@ -214,6 +217,10 @@ def create_dataset():
     question = (body.get("question") or "").strip()
     queries = body.get("queries")
     usage = body.get("usage") or {}
+    # Short title from the expansion step; carried through here so a retried
+    # retrieval keeps it without another LLM call. Optional (a placeholder is
+    # made from the topic if missing).
+    title = str(body.get("title") or "").strip()[:MAX_DATASET_NAME_CHARS]
     if not question:
         return jsonify({"error": "missing 'question'"}), 400
     if not isinstance(queries, list) or not queries:
@@ -242,7 +249,7 @@ def create_dataset():
         return jsonify({"error": "Failed to reach OpenAlex. Please try again."}), 502
 
     expand_usage = llm.Usage(input_tokens, output_tokens, model=usage_model)
-    dataset_id = db.create_dataset(question, queries, from_year=from_year, to_year=to_year)
+    dataset_id = db.create_dataset(question, queries, from_year=from_year, to_year=to_year, name=title)
     db.record_llm_call("query_expansion", "anthropic", expand_usage.model, expand_usage, dataset_id=dataset_id)
     paper_ids = [db.get_or_create_paper(candidate) for candidate in candidates]
     db.add_papers_to_dataset(dataset_id, paper_ids)
@@ -264,6 +271,21 @@ def get_dataset(dataset_id):
         return jsonify({"error": "dataset not found"}), 404
     papers = db.get_dataset_papers(dataset_id)
     return jsonify(_dataset_to_dict(dataset_row, papers))
+
+
+@app.patch("/api/datasets/<int:dataset_id>")
+def update_dataset(dataset_id):
+    """Rename a dataset (its short title). The topic it was retrieved with is
+    not editable."""
+    if db.get_dataset(dataset_id) is None:
+        return jsonify({"error": "dataset not found"}), 404
+    name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "'name' cannot be blank"}), 400
+    if len(name) > MAX_DATASET_NAME_CHARS:
+        return jsonify({"error": f"'name' must be at most {MAX_DATASET_NAME_CHARS} characters"}), 400
+    db.rename_dataset(dataset_id, name)
+    return jsonify(_dataset_to_dict(db.get_dataset(dataset_id), db.get_dataset_papers(dataset_id)))
 
 
 @app.delete("/api/datasets/<int:dataset_id>")
@@ -336,13 +358,23 @@ def create_analysis_run():
     body = request.get_json(silent=True) or {}
     dataset_ids = body.get("dataset_ids")
     grading_prompt = (body.get("grading_prompt") or "").strip()
+    prompt_id = body.get("prompt_id")
     ai_api = body.get("ai_api") or "anthropic"
     ai_model = body.get("ai_model") or llm.MODEL
 
     if not isinstance(dataset_ids, list) or not dataset_ids:
         return jsonify({"error": "missing or empty 'dataset_ids'"}), 400
-    if not grading_prompt:
-        return jsonify({"error": "missing 'grading_prompt'"}), 400
+    if prompt_id is not None:
+        # An existing saved prompt: its own description is used, so any
+        # grading_prompt text in the body is ignored.
+        try:
+            prompt_id = int(prompt_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid 'prompt_id'"}), 400
+        if db.get_prompt(prompt_id) is None:
+            return jsonify({"error": "prompt not found"}), 400
+    elif not grading_prompt:
+        return jsonify({"error": "missing 'prompt_id' or 'grading_prompt'"}), 400
     try:
         # De-duplicated, order preserved - a repeated id would otherwise hit
         # analysis_run_dataset's (run_id, dataset_id) PK constraint on the
@@ -357,7 +389,7 @@ def create_analysis_run():
         if db.get_dataset(dataset_id) is None:
             return jsonify({"error": f"dataset {dataset_id} not found"}), 400
 
-    run_id = db.create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model)
+    run_id = db.create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id)
     return jsonify(_run_to_dict(db.get_analysis_run(run_id)))
 
 
@@ -368,6 +400,15 @@ def list_analysis_runs():
 
 def _run_to_dict(run_row):
     run = dict(run_row)
+    # The scoring snapshot is internal (full abstracts); the client only
+    # needs to know which prompt the run belongs to.
+    run.pop("examples_snapshot", None)
+    prompt = db.get_prompt(run["prompt_id"], include_deleted=True) if run.get("prompt_id") else None
+    run["prompt"] = (
+        {"id": prompt["id"], "name": prompt["name"], "deleted": prompt["deleted_at"] is not None}
+        if prompt
+        else None
+    )
     run["datasets"] = db.get_run_datasets(run["id"])
     run["results"] = db.get_run_results(run["id"])
     run["candidate_papers"] = db.get_run_candidate_papers(run["id"])
@@ -399,11 +440,18 @@ def process_analysis_run(run_id):
         run_row = db.get_analysis_run(run_id)
         return jsonify({**_run_to_dict(run_row), "processed": 0})
 
+    # Only a prompt created by this run (from Analyze) is still waiting for an
+    # AI title; existing prompts never ask for one.
+    prompt = db.get_prompt(run_row["prompt_id"], include_deleted=True) if run_row["prompt_id"] else None
+    want_title = bool(prompt and prompt["title_pending"])
+
     try:
-        scores, usage = llm.score_batch(
+        scores, usage, title = llm.score_batch(
             run_row["grading_prompt"],
             [{**paper, "id": str(paper["id"])} for paper in chunk],
             run_row["ai_model"],
+            examples=run_row["examples_snapshot"],
+            want_title=want_title,
         )
     except llm.LLMError as exc:
         # Leave the run "running" with nothing written for this chunk, so the
@@ -413,11 +461,113 @@ def process_analysis_run(run_id):
 
     scores_by_paper_id = {int(paper_id): scored for paper_id, scored in scores.items()}
     db.record_analysis_chunk(run_id, scores_by_paper_id, usage)
+    if want_title:
+        db.set_generated_prompt_title(prompt["id"], title)
 
     if not db.count_unscored_papers(run_id):
         db.mark_run_completed(run_id)
     run_row = db.get_analysis_run(run_id)
     return jsonify({**_run_to_dict(run_row), "processed": len(scores_by_paper_id)})
+
+
+MAX_PROMPT_NAME_CHARS = 120
+MAX_PROMPT_DESCRIPTION_CHARS = 4000
+
+
+def _prompt_fields(body):
+    """(name, description, error) from a create/edit body."""
+    name = (body.get("name") or "").strip()
+    description = (body.get("description") or "").strip()
+    if not name:
+        return None, None, "'name' cannot be blank"
+    if not description:
+        return None, None, "'description' cannot be blank"
+    if len(name) > MAX_PROMPT_NAME_CHARS:
+        return None, None, f"'name' must be at most {MAX_PROMPT_NAME_CHARS} characters"
+    if len(description) > MAX_PROMPT_DESCRIPTION_CHARS:
+        return None, None, f"'description' must be at most {MAX_PROMPT_DESCRIPTION_CHARS} characters"
+    return name, description, None
+
+
+@app.get("/api/prompts")
+def list_prompts():
+    return jsonify({"prompts": db.list_prompts()})
+
+
+@app.post("/api/prompts")
+def create_prompt():
+    name, description, error = _prompt_fields(request.get_json(silent=True) or {})
+    if error:
+        return jsonify({"error": error}), 400
+    prompt_id = db.create_prompt(name, description)
+    return jsonify(_prompt_to_dict(db.get_prompt(prompt_id)))
+
+
+def _prompt_to_dict(prompt):
+    prompt["examples"] = db.list_prompt_examples(prompt["id"])
+    prompt["example_limit"] = db.EXAMPLE_LIMIT
+    return prompt
+
+
+@app.get("/api/prompts/<int:prompt_id>")
+def get_prompt(prompt_id):
+    prompt = db.get_prompt(prompt_id)
+    if not prompt:
+        return jsonify({"error": "prompt not found"}), 404
+    return jsonify(_prompt_to_dict(prompt))
+
+
+@app.patch("/api/prompts/<int:prompt_id>")
+def update_prompt(prompt_id):
+    if db.get_prompt(prompt_id) is None:
+        return jsonify({"error": "prompt not found"}), 404
+    name, description, error = _prompt_fields(request.get_json(silent=True) or {})
+    if error:
+        return jsonify({"error": error}), 400
+    db.update_prompt(prompt_id, name, description)
+    return jsonify(_prompt_to_dict(db.get_prompt(prompt_id)))
+
+
+@app.delete("/api/prompts/<int:prompt_id>")
+def delete_prompt(prompt_id):
+    if db.get_prompt(prompt_id) is None:
+        return jsonify({"error": "prompt not found"}), 404
+    db.delete_prompt(prompt_id)
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/prompts/<int:prompt_id>/examples/<int:example_id>")
+def remove_prompt_example(prompt_id, example_id):
+    if db.get_prompt(prompt_id) is None:
+        return jsonify({"error": "prompt not found"}), 404
+    if not db.remove_prompt_example(prompt_id, example_id):
+        return jsonify({"error": "example not found"}), 404
+    return jsonify({"ok": True})
+
+
+@app.post("/api/analysis-runs/<int:run_id>/examples")
+def mark_run_example(run_id):
+    """Save one scored paper from this run as a good example for the run's
+    prompt. Stores a copy of the score and reasoning as they are now."""
+    run_row = db.get_analysis_run(run_id)
+    if not run_row:
+        return jsonify({"error": "analysis run not found"}), 404
+    prompt = db.get_prompt(run_row["prompt_id"]) if run_row["prompt_id"] else None
+    if not prompt:
+        return jsonify({"error": "this run's prompt no longer exists"}), 400
+
+    body = request.get_json(silent=True) or {}
+    try:
+        paper_id = int(body.get("paper_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "missing or invalid 'paper_id'"}), 400
+
+    result = db.get_run_result(run_id, paper_id)
+    if not result or result["score"] is None or not result["rationale"]:
+        return jsonify({"error": "that paper has no score in this run"}), 400
+
+    db.add_prompt_example(prompt["id"], paper_id, run_id, result["score"], result["rationale"])
+    return jsonify({"ok": True, "prompt_id": prompt["id"]})
 
 
 @app.get("/")

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import { StageIndicator } from '../components/Spinner'
 import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from '../components/AiModelSelect'
+import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { postJson } from '../lib/api'
 
@@ -80,6 +81,7 @@ export default function DiscoverPapersPage() {
       const retrievalPayload = {
         question: trimmed,
         queries: expand.queries,
+        title: expand.title,
         usage: expand.usage,
         from_year: fromYear ? Number(fromYear) : undefined,
         to_year: toYear ? Number(toYear) : undefined,
@@ -137,12 +139,12 @@ export default function DiscoverPapersPage() {
         <form onSubmit={runDiscovery} className="flex flex-col gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">Topic</label>
-            <textarea
+            <AutoGrowTextarea
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               placeholder="e.g. nitrogen cycling in peatland soils"
               rows={3}
-              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
             />
           </div>
 
@@ -184,7 +186,7 @@ export default function DiscoverPapersPage() {
 
           <div>
             <span className="block text-sm font-medium text-gray-700">AI model (for query expansion)</span>
-            <div className="mt-1">
+            <div className="mt-1 max-w-xs">
               {configured ? (
                 <AiModelSelect providers={providers} value={choice} onChange={setAiChoice} />
               ) : (

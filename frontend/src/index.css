@@ -1,1 +1,15 @@
 @import "tailwindcss";
+
+/* Active text field: just a darker border, no outline or ring. Deliberately
+   outside any @layer so it beats the border-color utilities on each field. */
+input:not([type="checkbox"]):not([type="radio"]):focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--color-gray-500);
+}
+
+/* No drag handle on any textarea; fields that should grow use AutoGrowTextarea. */
+textarea {
+  resize: none;
+}

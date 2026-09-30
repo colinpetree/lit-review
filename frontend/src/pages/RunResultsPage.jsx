@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { PageShell } from '../components/ui'
+import { PageShell, BackLink } from '../components/ui'
 import PaperCard from '../components/PaperCard'
-import { fetchJson } from '../lib/api'
+import { fetchJson, postJson } from '../lib/api'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
+import { datasetLabels } from '../lib/format'
 
 export default function RunResultsPage() {
   const { id } = useParams()
@@ -72,14 +73,34 @@ export default function RunResultsPage() {
     }))
   }
 
+  // Throws on failure so the confirmation modal can show the error.
+  const markExample = async (paper) => {
+    await postJson(`/api/analysis-runs/${id}/examples`, { paper_id: paper.id })
+    setRun((prev) => ({
+      ...prev,
+      results: prev.results.map((p) => (p.id === paper.id ? { ...p, is_example: true } : p)),
+    }))
+  }
+  const canMarkExamples = run.prompt && !run.prompt.deleted
+
   return (
     <PageShell title={run.grading_prompt}>
-      <Link to="/results" className="text-sm text-blue-600 hover:underline">
-        ← Back to Past Results
-      </Link>
+      <BackLink to="/results">Back to Past Results</BackLink>
 
-      <p className="mt-4 text-sm text-gray-500">
-        Datasets: {run.datasets.map((d) => d.verbose_query).join(', ')}
+      {run.prompt ? (
+        <p className="mt-4 text-sm text-gray-500">
+          Prompt:{' '}
+          {run.prompt.deleted ? (
+            run.prompt.name
+          ) : (
+            <Link to={`/prompts/${run.prompt.id}`} className="text-blue-600 hover:underline">
+              {run.prompt.name}
+            </Link>
+          )}
+        </p>
+      ) : null}
+      <p className="mt-1 text-sm text-gray-500">
+        Datasets: {datasetLabels(run.datasets).join(', ')}
       </p>
       <p className="mt-1 text-sm text-gray-500">
         {run.ai_model} · {run.status} · ${run.cost.toFixed(4)}
@@ -102,6 +123,7 @@ export default function RunResultsPage() {
             key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}
             result={paper}
             onUpdate={handlePaperUpdate}
+            onMarkExample={canMarkExamples ? markExample : undefined}
           />
         ))}
       </ul>

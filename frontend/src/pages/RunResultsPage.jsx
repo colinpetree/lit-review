@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { PageShell, BackLink } from '../components/ui'
 import PaperCard from '../components/PaperCard'
+import PaperFilterBar from '../components/PaperFilterBar'
+import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
 import { fetchJson, postJson } from '../lib/api'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
 import { datasetLabels } from '../lib/format'
@@ -11,6 +13,7 @@ export default function RunResultsPage() {
   const [run, setRun] = useState(null)
   const [error, setError] = useState(null)
   const [resuming, setResuming] = useState(false)
+  const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
   // /results/:id is one long-lived route element - React Router doesn't
   // remount it on a param-only change, so a "Resume scoring" loop started
   // on one run keeps running (and keeps calling setRun) even after the
@@ -25,6 +28,7 @@ export default function RunResultsPage() {
     setError(null)
     setRun(null)
     setResuming(false)
+    setFilter(EMPTY_PAPER_FILTER)
     fetchJson(`/api/analysis-runs/${id}`)
       .then((r) => !cancelled && setRun(mergeRunResults(r)))
       .catch((err) => !cancelled && setError(err.message))
@@ -82,6 +86,7 @@ export default function RunResultsPage() {
     }))
   }
   const canMarkExamples = run.prompt && !run.prompt.deleted
+  const visibleResults = filterPapers(run.results, filter)
 
   return (
     <PageShell title={run.grading_prompt}>
@@ -117,8 +122,14 @@ export default function RunResultsPage() {
         </button>
       ) : null}
 
+      <PaperFilterBar filter={filter} onChange={setFilter} shown={visibleResults.length} total={run.results.length} />
+
+      {isPaperFilterActive(filter) && visibleResults.length === 0 ? (
+        <p className="mt-4 text-sm text-gray-500">No papers match the current filters.</p>
+      ) : null}
+
       <ul className="mt-4 flex flex-col gap-3">
-        {run.results.map((paper, index) => (
+        {visibleResults.map((paper, index) => (
           <PaperCard
             key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}
             result={paper}

@@ -303,7 +303,7 @@ def get_or_create_paper(result):
 
 
 def _paper_row_to_dict(row):
-    return {
+    paper = {
         "id": row["paper_id"] if "paper_id" in row.keys() else row["id"],
         "title": row["title"],
         "abstract": row["abstract"],
@@ -315,9 +315,13 @@ def _paper_row_to_dict(row):
         "venue": row["venue"],
         "authors": json.loads(row["authors"]),
         "is_review": bool(row["is_review"]),
-        # Only present for rows read through dataset_paper (a per-dataset flag).
-        "excluded": bool(row["excluded_at"]) if "excluded_at" in row.keys() else False,
     }
+    # A per-dataset flag, so only set for rows read through dataset_paper. Left
+    # out otherwise (not False), so a paper edit's response can't overwrite the
+    # page's existing excluded state when merged into it.
+    if "excluded_at" in row.keys():
+        paper["excluded"] = bool(row["excluded_at"])
+    return paper
 
 
 def get_paper(paper_id):

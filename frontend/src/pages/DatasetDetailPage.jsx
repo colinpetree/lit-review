@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { PageShell, Card, BackLink } from '../components/ui'
 import PaperCard from '../components/PaperCard'
+import PaperFilterBar from '../components/PaperFilterBar'
+import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
 import EditableCardHeader from '../components/EditableCardHeader'
 import useSavedState from '../lib/useSavedState'
 import useUnsavedChangesWarning from '../lib/useUnsavedChangesWarning'
@@ -91,11 +93,13 @@ export default function DatasetDetailPage() {
   const [dataset, setDataset] = useState(null)
   const [error, setError] = useState(null)
   const [toggleError, setToggleError] = useState(null)
+  const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
 
   useEffect(() => {
     let cancelled = false
     setError(null)
     setToggleError(null)
+    setFilter(EMPTY_PAPER_FILTER)
     setDataset(null)
     fetchJson(`/api/datasets/${id}`)
       .then((d) => !cancelled && setDataset(d))
@@ -144,6 +148,7 @@ export default function DatasetDetailPage() {
 
   const includedCount = dataset.papers.filter((p) => !p.excluded).length
   const excludedCount = dataset.papers.length - includedCount
+  const visiblePapers = filterPapers(dataset.papers, filter)
 
   const yearRange = formatYearRange(dataset.oldest_year, dataset.newest_year, dataset.newest_publication_date)
 
@@ -176,8 +181,14 @@ export default function DatasetDetailPage() {
 
       {toggleError ? <p className="mt-3 text-sm text-red-600">{toggleError}</p> : null}
 
+      <PaperFilterBar filter={filter} onChange={setFilter} shown={visiblePapers.length} total={dataset.papers.length} />
+
+      {isPaperFilterActive(filter) && visiblePapers.length === 0 ? (
+        <p className="mt-4 text-sm text-gray-500">No papers match the current filters.</p>
+      ) : null}
+
       <ul className="mt-4 flex flex-col gap-3">
-        {dataset.papers.map((paper, index) => (
+        {visiblePapers.map((paper, index) => (
           <PaperCard
             key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}
             result={paper}

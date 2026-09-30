@@ -129,8 +129,11 @@ def _dataset_to_dict(dataset_row, papers):
     # (PLAN.md's Paper/Dataset model), never joined to any analysis_run for
     # display. Scores only ever appear on the Analyze Papers / Past Results
     # side (RunResultsPage), never on Paper Data Sets.
-    years = [p["year"] for p in papers if p.get("year")]
-    dates = [p["publication_date"] for p in papers if p.get("publication_date")]
+    # Excluded papers are in `papers` (so the detail page can show them grayed
+    # out) but don't count toward the year spread, matching list_datasets.
+    active = [p for p in papers if not p.get("excluded")]
+    years = [p["year"] for p in active if p.get("year")]
+    dates = [p["publication_date"] for p in active if p.get("publication_date")]
     return {
         "id": dataset_row["id"],
         "name": dataset_row["name"],
@@ -269,7 +272,7 @@ def get_dataset(dataset_id):
     dataset_row = db.get_dataset(dataset_id)
     if not dataset_row:
         return jsonify({"error": "dataset not found"}), 404
-    papers = db.get_dataset_papers(dataset_id)
+    papers = db.get_dataset_papers(dataset_id, include_excluded=True)
     return jsonify(_dataset_to_dict(dataset_row, papers))
 
 
@@ -285,7 +288,9 @@ def update_dataset(dataset_id):
     if len(name) > MAX_DATASET_NAME_CHARS:
         return jsonify({"error": f"'name' must be at most {MAX_DATASET_NAME_CHARS} characters"}), 400
     db.rename_dataset(dataset_id, name)
-    return jsonify(_dataset_to_dict(db.get_dataset(dataset_id), db.get_dataset_papers(dataset_id)))
+    return jsonify(
+        _dataset_to_dict(db.get_dataset(dataset_id), db.get_dataset_papers(dataset_id, include_excluded=True))
+    )
 
 
 @app.delete("/api/datasets/<int:dataset_id>")
@@ -306,10 +311,18 @@ def delete_analysis_run(run_id):
     return jsonify({"ok": True})
 
 
-@app.delete("/api/datasets/<int:dataset_id>/papers/<int:paper_id>")
-def exclude_dataset_paper(dataset_id, paper_id):
-    db.exclude_dataset_paper(dataset_id, paper_id)
-    return jsonify({"ok": True})
+@app.patch("/api/datasets/<int:dataset_id>/papers/<int:paper_id>")
+def update_dataset_paper(dataset_id, paper_id):
+    """Exclude (or restore) a paper within this dataset. Excluded papers stay
+    in the dataset but are skipped when it's used in an analysis run."""
+    if db.get_dataset(dataset_id) is None:
+        return jsonify({"error": "dataset not found"}), 404
+    excluded = (request.get_json(silent=True) or {}).get("excluded")
+    if not isinstance(excluded, bool):
+        return jsonify({"error": "'excluded' must be true or false"}), 400
+    if not db.set_dataset_paper_excluded(dataset_id, paper_id, excluded):
+        return jsonify({"error": "paper not in dataset"}), 404
+    return jsonify({"id": paper_id, "excluded": excluded})
 
 
 @app.patch("/api/papers/<int:paper_id>")

@@ -315,6 +315,8 @@ def _paper_row_to_dict(row):
         "venue": row["venue"],
         "authors": json.loads(row["authors"]),
         "is_review": bool(row["is_review"]),
+        # Only present for rows read through dataset_paper (a per-dataset flag).
+        "excluded": bool(row["excluded_at"]) if "excluded_at" in row.keys() else False,
     }
 
 
@@ -440,13 +442,16 @@ def get_dataset_papers(dataset_id, include_excluded=False):
         return [_paper_row_to_dict(row) for row in rows]
 
 
-def exclude_dataset_paper(dataset_id, paper_id):
+def set_dataset_paper_excluded(dataset_id, paper_id, excluded):
+    """Soft-exclude (or restore) a paper within one dataset. Returns False if
+    the paper isn't in the dataset."""
     with _LOCK, closing(_connect()) as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE dataset_paper SET excluded_at = ? WHERE dataset_id = ? AND paper_id = ?",
-            (_now(), dataset_id, paper_id),
+            (_now() if excluded else None, dataset_id, paper_id),
         )
         conn.commit()
+        return cur.rowcount > 0
 
 
 def rename_dataset(dataset_id, name):

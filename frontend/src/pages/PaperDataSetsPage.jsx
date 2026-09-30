@@ -44,8 +44,10 @@ export default function PaperDataSetsPage() {
                   <p className="mt-2 text-sm text-gray-400">
                     {d.paper_count} paper{d.paper_count === 1 ? '' : 's'}
                     {yearRange ? ` · ${yearRange}` : ''}
-                    {formatDateTime(d.created_at) ? ` · created ${formatDateTime(d.created_at)}` : ''}
                   </p>
+                  {formatDateTime(d.created_at) ? (
+                    <p className="text-sm text-gray-400">created {formatDateTime(d.created_at)}</p>
+                  ) : null}
                 </Card>
               </Link>
               <DeleteMenu

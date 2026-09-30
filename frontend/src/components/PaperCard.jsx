@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { BookmarkPlus, Pencil } from 'lucide-react'
+import { BookmarkPlus, Eye, EyeOff, Pencil } from 'lucide-react'
 import { patchJson } from '../lib/api'
 import MoreMenu from './MoreMenu'
 import ConfirmModal from './ConfirmModal'
@@ -107,16 +107,28 @@ function EditForm({ result, onSave, onCancel }) {
 }
 
 // onUpdate enables the Edit action. onMarkExample (run results only) enables
-// "Mark as example" for a scored paper that isn't already one.
-export default function PaperCard({ result, onUpdate, onMarkExample }) {
+// "Mark as example" for a scored paper that isn't already one. onToggleExclude
+// (data set page only) enables the Exclude/Include toggle; an excluded paper
+// (result.excluded) is shown grayed out.
+export default function PaperCard({ result, onUpdate, onMarkExample, onToggleExclude }) {
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [markingExample, setMarkingExample] = useState(false)
+
+  const dim = result.excluded ? 'opacity-30 grayscale' : ''
 
   const menuItems = []
   if (onUpdate) menuItems.push({ label: 'Edit', icon: Pencil, onClick: () => setEditing(true) })
   if (onMarkExample && result.score != null && !result.is_example) {
     menuItems.push({ label: 'Mark as example', icon: BookmarkPlus, onClick: () => setMarkingExample(true) })
+  }
+
+  if (onToggleExclude) {
+    menuItems.push({
+      label: result.excluded ? 'Include paper' : 'Exclude paper',
+      icon: result.excluded ? Eye : EyeOff,
+      onClick: () => onToggleExclude(result),
+    })
   }
 
   if (editing) {
@@ -133,9 +145,15 @@ export default function PaperCard({ result, onUpdate, onMarkExample }) {
   }
 
   return (
-    <li className="border border-gray-200 rounded-lg p-4 hover:border-gray-300">
+    <li
+      className={`rounded-lg p-4 border ${
+        result.excluded
+          ? 'border-gray-100 bg-gray-100'
+          : 'border-gray-200 hover:border-gray-300'
+      }`}
+    >
       <div className="flex items-start justify-between gap-4">
-        <h3 className="font-medium text-gray-900">
+        <h3 className={`font-medium text-gray-900 ${dim}`}>
           {result.url ? (
             <a
               href={result.url}
@@ -155,13 +173,18 @@ export default function PaperCard({ result, onUpdate, onMarkExample }) {
               Example
             </span>
           ) : null}
+          {result.excluded ? (
+            <span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
+              Excluded
+            </span>
+          ) : null}
           <ScoreBadge score={result.score} />
-          <span className="text-sm text-gray-500">{result.year ?? '—'}</span>
+          <span className={`text-sm text-gray-500 ${dim}`}>{result.year ?? '—'}</span>
           {menuItems.length ? <MoreMenu items={menuItems} /> : null}
         </div>
       </div>
 
-      <p className="mt-1 text-sm text-gray-500">
+      <p className={`mt-1 text-sm text-gray-500 ${dim}`}>
         {(() => {
           const named = result.authors.filter(Boolean)
           return (
@@ -178,11 +201,11 @@ export default function PaperCard({ result, onUpdate, onMarkExample }) {
       </p>
 
       {result.rationale ? (
-        <p className="mt-2 text-sm text-gray-700 italic">{result.rationale}</p>
+        <p className={`mt-2 text-sm text-gray-700 italic ${dim}`}>{result.rationale}</p>
       ) : null}
 
       {result.abstract ? (
-        <div className="mt-2">
+        <div className={`mt-2 ${dim}`}>
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
@@ -195,7 +218,7 @@ export default function PaperCard({ result, onUpdate, onMarkExample }) {
           ) : null}
         </div>
       ) : (
-        <p className="mt-2 text-sm text-gray-400 italic">No abstract available</p>
+        <p className={`mt-2 text-sm text-gray-400 italic ${dim}`}>No abstract available</p>
       )}
 
       {markingExample ? (

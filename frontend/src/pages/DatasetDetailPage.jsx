@@ -90,10 +90,12 @@ export default function DatasetDetailPage() {
   const navigate = useNavigate()
   const [dataset, setDataset] = useState(null)
   const [error, setError] = useState(null)
+  const [toggleError, setToggleError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
     setError(null)
+    setToggleError(null)
     setDataset(null)
     fetchJson(`/api/datasets/${id}`)
       .then((d) => !cancelled && setDataset(d))
@@ -125,6 +127,24 @@ export default function DatasetDetailPage() {
     }))
   }
 
+  const toggleExclude = async (paper) => {
+    setToggleError(null)
+    try {
+      const updated = await patchJson(`/api/datasets/${dataset.id}/papers/${paper.id}`, {
+        excluded: !paper.excluded,
+      })
+      setDataset((prev) => ({
+        ...prev,
+        papers: prev.papers.map((p) => (p.id === paper.id ? { ...p, excluded: updated.excluded } : p)),
+      }))
+    } catch (err) {
+      setToggleError(err.message)
+    }
+  }
+
+  const includedCount = dataset.papers.filter((p) => !p.excluded).length
+  const excludedCount = dataset.papers.length - includedCount
+
   const yearRange = formatYearRange(dataset.oldest_year, dataset.newest_year, dataset.newest_publication_date)
 
   return (
@@ -140,7 +160,8 @@ export default function DatasetDetailPage() {
 
       <div className="mt-6 flex items-center justify-between gap-4">
         <p className="text-sm text-gray-500">
-          {dataset.papers.length} papers
+          {includedCount} paper{includedCount === 1 ? '' : 's'}
+          {excludedCount ? ` (${excludedCount} excluded)` : ''}
           {yearRange ? ` · ${yearRange}` : ''}
           {dataset.cost ? ` · expansion cost: $${dataset.cost.toFixed(4)}` : ''}
         </p>
@@ -153,12 +174,15 @@ export default function DatasetDetailPage() {
         </button>
       </div>
 
+      {toggleError ? <p className="mt-3 text-sm text-red-600">{toggleError}</p> : null}
+
       <ul className="mt-4 flex flex-col gap-3">
         {dataset.papers.map((paper, index) => (
           <PaperCard
             key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}
             result={paper}
             onUpdate={handlePaperUpdate}
+            onToggleExclude={toggleExclude}
           />
         ))}
       </ul>

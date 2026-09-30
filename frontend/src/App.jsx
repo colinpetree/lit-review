@@ -178,18 +178,94 @@ function SettingsPanel({ onClose }) {
   )
 }
 
+async function fetchJson(url, options) {
+  const res = await fetch(url, options)
+  let data
+  try {
+    data = await res.json()
+  } catch {
+    // A non-JSON body (an HTML error page from a proxy in front of the
+    // backend, for example) means we can't trust anything but the status.
+    throw new Error(`Unexpected response from the server (${res.status}).`)
+  }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
+  return data
+}
+
+function PastSearches({ datasets, onSelect }) {
+  if (!datasets.length) return null
+  return (
+    <div className="mt-6">
+      <h2 className="text-sm font-medium text-gray-700">Past searches</h2>
+      <ul className="mt-2 flex flex-col gap-1">
+        {datasets.map((d) => (
+          <li key={d.id}>
+            <button
+              type="button"
+              onClick={() => onSelect(d.id)}
+              className="w-full rounded-md border border-gray-200 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+            >
+              {d.verbose_query}
+              <span className="ml-2 text-gray-400">
+                {d.paper_count} paper{d.paper_count === 1 ? '' : 's'}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function App() {
   const [query, setQuery] = useState('')
   const [aiAssisted, setAiAssisted] = useState(false)
   const [results, setResults] = useState([])
   const [cost, setCost] = useState(null)
+  const [progress, setProgress] = useState(null) // { processed, remaining } while an AI run is in flight
   const [status, setStatus] = useState('idle') // idle | loading | error | done
   const [error, setError] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pastDatasets, setPastDatasets] = useState([])
   // Tracks the in-flight request so a slower, older response can never
   // overwrite the results of a newer one - the only signal that survives
   // is the most recently submitted query's.
   const activeRequestRef = useRef(null)
+
+  const refreshPastSearches = () => {
+    fetch('/api/datasets')
+      .then((res) => res.json())
+      .then((data) => setPastDatasets(data.datasets ?? []))
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    refreshPastSearches()
+  }, [])
+
+  // Repeatedly processes one scoring chunk at a time until the run is
+  // completed - this is what lets a reopened run (see loadDataset below)
+  // skip straight to results with zero new LLM calls, since /process only
+  // ever scores what's missing. Scores are merged onto the full paper list
+  // (rather than replacing it with just the scored-so-far subset) so the
+  // list doesn't visibly shrink and regrow as chunks land - unscored papers
+  // stay visible with no score badge until their chunk completes.
+  const driveAnalysisRun = async (runId, signal, allPapers) => {
+    const byId = new Map(allPapers.map((p) => [p.id, p]))
+    for (;;) {
+      const run = await fetchJson(`/api/analysis-runs/${runId}/process`, {
+        method: 'POST',
+        signal,
+      })
+      for (const scored of run.results) byId.set(scored.id, scored)
+      setResults(
+        [...byId.values()].sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+      )
+      setCost(run.cost)
+      setProgress({ processed: run.results.length, remaining: run.remaining })
+      if (run.status === 'completed') break
+    }
+  }
 
   const runSearch = async (e) => {
     e.preventDefault()
@@ -203,31 +279,61 @@ function App() {
     setStatus('loading')
     setError(null)
     setCost(null)
+    setProgress(null)
 
     try {
-      const res = aiAssisted
-        ? await fetch('/api/review', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: trimmed }),
-            signal: controller.signal,
-          })
-        : await fetch(`/api/search?q=${encodeURIComponent(trimmed)}`, {
-            signal: controller.signal,
-          })
-
-      let data
-      try {
-        data = await res.json()
-      } catch {
-        // A non-JSON body (an HTML error page from a proxy in front of the
-        // backend, for example) means we can't trust anything but the status.
-        throw new Error(`Unexpected response from the server (${res.status}).`)
+      if (aiAssisted) {
+        const dataset = await fetchJson('/api/datasets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: trimmed }),
+          signal: controller.signal,
+        })
+        setResults(dataset.papers)
+        setCost(dataset.cost)
+        const run = await fetchJson(`/api/datasets/${dataset.id}/analysis-runs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+        })
+        await driveAnalysisRun(run.id, controller.signal, dataset.papers)
+        refreshPastSearches()
+      } else {
+        const data = await fetchJson(`/api/search?q=${encodeURIComponent(trimmed)}`, {
+          signal: controller.signal,
+        })
+        setResults(data.results)
       }
+      setStatus('done')
+    } catch (err) {
+      if (err.name === 'AbortError') return
+      setError(err.message)
+      setStatus('error')
+    }
+  }
 
-      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
-      setResults(data.results)
-      setCost(data.cost ?? null)
+  const loadDataset = async (datasetId) => {
+    activeRequestRef.current?.abort()
+    const controller = new AbortController()
+    activeRequestRef.current = controller
+
+    setStatus('loading')
+    setError(null)
+    setProgress(null)
+
+    try {
+      const dataset = await fetchJson(`/api/datasets/${datasetId}`, { signal: controller.signal })
+      setQuery(dataset.verbose_query)
+      setAiAssisted(true)
+      const latestRun = dataset.runs[0] // most recent only - see PLAN.md scope note
+      if (latestRun) {
+        // Reopening never calls the LLM: a completed run has nothing left to
+        // score, so /process immediately returns its saved results.
+        await driveAnalysisRun(latestRun.id, controller.signal, dataset.papers)
+      } else {
+        setResults(dataset.papers)
+        setCost(dataset.cost)
+      }
       setStatus('done')
     } catch (err) {
       if (err.name === 'AbortError') return
@@ -286,14 +392,22 @@ function App() {
           API key in Settings)
         </label>
 
+        <PastSearches datasets={pastDatasets} onSelect={loadDataset} />
+
         {status === 'error' ? (
           <p className="mt-4 text-sm text-red-600">{error}</p>
+        ) : null}
+
+        {status === 'loading' && progress ? (
+          <p className="mt-6 text-sm text-gray-500">
+            Scoring… {progress.processed} done, {progress.remaining} remaining
+          </p>
         ) : null}
 
         {status === 'done' ? (
           <p className="mt-6 text-sm text-gray-500">
             {results.length} results
-            {cost ? ` · $${cost.usd.toFixed(4)} (${cost.input_tokens + cost.output_tokens} tokens)` : ''}
+            {cost ? ` · $${cost.toFixed(4)}` : ''}
           </p>
         ) : null}
 

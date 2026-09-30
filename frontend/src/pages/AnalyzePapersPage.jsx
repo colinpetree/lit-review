@@ -76,7 +76,7 @@ export default function AnalyzePapersPage() {
         { signal: controller.signal }
       )
       await driveAnalysisRun(run.id, controller.signal, (update) => {
-        setProgress({ processed: update.results.length, remaining: update.remaining })
+        setProgress({ processed: update.candidate_papers.length - update.remaining, remaining: update.remaining })
       })
       navigate(`/results/${run.id}`)
     } catch (err) {

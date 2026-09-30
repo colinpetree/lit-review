@@ -221,7 +221,9 @@ Persist retrieval (datasets of papers) and LLM judgment (analysis runs that grad
 dataset against a prompt) as two separate, independently reusable models - see Data
 model (Phase 3) above for the full table design and the resumable-chunk-processing
 approach. Once that's in place, use yes/no/maybe labels to bias re-ranking and future
-query expansion.
+query expansion. (Under review: per-paper yes/no/maybe labels may be replaced by the
+saved-prompt-with-examples design in "Saved prompts with examples" below, which is
+easier for users to understand.)
 
 **Phase 4 (optional, later)**
 Semantic Scholar citation-graph exploration ("show me what cites/references this shortlisted
@@ -241,6 +243,55 @@ from what's actually returned, never ask the model to recall it from memory - an
 flag the result as "auto-filled, unverified" (a paywall/JS-rendered page/redirect can still
 yield wrong or truncated text) rather than making it indistinguishable from a real
 OpenAlex-sourced abstract.
+
+## Saved prompts with examples (proposed, needs review)
+
+Status: idea only, not scheduled. Captured so it can be reviewed before any build work.
+
+**Problem.** The judge's strictness is now fixed by a system prompt with score brackets
+(see `backend/llm.py`), but a user has no way to teach it what "relevant" means for their
+specific question. Per-paper yes/no/maybe labels (Core pipeline step 7) would add a new
+concept to an already slightly confusing flow (discover, dataset, analyze, results).
+
+**Idea.** Introduce a `prompt` entity that bundles what the user is looking for with
+worked examples, and apply it to datasets:
+- **Prompt:** name, description (the text currently typed as `grading_prompt`), and a
+  list of examples.
+- **Example:** a reference to a real `paper` row, the score bracket the user says it
+  belongs in, and an optional one-line note on why. The judge receives the title,
+  abstract, bracket, and note as calibration.
+- **Run:** a prompt applied to one or more datasets, as today, except the prompt comes
+  from the saved object.
+
+**User flow.** Write a prompt on Analyze and run it. On the results page, a wrongly scored
+paper gets a "Fix this score" action (pick the correct bracket, add a note). That paper is
+saved as an example on the prompt and used in the next run. A "this one is right" action
+saves confirmed good calls as well.
+
+**Design decisions to settle.**
+- **Snapshot per run.** Store a copy of the prompt text and examples on each run, not just
+  a link, so editing a prompt never changes what old results mean.
+- **Cap examples.** Each example adds input tokens to every scoring chunk (20 papers).
+  Likely 3-6 active examples; decide whether the UI uses the most recent N or lets the
+  user pick which are active.
+- **Balance.** Correction-only examples skew toward "too high" cases and can push scores
+  too low, so allow confirming good calls too.
+- **Per-prompt, not global.** Relevance depends on the question, so examples belong to a
+  prompt, not to a paper.
+- **Real papers only.** Examples reference actual API-returned `paper` rows, preserving
+  the "never invent citations" rule.
+
+**Suggested phasing.**
+1. Saved prompts only (no examples): new `prompt` table, Analyze picks or creates one,
+   prompt snapshot stored on the run. Small, and clarifies what the prompt box is.
+2. Examples on prompts: results-page correction action, examples injected into
+   `score_batch`. Needs a UX mockup of the results page first.
+3. Later: use examples to inform query expansion.
+
+**Open questions.**
+- How should examples be edited or removed once saved?
+- Do corrections re-score the current run, or only apply to later runs?
+- Does a prompt belong to one dataset, or is it reusable across datasets?
 
 ## Distribution / packaging
 

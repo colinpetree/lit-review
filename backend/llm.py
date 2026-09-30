@@ -138,15 +138,99 @@ def expand_query(research_question, model, n=4):
     return queries, Usage(response.usage.input_tokens, response.usage.output_tokens, model=model)
 
 
-def score_batch(research_question, candidates, model):
+# (name, low, high) - ordered best to worst. The prompt text below and the
+# post-response enforcement in score_batch are both built from this one table
+# so the two can't drift apart.
+SCORE_BRACKETS = [
+    ("direct", 85, 100, "the title and abstract directly address the grading prompt"),
+    ("strong", 65, 84, "same topic and closely related subject or methods, but a different angle"),
+    ("partial", 40, 64, "related background, or covers only part of what the prompt asks"),
+    ("tangential", 15, 39, "shares vocabulary or field but does not address the prompt"),
+    ("unrelated", 0, 14, "off-topic"),
+]
+_BRACKET_RANGES = {name: (low, high) for name, low, high, _ in SCORE_BRACKETS}
+# A paper with no abstract can't be verified against the prompt from its
+# title alone, so it can never score above the top of this bracket.
+NO_ABSTRACT_MAX_SCORE = _BRACKET_RANGES["tangential"][1]
+# Stubs like "N/A" or a one-line teaser are no more checkable than a blank
+# abstract, so anything shorter than this counts as missing.
+MIN_ABSTRACT_CHARS = 100
+NO_JUDGMENT_RATIONALE = "The AI did not return a judgment for this paper."
+
+
+def _usable_abstract(candidate):
+    """The candidate's abstract if it's long enough to judge from, else ''."""
+    abstract = (candidate.get("abstract") or "").strip()
+    return abstract if len(abstract) >= MIN_ABSTRACT_CHARS else ""
+
+_JUDGE_SYSTEM_PROMPT = (
+    "You are a strict relevance judge for scholarly papers. The user gives a grading "
+    "prompt describing what they are looking for. For each paper, compare its title and "
+    "abstract against that prompt and decide how well the paper satisfies it.\n\n"
+    "For each paper, write the `comparison` first: 2-4 sentences stating what the paper "
+    "studies, what the grading prompt asks for, and where they overlap or fail to. Only "
+    "after writing the comparison, choose a `bracket` and then a `score` that falls "
+    "inside that bracket's range:\n"
+    + "\n".join(f"- {name} ({low}-{high}): {desc}" for name, low, high, desc in SCORE_BRACKETS)
+    + "\n\nRules:\n"
+    "- Default to a low score. Most papers returned by a search are not relevant, so most "
+    "should land in tangential or unrelated. Move up a bracket only when the abstract "
+    "gives clear evidence, not because the topic merely sounds similar.\n"
+    "- Shared keywords are not relevance. A paper on a neighboring problem scores "
+    "tangential at best.\n"
+    "- Base every judgment only on the given title and abstract. Never invent or assume "
+    "details the text does not state.\n"
+    f"- If a paper has no abstract, it can score at most {NO_ABSTRACT_MAX_SCORE} "
+    "(tangential), and the comparison must say the abstract was unavailable."
+)
+
+
+def _enforce_bracket(score, bracket, has_abstract):
+    """The schema can't constrain a score to a bracket's range, and the prompt
+    alone isn't a guarantee, so clamp the score into its stated bracket, and
+    cap it for a paper with no abstract. Returns the final integer score."""
+    if bracket in _BRACKET_RANGES:
+        low, high = _BRACKET_RANGES[bracket]
+        score = max(low, min(high, score))
+    score = max(0, min(100, score))
+    if not has_abstract:
+        score = min(score, NO_ABSTRACT_MAX_SCORE)
+    return score
+
+
+def score_batch(grading_prompt, candidates, model):
     """Score a batch of candidate papers (each needs at least id/title/abstract)
-    against the research question, in one LLM call. Returns
-    ({id: {"score": 0-100, "rationale": str}}, Usage)."""
+    against the user's grading prompt. Returns
+    ({id: {"score": 0-100 or None, "rationale": str}}, Usage), with one entry
+    for every candidate id. The model's `comparison` text is the rationale.
+
+    A paper the model skips is retried once on its own. If it is skipped
+    again it gets score None with an explanatory rationale, so the run can
+    finish instead of re-selecting the same unscored paper forever."""
+    scores, usage = _score_call(grading_prompt, candidates, model)
+
+    missing = [c for c in candidates if str(c["id"]) not in scores]
+    if missing:
+        retry_scores, retry_usage = _score_call(grading_prompt, missing, model)
+        scores.update(retry_scores)
+        usage.add(retry_usage)
+
+    for c in candidates:
+        scores.setdefault(
+            str(c["id"]), {"score": None, "rationale": NO_JUDGMENT_RATIONALE}
+        )
+    return scores, usage
+
+
+def _score_call(grading_prompt, candidates, model):
+    """One LLM call. Only ids that belong to `candidates` are returned, so a
+    made-up or non-numeric id from the model is dropped here."""
     client = _client()
 
+    has_abstract = {str(c["id"]): bool(_usable_abstract(c)) for c in candidates}
     papers_block = "\n\n".join(
         f"[{c['id']}] {c.get('title') or '(no title)'}\n"
-        f"{c.get('abstract') or '(no abstract available)'}"
+        f"{_usable_abstract(c) or '(no abstract available)'}"
         for c in candidates
     )
 
@@ -154,18 +238,11 @@ def score_batch(research_question, candidates, model):
         client,
         model=model,
         max_tokens=16000,
-        system=(
-            "You judge relevance of scholarly papers against a researcher's research "
-            "question. For each paper, given only its title and abstract, score how "
-            "relevant/novel it is to the research question from 0 (irrelevant) to 100 "
-            "(highly relevant, directly on-topic), with a one-to-two sentence rationale. "
-            "Base every judgment only on the given title/abstract - never invent details "
-            "about a paper you don't have information on."
-        ),
+        system=_JUDGE_SYSTEM_PROMPT,
         messages=[
             {
                 "role": "user",
-                "content": f"Research question: {research_question}\n\nPapers:\n\n{papers_block}",
+                "content": f"Grading prompt: {grading_prompt}\n\nPapers:\n\n{papers_block}",
             }
         ],
         output_config={
@@ -178,12 +255,18 @@ def score_batch(research_question, candidates, model):
                             "type": "array",
                             "items": {
                                 "type": "object",
+                                # Property order matters: comparison comes before
+                                # bracket/score so the model reasons first.
                                 "properties": {
                                     "id": {"type": "string"},
+                                    "comparison": {"type": "string"},
+                                    "bracket": {
+                                        "type": "string",
+                                        "enum": list(_BRACKET_RANGES),
+                                    },
                                     "score": {"type": "integer"},
-                                    "rationale": {"type": "string"},
                                 },
-                                "required": ["id", "score", "rationale"],
+                                "required": ["id", "comparison", "bracket", "score"],
                                 "additionalProperties": False,
                             },
                         }
@@ -196,6 +279,11 @@ def score_batch(research_question, candidates, model):
     )
     scores = {}
     for row in _parsed_json(response)["scores"]:
-        row["score"] = max(0, min(100, row["score"]))  # schema can't enforce the range; clamp defensively
-        scores[row["id"]] = row
+        paper_id = str(row["id"]).strip()
+        if paper_id not in has_abstract:
+            continue
+        scores[paper_id] = {
+            "score": _enforce_bracket(row["score"], row["bracket"], has_abstract[paper_id]),
+            "rationale": row["comparison"],
+        }
     return scores, Usage(response.usage.input_tokens, response.usage.output_tokens, model=model)

@@ -12,9 +12,15 @@ import anthropic
 
 import credentials
 
+# Default suggested model when a caller doesn't specify one - expand_query()
+# and score_batch() always take the model to use as an explicit argument,
+# never read this internally.
 MODEL = "claude-haiku-4-5"
 PRICING_PER_MTOK = {
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+    "claude-sonnet-5": {"input": 2.00, "output": 10.00},
+    "claude-opus-5": {"input": 5.00, "output": 25.00},
+    "claude-fable-5-1": {"input": 10.00, "output": 50.00},
 }
 
 
@@ -94,14 +100,14 @@ def _parsed_json(response):
         raise LLMError(f"Anthropic returned unparseable JSON: {exc}") from exc
 
 
-def expand_query(research_question, n=4):
+def expand_query(research_question, model, n=4):
     """Turn a free-text research question into a handful of literal keyword
     queries suitable for OpenAlex's search param (which is literal, not
     semantic)."""
     client = _client()
     response = _call(
         client,
-        model=MODEL,
+        model=model,
         max_tokens=1024,
         system=(
             f"You expand a researcher's free-text research question into at most {n} "
@@ -129,10 +135,10 @@ def expand_query(research_question, n=4):
         },
     )
     queries = _parsed_json(response)["queries"]
-    return queries, Usage(response.usage.input_tokens, response.usage.output_tokens)
+    return queries, Usage(response.usage.input_tokens, response.usage.output_tokens, model=model)
 
 
-def score_batch(research_question, candidates):
+def score_batch(research_question, candidates, model):
     """Score a batch of candidate papers (each needs at least id/title/abstract)
     against the research question, in one LLM call. Returns
     ({id: {"score": 0-100, "rationale": str}}, Usage)."""
@@ -146,7 +152,7 @@ def score_batch(research_question, candidates):
 
     response = _call(
         client,
-        model=MODEL,
+        model=model,
         max_tokens=16000,
         system=(
             "You judge relevance of scholarly papers against a researcher's research "
@@ -192,4 +198,4 @@ def score_batch(research_question, candidates):
     for row in _parsed_json(response)["scores"]:
         row["score"] = max(0, min(100, row["score"]))  # schema can't enforce the range; clamp defensively
         scores[row["id"]] = row
-    return scores, Usage(response.usage.input_tokens, response.usage.output_tokens)
+    return scores, Usage(response.usage.input_tokens, response.usage.output_tokens, model=model)

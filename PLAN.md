@@ -228,6 +228,20 @@ Semantic Scholar citation-graph exploration ("show me what cites/references this
 paper"), export shortlist to BibTeX/RIS for the user's reference manager, WoS/Scopus
 integration if the primary user's institution has API access.
 
+Also under consideration: an AI-assisted "find missing abstracts" action on the Paper Data
+Sets page, on top of the manual paper-editing capability already built (`PATCH
+/api/papers/<id>` - lets the user hand-correct/fill in any paper's title, abstract, DOI,
+year, venue, URL; since `paper` is a single shared row, an edit is visible everywhere that
+paper appears). The risk with an automated version is specifically *how* it fills the gap:
+asking an LLM to recall the abstract from its own training data risks a fabricated abstract
+silently sitting in a real paper's record, which violates this project's core "never invent
+citations" principle worse than a blank abstract does - a hallucinated one looks legitimate.
+If built, it should fetch the paper's DOI landing page and extract the real abstract text
+from what's actually returned, never ask the model to recall it from memory - and even then,
+flag the result as "auto-filled, unverified" (a paywall/JS-rendered page/redirect can still
+yield wrong or truncated text) rather than making it indistinguishable from a real
+OpenAlex-sourced abstract.
+
 ## Distribution / packaging
 
 Target user has never used a command line or downloaded code from GitHub before, so

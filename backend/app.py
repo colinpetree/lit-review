@@ -266,6 +266,24 @@ def get_dataset(dataset_id):
     return jsonify(_dataset_to_dict(dataset_row, papers))
 
 
+@app.delete("/api/datasets/<int:dataset_id>")
+def delete_dataset(dataset_id):
+    """Soft delete of the grouping only; papers and runs that used it are
+    left alone."""
+    if db.get_dataset(dataset_id) is None:
+        return jsonify({"error": "dataset not found"}), 404
+    db.delete_dataset(dataset_id)
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/analysis-runs/<int:run_id>")
+def delete_analysis_run(run_id):
+    if db.get_analysis_run(run_id) is None:
+        return jsonify({"error": "analysis run not found"}), 404
+    db.delete_analysis_run(run_id)
+    return jsonify({"ok": True})
+
+
 @app.delete("/api/datasets/<int:dataset_id>/papers/<int:paper_id>")
 def exclude_dataset_paper(dataset_id, paper_id):
     db.exclude_dataset_paper(dataset_id, paper_id)

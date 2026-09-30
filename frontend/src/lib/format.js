@@ -11,6 +11,14 @@ function formatNewest(newestYear, newestPublicationDate) {
   return newestYear ? `${newestYear}` : null
 }
 
+// Timestamps are stored as UTC ISO strings; show them in the user's locale.
+export function formatDate(iso) {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
 export function formatYearRange(oldestYear, newestYear, newestPublicationDate) {
   if (!oldestYear && !newestYear) return null
   const newestLabel = formatNewest(newestYear, newestPublicationDate)

@@ -40,6 +40,25 @@ npm run lint      # oxlint
 
 No test suite exists in either backend or frontend.
 
+### Node/npm in Claude tool shells
+
+Node is managed by fnm (Node 24, same as the earlier project), not installed
+system-wide. The user's PowerShell `$PROFILE` activates it, but the Bash/PowerShell tool
+shells do not load the profile, so `npm` is "not recognized" there. In each PowerShell
+tool call that needs node/npm, activate fnm first:
+
+```powershell
+$fnm="$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Schniz.fnm_Microsoft.Winget.Source_8wekyb3d8bbwe\fnm.exe"
+& $fnm env --shell powershell | Out-String | Invoke-Expression
+& $fnm use 24.19.0 2>&1 | Out-Null
+cd "$(git rev-parse --show-toplevel)\frontend"
+npm run build
+```
+
+Shell state does not persist between tool calls, so repeat this preamble each time. Use
+PowerShell for this, not Bash (fnm is set up for PowerShell). If 24.19.0 is gone, list
+installed versions in `%APPDATA%\fnm\node-versions` and use one of those.
+
 ## Architecture
 
 Single Flask process serves both the API and the built frontend; there is no separate

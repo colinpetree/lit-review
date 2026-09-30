@@ -21,6 +21,10 @@ export function postJson(url, body, options) {
   })
 }
 
+export function deleteJson(url, options) {
+  return fetchJson(url, { method: 'DELETE', ...options })
+}
+
 export function patchJson(url, body, options) {
   return fetchJson(url, {
     method: 'PATCH',

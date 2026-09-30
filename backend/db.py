@@ -117,6 +117,14 @@ def _migrate(conn):
         conn.execute("ALTER TABLE paper ADD COLUMN publication_date TEXT")
         conn.commit()
 
+    # Soft delete: hidden from the UI but kept, since scored runs are meant to
+    # stay available as examples for reusable prompts.
+    for table in ("dataset", "analysis_run"):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "deleted_at" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
+            conn.commit()
+
 
 def _connect():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +303,7 @@ def find_dataset(verbose_query, from_year=None, to_year=None):
             """
             SELECT id FROM dataset
             WHERE verbose_query = ?
+              AND deleted_at IS NULL
               AND (from_year IS ? OR from_year = ?)
               AND (to_year IS ? OR to_year = ?)
             ORDER BY created_at DESC
@@ -317,6 +326,7 @@ def list_datasets():
             FROM dataset d
             LEFT JOIN dataset_paper dp ON dp.dataset_id = d.id AND dp.excluded_at IS NULL
             LEFT JOIN paper p ON p.id = dp.paper_id
+            WHERE d.deleted_at IS NULL
             GROUP BY d.id
             ORDER BY d.created_at DESC
             """
@@ -324,9 +334,12 @@ def list_datasets():
         return [dict(row) for row in rows]
 
 
-def get_dataset(dataset_id):
+def get_dataset(dataset_id, include_deleted=False):
+    query = "SELECT * FROM dataset WHERE id = ?"
+    if not include_deleted:
+        query += " AND deleted_at IS NULL"
     with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM dataset WHERE id = ?", (dataset_id,)).fetchone()
+        row = conn.execute(query, (dataset_id,)).fetchone()
         if not row:
             return None
         d = dict(row)
@@ -353,6 +366,27 @@ def exclude_dataset_paper(dataset_id, paper_id):
         conn.execute(
             "UPDATE dataset_paper SET excluded_at = ? WHERE dataset_id = ? AND paper_id = ?",
             (_now(), dataset_id, paper_id),
+        )
+        conn.commit()
+
+
+def delete_dataset(dataset_id):
+    """Soft-deletes only the dataset grouping. Runs that scored it are kept
+    (they still list it by name), as are papers and LLM call logs."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE dataset SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+            (_now(), dataset_id),
+        )
+        conn.commit()
+
+
+def delete_analysis_run(run_id):
+    """Soft delete: the run and its scores are hidden, not removed."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE analysis_run SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+            (_now(), run_id),
         )
         conn.commit()
 
@@ -413,6 +447,7 @@ def list_all_runs():
             FROM analysis_run run
             JOIN analysis_run_dataset ard ON ard.run_id = run.id
             JOIN dataset d ON d.id = ard.dataset_id
+            WHERE run.deleted_at IS NULL
             GROUP BY run.id
             ORDER BY run.created_at DESC
             """
@@ -420,9 +455,12 @@ def list_all_runs():
         return [dict(row) for row in rows]
 
 
-def get_analysis_run(run_id):
+def get_analysis_run(run_id, include_deleted=False):
+    query = "SELECT * FROM analysis_run WHERE id = ?"
+    if not include_deleted:
+        query += " AND deleted_at IS NULL"
     with closing(_connect()) as conn:
-        row = conn.execute("SELECT * FROM analysis_run WHERE id = ?", (run_id,)).fetchone()
+        row = conn.execute(query, (run_id,)).fetchone()
         return dict(row) if row else None
 
 

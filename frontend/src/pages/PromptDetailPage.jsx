@@ -13,7 +13,7 @@ import { formatDate } from '../lib/format'
 
 const inputClass = 'w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900'
 
-// Name and research question, in the same preview/Edit/Save card style as the
+// Name and research paper criteria, in the same preview/Edit/Save card style as the
 // Settings page. Delete lives at the bottom while editing.
 function PromptDetailsCard({ prompt, onSaved, onDelete }) {
   const [name, setName] = useState(prompt.name)

@@ -134,7 +134,10 @@ export default function DiscoverPapersPage() {
   }
 
   return (
-    <PageShell title="Discover Papers">
+    <PageShell
+      title="Discover Papers"
+      description="Write a sentence describing the topic you want to find research papers about. Choose the databases you want to search and the AI model to process your sentence with. This will create a group of papers associated with your search."
+    >
       <Card>
         <form onSubmit={runDiscovery} className="flex flex-col gap-4">
           <div>

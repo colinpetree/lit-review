@@ -301,14 +301,14 @@ saves confirmed good calls as well.
   allowed there. Examples are never added from the prompt itself.
 - **Prompts are reusable across datasets** and not tied to one. A run picks a prompt.
 - **Creating prompts.** (1) "New prompt" on the Scoring Prompts page: a modal with a title
-  and the research question. (2) Running an analysis on Analyze with the "New prompt"
-  option and a research question. In case 2 the first scoring call of the run also
+  and the research paper criteria. (2) Running an analysis on Analyze with the "New prompt"
+  option and research paper criteria. In case 2 the first scoring call of the run also
   returns a 2-4 word title, and the server names the prompt with it (a placeholder of
   the question's first four words is used until then, or if no title comes back). A title
   is only ever requested for a prompt created this way, never for an existing prompt, and
   it never replaces a title the user set: saving any edit clears the pending flag.
-- **Analyze picker.** The research question field becomes a type-to-filter dropdown of
-  saved prompts with "New prompt" first, which reveals the research question text box.
+- **Analyze picker.** The research paper criteria field becomes a type-to-filter dropdown of
+  saved prompts with "New prompt" first, which reveals the research paper criteria text box.
   Choosing an existing prompt shows its description and example count.
 - **Examples** are added only from a run's results, through a more-horizontal menu on a
   scored paper ("Mark as example", with a confirmation modal explaining the paper's score

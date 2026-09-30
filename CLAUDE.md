@@ -103,7 +103,7 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   each call scores one chunk (`SCORE_CHUNK_SIZE`=20) of still-unscored papers until the
   run's status is `completed`. `frontend/src/lib/driveAnalysisRun.js` is that loop.
 
-- A `prompt` (name + description/research question) is reusable across datasets. Each
+- A `prompt` (name + description/research paper criteria) is reusable across datasets. Each
   run points at one via `prompt_id` but keeps its own snapshot: `grading_prompt` (the text)
   and `examples_snapshot` (the examples used), so editing a prompt never changes old runs.
   `prompt_example` rows are added only from a run's results ("Mark as example", which

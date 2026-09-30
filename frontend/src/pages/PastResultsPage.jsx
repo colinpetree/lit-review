@@ -22,7 +22,10 @@ export default function PastResultsPage() {
   }
 
   return (
-    <PageShell title="Past Results">
+    <PageShell
+      title="Past Results"
+      description="Saved results from previous runs where the AI judge scored papers based on your research criteria."
+    >
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {runs && runs.length === 0 ? (
         <p className="text-sm text-gray-500">

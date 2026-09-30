@@ -22,7 +22,10 @@ export default function PaperDataSetsPage() {
   }
 
   return (
-    <PageShell title="Paper Data Sets">
+    <PageShell
+      title="Paper Data Sets"
+      description="Groups of paper abstracts that serve as data sets for the AI model to rank and score each abstract."
+    >
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {datasets && datasets.length === 0 ? (
         <p className="text-sm text-gray-500">

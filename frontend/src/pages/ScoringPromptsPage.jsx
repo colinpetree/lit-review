@@ -38,7 +38,10 @@ export default function ScoringPromptsPage() {
   }
 
   return (
-    <PageShell title="Scoring Prompts">
+    <PageShell
+      title="Scoring Prompts"
+      description="Refine and re-use paper scoring prompts from previous runs to get better results."
+    >
       <button
         type="button"
         onClick={() => setDialog({ type: 'create' })}

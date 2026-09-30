@@ -22,7 +22,7 @@ export default function AnalyzePapersPage() {
   // they're actually looking for, which can (and often should) differ from
   // whatever question retrieved the dataset in the first place.
   const [gradingPrompt, setGradingPrompt] = useState('')
-  // NEW_PROMPT (write a research question below) or a saved prompt's id.
+  // NEW_PROMPT (write research paper criteria below) or a saved prompt's id.
   const [promptChoice, setPromptChoice] = useState(NEW_PROMPT)
   const [prompts, setPrompts] = useState([])
   const [aiChoice, setAiChoice] = useState(null)
@@ -101,7 +101,10 @@ export default function AnalyzePapersPage() {
   }
 
   return (
-    <PageShell title="Analyze Papers">
+    <PageShell
+      title="Analyze Papers"
+      description="Describe specifically what you are looking for and the AI model will grade each paper abstract from a dataset against your criteria. Results are saved and papers are shown in order of relevance."
+    >
       <Card>
         <form onSubmit={runAnalysis} className="flex flex-col gap-4">
           <div>
@@ -139,7 +142,7 @@ export default function AnalyzePapersPage() {
 
           {isNewPrompt ? (
             <div>
-              <label className="block text-sm font-medium text-gray-700">Research question</label>
+              <label className="block text-sm font-medium text-gray-700">Research paper criteria</label>
               <AutoGrowTextarea
                 value={gradingPrompt}
                 onChange={(e) => setGradingPrompt(e.target.value)}

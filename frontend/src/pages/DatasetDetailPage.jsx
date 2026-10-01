@@ -11,7 +11,7 @@ import useSavedState from '../lib/useSavedState'
 import useUnsavedChangesWarning from '../lib/useUnsavedChangesWarning'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { fetchJson, patchJson } from '../lib/api'
-import { driveFindAbstracts } from '../lib/findAbstracts'
+import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
 
@@ -140,49 +140,55 @@ export default function DatasetDetailPage() {
   const [sort, setSort] = useState(DEFAULT_PAPER_SORT)
   // null until an abstract lookup has run on this data set.
   const [lookup, setLookup] = useState(null)
-  const lookupRequestRef = useRef(null)
   const autoLookupRef = useRef(null)
+  const loadedId = dataset?.id
 
-  // Looks up missing abstracts, filling papers in as they come back. Papers a
-  // lookup already completed for are left out by the server, so this only does
-  // new work. Used by both the automatic run on opening a data set and the
-  // button.
-  const runLookup = useCallback(async (datasetId) => {
-    lookupRequestRef.current?.abort()
-    const controller = new AbortController()
-    lookupRequestRef.current = controller
+  // Looks up missing abstracts. The lookup itself runs in lib/findAbstracts so
+  // it keeps going if the user leaves this page; the subscription below fills
+  // papers in as results come back. Papers a lookup already completed for are
+  // left out by the server, so this only does new work. Used by both the
+  // automatic run on opening a data set and the button.
+  const runLookup = useCallback((datasetId) => startLookup(datasetId), [])
 
-    setLookup({ running: true, total: null, attempted: 0, filledCount: 0, sourceErrors: {}, noDoi: 0 })
-    try {
-      const result = await driveFindAbstracts(datasetId, controller.signal, (progress) => {
-        if (controller.signal.aborted) return
-        const filledById = new Map(progress.filled.map((p) => [p.id, p]))
-        const checkedIds = new Set(progress.checked)
-        if (filledById.size || checkedIds.size) {
-          setDataset((prev) => ({
-            ...prev,
-            papers: prev.papers.map((p) => {
-              if (filledById.has(p.id)) return { ...p, ...filledById.get(p.id) }
-              if (checkedIds.has(p.id)) return { ...p, abstract_checked: true }
-              return p
-            }),
-          }))
-        }
-        setLookup((prev) => ({ ...prev, ...progress, running: true }))
-      })
-      if (controller.signal.aborted) return
-      // An automatic run with nothing to try stays silent.
-      if (result.attempted === 0) setLookup(null)
-      else setLookup((prev) => ({ ...prev, ...result, running: false }))
-    } catch (err) {
-      if (err.name === 'AbortError') return
-      setLookup((prev) => ({ ...prev, running: false, error: err.message }))
+  // Follows this data set's lookup, including one started before the user left
+  // and came back, which is replayed from the lookup's accumulated results.
+  useEffect(() => {
+    if (loadedId == null) return
+    let active = true
+    const sync = (state) => {
+      if (!active) return
+      const filledById = new Map(state.filledPapers.map((p) => [p.id, p]))
+      const checkedIds = new Set(state.checkedIds)
+      if (filledById.size || checkedIds.size) {
+        // Only touch the data set this lookup belongs to; the page may already
+        // be loading a different one.
+        setDataset((prev) =>
+          prev?.id !== loadedId
+            ? prev
+            : {
+                ...prev,
+                papers: prev.papers.map((p) => {
+                  if (filledById.has(p.id)) return { ...p, ...filledById.get(p.id) }
+                  if (checkedIds.has(p.id)) return { ...p, abstract_checked: true }
+                  return p
+                }),
+              }
+        )
+      }
+      // A run that ended with nothing to try stays silent.
+      setLookup(!state.running && state.attempted === 0 && !state.error ? null : state)
     }
-  }, [])
+    const current = getLookup(loadedId)
+    if (current) sync(current)
+    const unsubscribe = subscribeLookup(loadedId, sync)
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [loadedId])
 
   useEffect(() => {
     let cancelled = false
-    lookupRequestRef.current?.abort()
     setError(null)
     setToggleError(null)
     setFilter(EMPTY_PAPER_FILTER)
@@ -193,11 +199,11 @@ export default function DatasetDetailPage() {
       .catch((err) => !cancelled && setError(err.message))
     return () => {
       cancelled = true
-      lookupRequestRef.current?.abort()
     }
   }, [id])
 
-  // Start looking up missing abstracts once, when a data set first loads.
+  // Start looking up missing abstracts once, when a data set first loads (a
+  // lookup already running for it is left alone).
   useEffect(() => {
     if (!dataset || autoLookupRef.current === dataset.id) return
     autoLookupRef.current = dataset.id
@@ -294,14 +300,17 @@ export default function DatasetDetailPage() {
             <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm min-[1560px]:sticky min-[1560px]:top-6">
               <h2 className="mb-3 text-lg font-semibold text-gray-900">Missing Abstracts</h2>
               {lookup?.running ? (
-                <div className="flex items-center gap-2 text-sm text-gray-700">
-                  <Spinner />
-                  <span>
-                    {lookup.total === null
-                      ? 'Looking up abstracts…'
-                      : `Looking up abstracts… ${lookup.attempted} of ${lookup.total}`}
-                  </span>
-                </div>
+                <>
+                  <div className="flex items-center gap-2 text-sm text-gray-700">
+                    <Spinner />
+                    <span>
+                      {lookup.total === null
+                        ? 'Looking up abstracts…'
+                        : `Looking up abstracts… ${lookup.attempted} of ${lookup.total}`}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-gray-700">It is safe to leave this page.</p>
+                </>
               ) : lookupCandidates > 0 ? (
                 <button
                   type="button"
@@ -352,6 +361,15 @@ export default function DatasetDetailPage() {
                   </>
                 )}
               </p>
+              {missingAbstracts > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setFilter((f) => ({ ...f, missingAbstractOnly: true }))}
+                  className="mt-3 text-sm text-blue-600 hover:underline"
+                >
+                  Filter for missing abstracts
+                </button>
+              ) : null}
             </div>
           </aside>
         ) : null}

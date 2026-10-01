@@ -1,4 +1,30 @@
+/* Self-hosted webfonts (latin subset only), the same families as the
+   earlier project. */
+@import '@fontsource/source-sans-3/latin-400.css';
+@import '@fontsource/source-sans-3/latin-500.css';
+@import '@fontsource/source-sans-3/latin-600.css';
+@import '@fontsource/source-sans-3/latin-700.css';
+@import '@fontsource/source-sans-3/latin-400-italic.css';
+@import '@fontsource/source-code-pro/latin-400.css';
+@import '@fontsource/source-code-pro/latin-700.css';
+
 @import "tailwindcss";
+
+@theme {
+  --font-sans: "Source Sans 3", ui-sans-serif, system-ui, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono: "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Source Sans 3's line box is taller above the baseline than below, so text in an
+   items-center row sits slightly higher than a centered icon. Nudge any lucide icon
+   that is a direct child of a flex row (icon-only buttons here are not flex, so
+   they are unaffected). */
+.flex > svg.lucide,
+.inline-flex > svg.lucide {
+  translate: 0 -0.5px;
+}
 
 /* Active text field: just a darker border, no outline or ring. Deliberately
    outside any @layer so it beats the border-color utilities on each field. */

@@ -147,3 +147,11 @@ React 19 + Vite + Tailwind v4 (`@tailwindcss/vite`) + react-router. Routes are i
 `src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), analyze,
 prompts (+ `:id`), results (+ `:id`), settings. Shared UI: `MoreMenu` (more-horizontal
 popover), `Modal`/`ConfirmModal`, `DeleteMenu`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
+
+Fonts match the earlier project: Source Sans 3 and Source Code Pro, self-hosted
+via `@fontsource` (latin subset, imported at the top of `src/index.css`) and mapped to
+`--font-sans`/`--font-mono` in the `@theme` block. No serif is installed because nothing
+uses one. `index.css` also nudges any lucide icon that is a direct child of a `.flex` or
+`.inline-flex` by `-0.5px`, because Source Sans 3's line box makes text sit slightly above
+a centered icon. That rule is unlayered, so it overrides `translate-*` utilities on such
+icons; put those icons in a non-flex wrapper (as the absolute-positioned search icons are).

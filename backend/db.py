@@ -152,6 +152,19 @@ def _migrate(conn):
     if "abstract_checked_at" not in existing_columns:
         conn.execute("ALTER TABLE paper ADD COLUMN abstract_checked_at TEXT")
         conn.commit()
+    # When the user marked a paper read (NULL = unread). On the paper itself,
+    # not a dataset or run, so it follows the paper everywhere it shows up.
+    if "read_at" not in existing_columns:
+        conn.execute("ALTER TABLE paper ADD COLUMN read_at TEXT")
+        conn.commit()
+
+    # The user's relevance call on one run's result: 'relevant', 'not_relevant',
+    # or NULL for neutral. Per result because relevance depends on the run's
+    # research criteria.
+    result_columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_result)")}
+    if "relevance" not in result_columns:
+        conn.execute("ALTER TABLE analysis_result ADD COLUMN relevance TEXT")
+        conn.commit()
 
     # Soft delete: hidden from the UI but kept, since scored runs are meant to
     # stay available as examples for reusable prompts.
@@ -342,6 +355,10 @@ def _paper_row_to_dict(row):
     # (not False) when the row doesn't carry the column, for the same reason.
     if "abstract_checked_at" in row.keys():
         paper["abstract_checked"] = row["abstract_checked_at"] is not None
+    # Global to the paper. Left out (not False) when the row lacks the column,
+    # for the same reason.
+    if "read_at" in row.keys():
+        paper["read"] = row["read_at"] is not None
     return paper
 
 
@@ -373,6 +390,18 @@ def update_paper(paper_id, fields):
     with _LOCK, closing(_connect()) as conn:
         conn.execute(f"UPDATE paper SET {set_clause} WHERE id = ?", (*updates.values(), paper_id))
         conn.commit()
+
+
+def set_paper_read(paper_id, read):
+    """Mark a paper read or unread. Global to the paper, so it shows in every
+    dataset and run containing it. Returns False if the paper doesn't exist."""
+    with _LOCK, closing(_connect()) as conn:
+        cur = conn.execute(
+            "UPDATE paper SET read_at = ? WHERE id = ?",
+            (_now() if read else None, paper_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def get_dataset_papers_missing_abstract(dataset_id):
@@ -656,7 +685,8 @@ def get_run_datasets(run_id):
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            SELECT d.id, d.name, d.verbose_query, d.created_at
+            SELECT d.id, d.name, d.verbose_query, d.created_at,
+                   (d.deleted_at IS NOT NULL) AS deleted
             FROM analysis_run_dataset ard
             JOIN dataset d ON d.id = ard.dataset_id
             WHERE ard.run_id = ?
@@ -664,7 +694,7 @@ def get_run_datasets(run_id):
             """,
             (run_id,),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [{**row, "deleted": bool(row["deleted"])} for row in map(dict, rows)]
 
 
 
@@ -676,8 +706,16 @@ def list_all_runs():
         rows = conn.execute(
             """
             SELECT run.id, run.grading_prompt, run.ai_api, run.ai_model, run.status,
-                   run.created_at, run.completed_at,
+                   run.created_at, run.completed_at, pr.name AS prompt_name,
                    json_group_array(json_object('name', d.name, 'created_at', d.created_at)) AS datasets,
+                   (SELECT COUNT(*) FROM (
+                        SELECT dp.paper_id
+                        FROM dataset_paper dp
+                        JOIN analysis_run_dataset rd ON rd.dataset_id = dp.dataset_id
+                        WHERE rd.run_id = run.id
+                        GROUP BY dp.paper_id
+                        HAVING SUM(CASE WHEN dp.excluded_at IS NULL THEN 1 ELSE 0 END) > 0
+                   )) AS paper_count,
                    (SELECT COALESCE(SUM(usd), 0) FROM llm_call WHERE run_id = run.id)
                    + (SELECT COALESCE(SUM(usd), 0) FROM llm_call
                         WHERE run_id IS NULL
@@ -687,6 +725,7 @@ def list_all_runs():
             FROM analysis_run run
             JOIN analysis_run_dataset ard ON ard.run_id = run.id
             JOIN dataset d ON d.id = ard.dataset_id
+            LEFT JOIN prompt pr ON pr.id = run.prompt_id
             WHERE run.deleted_at IS NULL
             GROUP BY run.id
             ORDER BY run.created_at DESC
@@ -840,11 +879,27 @@ def remove_prompt_example(prompt_id, example_id):
         return cur.rowcount > 0
 
 
+RELEVANCE_VALUES = {"relevant", "neutral", "not_relevant"}
+
+
+def set_result_relevance(run_id, paper_id, relevance):
+    """Set the user's relevance call on a paper's result in one run
+    ('neutral' is stored as NULL). Returns False if the run has no result for
+    the paper."""
+    with _LOCK, closing(_connect()) as conn:
+        cur = conn.execute(
+            "UPDATE analysis_result SET relevance = ? WHERE run_id = ? AND paper_id = ?",
+            (None if relevance == "neutral" else relevance, run_id, paper_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def get_run_results(run_id):
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            SELECT p.*, ar.paper_id, ar.rationale, ar.score,
+            SELECT p.*, ar.paper_id, ar.rationale, ar.score, ar.relevance,
                    (pe.id IS NOT NULL) AS is_example
             FROM analysis_result ar
             JOIN paper p ON p.id = ar.paper_id
@@ -860,6 +915,7 @@ def get_run_results(run_id):
             paper = _paper_row_to_dict(row)
             paper["score"] = row["score"]
             paper["rationale"] = row["rationale"]
+            paper["relevance"] = row["relevance"] or "neutral"
             paper["is_example"] = bool(row["is_example"])
             results.append(paper)
         return results

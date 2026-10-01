@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { BookmarkPlus, Eye, EyeOff, Pencil } from 'lucide-react'
+import { BookmarkPlus, BookOpen, BookOpenCheck, CircleSlash2, Eye, EyeOff, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { patchJson } from '../lib/api'
 import MoreMenu from './MoreMenu'
 import ConfirmModal from './ConfirmModal'
@@ -111,18 +111,56 @@ function EditForm({ result, onSave, onCancel }) {
 // onUpdate enables the Edit action. onMarkExample (run results only) enables
 // "Mark as example" for a scored paper that isn't already one. onToggleExclude
 // (data set page only) enables the Exclude/Include toggle; an excluded paper
-// (result.excluded) is shown grayed out.
-export default function PaperCard({ result, onUpdate, onMarkExample, onToggleExclude }) {
+// (result.excluded) is shown grayed out. onToggleRead enables Mark as read/unread
+// (global to the paper). onSetRelevance (run results only) enables the
+// Relevant/Neutral/Not Relevant choice for a scored paper.
+const RELEVANCE_CHOICES = [
+  { value: 'relevant', label: 'Relevant', icon: ThumbsUp },
+  { value: 'neutral', label: 'Neutral', icon: CircleSlash2 },
+  { value: 'not_relevant', label: 'Not Relevant', icon: ThumbsDown },
+]
+
+export default function PaperCard({
+  result,
+  onUpdate,
+  onMarkExample,
+  onToggleExclude,
+  onToggleRead,
+  onSetRelevance,
+}) {
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [markingExample, setMarkingExample] = useState(false)
 
-  const dim = result.excluded ? 'opacity-30 grayscale' : ''
+  // Excluded and Not Relevant papers are grayed out; Relevant ones get a faint green tint.
+  const faded = result.excluded || result.relevance === 'not_relevant'
+  const dim = faded ? 'opacity-30 grayscale' : ''
 
   const menuItems = []
   if (onUpdate) menuItems.push({ label: 'Edit', icon: Pencil, onClick: () => setEditing(true) })
   if (onMarkExample && result.score != null && !result.is_example) {
     menuItems.push({ label: 'Mark as example', icon: BookmarkPlus, onClick: () => setMarkingExample(true) })
+  }
+
+  if (onToggleRead) {
+    menuItems.push({
+      label: result.read ? 'Mark as unread' : 'Mark as read',
+      icon: result.read ? BookOpen : BookOpenCheck,
+      onClick: () => onToggleRead(result),
+    })
+  }
+  if (onSetRelevance && result.score != null) {
+    const current = result.relevance || 'neutral'
+    menuItems.push({
+      label: 'Relevance',
+      icon: ThumbsUp,
+      submenu: RELEVANCE_CHOICES.map((choice) => ({
+        label: choice.label,
+        icon: choice.icon,
+        checked: current === choice.value,
+        onClick: () => onSetRelevance(result, choice.value),
+      })),
+    })
   }
 
   if (onToggleExclude) {
@@ -149,9 +187,11 @@ export default function PaperCard({ result, onUpdate, onMarkExample, onToggleExc
   return (
     <li
       className={`rounded-lg p-4 border ${
-        result.excluded
+        faded
           ? 'border-gray-100 bg-gray-100'
-          : 'border-gray-200 hover:border-gray-300'
+          : result.relevance === 'relevant'
+            ? 'border-green-300 bg-green-50/40 hover:border-green-400'
+            : 'border-gray-200 hover:border-gray-300'
       }`}
     >
       <div className="flex items-start justify-between gap-4">
@@ -180,8 +220,8 @@ export default function PaperCard({ result, onUpdate, onMarkExample, onToggleExc
               Excluded
             </span>
           ) : null}
-          <ScoreBadge score={result.score} />
           <span className={`text-sm text-gray-500 ${dim}`}>{result.year ?? '—'}</span>
+          <ScoreBadge score={result.score} />
           {menuItems.length ? <MoreMenu items={menuItems} /> : null}
         </div>
       </div>
@@ -206,22 +246,43 @@ export default function PaperCard({ result, onUpdate, onMarkExample, onToggleExc
         <p className={`mt-2 text-sm text-gray-700 italic ${dim}`}>{result.rationale}</p>
       ) : null}
 
-      {result.abstract ? (
-        <div className={`mt-2 ${dim}`}>
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="text-sm text-blue-600 hover:underline"
-          >
-            {expanded ? 'Hide abstract' : 'Show abstract'}
-          </button>
-          {expanded ? (
-            <p className="mt-2 text-sm text-gray-700">{result.abstract}</p>
+      {/* The relevance and read badges sit bottom right, level with the
+          abstract toggle. */}
+      <div className="mt-2 flex items-start justify-between gap-4">
+        {result.abstract ? (
+          <div className={`min-w-0 ${dim}`}>
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="text-sm text-blue-600 hover:underline"
+            >
+              {expanded ? 'Hide abstract' : 'Show abstract'}
+            </button>
+            {expanded ? (
+              <p className="mt-2 text-sm text-gray-700">{result.abstract}</p>
+            ) : null}
+          </div>
+        ) : (
+          <p className={`text-sm text-gray-400 italic ${dim}`}>No abstract available</p>
+        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {result.relevance === 'relevant' ? (
+            <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+              Relevant
+            </span>
+          ) : null}
+          {result.relevance === 'not_relevant' ? (
+            <span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
+              Not Relevant
+            </span>
+          ) : null}
+          {result.read ? (
+            <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800">
+              Read
+            </span>
           ) : null}
         </div>
-      ) : (
-        <p className={`mt-2 text-sm text-gray-400 italic ${dim}`}>No abstract available</p>
-      )}
+      </div>
 
       {markingExample ? (
         <ConfirmModal

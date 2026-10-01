@@ -5,7 +5,7 @@ import ListFilterBar from '../components/ListFilterBar'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import DeleteMenu from '../components/DeleteMenu'
 import { deleteJson } from '../lib/api'
-import { datasetLabels, formatDate } from '../lib/format'
+import { datasetLabels, formatDateTime } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
 
 export default function PastResultsPage() {
@@ -25,7 +25,8 @@ export default function PastResultsPage() {
     () =>
       sortByCreated(
         filterList(runs ?? [], filter, {
-          getSearchText: (r) => `${r.grading_prompt ?? ''} ${(r.datasets ?? []).map((d) => d.name).join(' ')}`,
+          getSearchText: (r) =>
+            `${r.prompt_name ?? ''} ${r.grading_prompt ?? ''} ${(r.datasets ?? []).map((d) => d.name).join(' ')}`,
           getModel: (r) => (r.ai_model ? modelKey(r.ai_api, r.ai_model) : null),
         }),
         sort
@@ -71,11 +72,14 @@ export default function PastResultsPage() {
           <div key={run.id} className="relative">
             <Link to={`/results/${run.id}`}>
               <Card className="hover:border-gray-300">
-                <p className="pr-8 font-medium text-gray-900">{run.grading_prompt}</p>
-                <p className="mt-1 text-sm text-gray-500">{datasetLabels(run.datasets).join(', ')}</p>
+                <p className="pr-8 font-medium text-gray-900">{run.prompt_name || run.grading_prompt}</p>
+                <p className="mt-1 text-sm text-gray-500">
+                  {datasetLabels(run.datasets).join(', ')}
+                  {` · ${run.paper_count} paper${run.paper_count === 1 ? '' : 's'}`}
+                </p>
                 <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-gray-400">
-                  <span>{formatDate(run.created_at)} ·</span>
-                  <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-gray-300" />
+                  <span>{formatDateTime(run.completed_at || run.created_at)} ·</span>
+                  <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} />
                   <span className="ml-auto text-xs uppercase">{run.status}</span>
                 </div>
               </Card>

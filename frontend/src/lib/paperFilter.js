@@ -4,6 +4,8 @@ export const EMPTY_PAPER_FILTER = {
   yearFrom: '',
   yearTo: '',
   minCitations: '',
+  readState: 'all', // 'all' | 'read' | 'unread'
+  relevance: 'all', // 'all' | 'relevant' | 'neutral' | 'not_relevant' (run results only)
 }
 
 export const DEFAULT_PAPER_SORT = 'date-desc'
@@ -27,7 +29,9 @@ export function isPaperFilterActive(filter) {
     filter.missingAbstractOnly ||
     toNumber(filter.yearFrom) !== null ||
     toNumber(filter.yearTo) !== null ||
-    toNumber(filter.minCitations) !== null
+    toNumber(filter.minCitations) !== null ||
+    filter.readState !== 'all' ||
+    filter.relevance !== 'all'
   )
 }
 
@@ -41,6 +45,10 @@ export function filterPapers(papers, filter) {
   const minCitations = toNumber(filter.minCitations)
   return papers.filter((paper) => {
     if (filter.missingAbstractOnly && (paper.abstract || '').trim()) return false
+    if (filter.readState === 'read' && !paper.read) return false
+    if (filter.readState === 'unread' && paper.read) return false
+    // Papers without a result yet have no relevance, which counts as neutral.
+    if (filter.relevance !== 'all' && (paper.relevance || 'neutral') !== filter.relevance) return false
     if (yearFrom !== null && !(paper.year >= yearFrom)) return false
     if (yearTo !== null && !(paper.year <= yearTo)) return false
     if (minCitations !== null && !((paper.citation_count ?? 0) >= minCitations)) return false

@@ -474,10 +474,19 @@ def update_paper(paper_id):
                 return jsonify({"error": "'year' must be an integer"}), 400
         fields["year"] = year
 
-    if not fields:
+    # Not a data correction: whether the user has read the paper, shared like
+    # the edits above across every dataset and run it appears in.
+    read = body.get("read") if "read" in body else None
+    if "read" in body and not isinstance(read, bool):
+        return jsonify({"error": "'read' must be true or false"}), 400
+
+    if not fields and read is None:
         return jsonify({"error": "no editable fields provided"}), 400
 
-    db.update_paper(paper_id, fields)
+    if fields:
+        db.update_paper(paper_id, fields)
+    if read is not None:
+        db.set_paper_read(paper_id, read)
     return jsonify(db.get_paper(paper_id))
 
 
@@ -669,6 +678,19 @@ def remove_prompt_example(prompt_id, example_id):
     if not db.remove_prompt_example(prompt_id, example_id):
         return jsonify({"error": "example not found"}), 404
     return jsonify({"ok": True})
+
+
+@app.patch("/api/analysis-runs/<int:run_id>/results/<int:paper_id>")
+def update_run_result(run_id, paper_id):
+    """Set the user's relevance call on one scored paper in this run."""
+    if not db.get_analysis_run(run_id):
+        return jsonify({"error": "analysis run not found"}), 404
+    relevance = (request.get_json(silent=True) or {}).get("relevance")
+    if not isinstance(relevance, str) or relevance not in db.RELEVANCE_VALUES:
+        return jsonify({"error": "'relevance' must be relevant, neutral or not_relevant"}), 400
+    if not db.set_result_relevance(run_id, paper_id, relevance):
+        return jsonify({"error": "that paper has no result in this run"}), 404
+    return jsonify({"id": paper_id, "relevance": relevance})
 
 
 @app.post("/api/analysis-runs/<int:run_id>/examples")

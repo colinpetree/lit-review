@@ -2,16 +2,34 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
+  Book,
+  BookOpen,
+  BookOpenCheck,
   CalendarArrowDown,
   CalendarArrowUp,
+  CircleSlash2,
   Search,
   SlidersHorizontal,
+  ThumbsDown,
+  ThumbsUp,
   X,
 } from 'lucide-react'
 import Combobox from './Combobox'
 import { EMPTY_PAPER_FILTER, PAPER_SORT_OPTIONS, isPaperFilterActive } from '../lib/paperFilter'
 
 const digitsOnly = (value) => value.replace(/\D/g, '')
+
+const READ_OPTIONS = [
+  { value: 'all', label: 'All', icon: Book },
+  { value: 'unread', label: 'Unread', icon: BookOpen },
+  { value: 'read', label: 'Read', icon: BookOpenCheck },
+]
+const RELEVANCE_OPTIONS = [
+  { value: 'all', label: 'All', icon: Book },
+  { value: 'relevant', label: 'Relevant', icon: ThumbsUp },
+  { value: 'neutral', label: 'Neutral', icon: CircleSlash2 },
+  { value: 'not_relevant', label: 'Not Relevant', icon: ThumbsDown },
+]
 
 // asPlaceholder: clicking lists every sort instead of editing the current label.
 const SORT_ICONS = {
@@ -25,8 +43,8 @@ const SORT_OPTIONS = PAPER_SORT_OPTIONS.map((o) => ({ ...o, icon: SORT_ICONS[o.v
 // Search box (filters on every keystroke), a popover of extra filters and,
 // when onSortChange is given, a sort picker. shown/total are the filtered and
 // unfiltered paper counts, used for the "Showing X of Y" line while a filter
-// is active.
-export default function PaperFilterBar({ filter, onChange, shown, total, sort, onSortChange }) {
+// is active. showRelevance (run results only) adds the relevance filter.
+export default function PaperFilterBar({ filter, onChange, shown, total, sort, onSortChange, showRelevance }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -88,7 +106,27 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
           </button>
           {open ? (
             <div className="absolute right-0 z-10 mt-1 w-72 rounded-md border border-gray-200 bg-white p-3 shadow-lg">
-              <div className="flex items-center justify-between gap-3 text-sm text-gray-700">
+              <div className="text-sm text-gray-700">
+                <span className="mb-1 block">Read status</span>
+                <Combobox
+                  options={READ_OPTIONS}
+                  value={filter.readState}
+                  onChange={(readState) => onChange({ ...filter, readState })}
+                  placeholder="All"
+                />
+              </div>
+              {showRelevance ? (
+                <div className="mt-3 text-sm text-gray-700">
+                  <span className="mb-1 block">Relevance</span>
+                  <Combobox
+                    options={RELEVANCE_OPTIONS}
+                    value={filter.relevance}
+                    onChange={(relevance) => onChange({ ...filter, relevance })}
+                    placeholder="All"
+                  />
+                </div>
+              ) : null}
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 text-sm text-gray-700">
                 <span id="missing-abstract-label">Papers missing abstracts</span>
                 <button
                   type="button"

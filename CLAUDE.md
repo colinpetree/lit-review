@@ -150,6 +150,13 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   scoring call via `title_pending`; never for existing prompts, and any user edit clears
   the flag). Prompts, runs and datasets are soft-deleted (`deleted_at`).
 
+- User-set paper states: `paper.read_at` (global, so Read follows the paper into every
+  dataset and run; set via `PATCH /api/papers/<id>` with `{read}`, deliberately outside
+  `EDITABLE_PAPER_FIELDS`) and `analysis_result.relevance` (per run; NULL = neutral, else
+  `relevant`/`not_relevant`; only scored papers, set via
+  `PATCH /api/analysis-runs/<id>/results/<paper_id>`). Re-scoring leaves relevance alone.
+  Both filter client-side in `lib/paperFilter.js` (relevance only on the run page).
+
 Keep retrieval and LLM judgment strictly separate: the LLM only scores real
 API-returned abstracts and must never invent citations.
 

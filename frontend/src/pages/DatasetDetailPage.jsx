@@ -247,6 +247,17 @@ export default function DatasetDetailPage() {
     }
   }
 
+  // Read is global to the paper; the response carries the saved state.
+  const toggleRead = async (paper) => {
+    setToggleError(null)
+    try {
+      const updated = await patchJson(`/api/papers/${paper.id}`, { read: !paper.read })
+      handlePaperUpdate(updated)
+    } catch (err) {
+      setToggleError(err.message)
+    }
+  }
+
   // The publishers whose abstracts need an API key that isn't saved yet.
   const keylessPublishers = PUBLISHER_LOOKUPS.filter((p) => !providers?.[p.key]).map((p) => p.label)
 
@@ -396,6 +407,7 @@ export default function DatasetDetailPage() {
               result={paper}
               onUpdate={handlePaperUpdate}
               onToggleExclude={toggleExclude}
+              onToggleRead={toggleRead}
             />
           ))}
         </ul>

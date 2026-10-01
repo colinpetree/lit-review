@@ -130,7 +130,10 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   exclusion is a soft `excluded_at`. A dataset's short `name` (2-4 words) is written by the
   same LLM call that expands the query (`/api/datasets/expand` returns `title`, passed on
   to `POST /api/datasets` so a retried retrieval keeps it) and is editable via
-  `PATCH /api/datasets/<id>`; the long topic stays in `verbose_query` (read-only).
+  `PATCH /api/datasets/<id>`; the long topic stays in `verbose_query` (read-only). The
+  AI model that expanded the query is not a `dataset` column: it is read from that
+  dataset's `query_expansion` `llm_call` row (`db.get_dataset_expansion`, shown on the
+  detail page with its cost, and as `ai_api`/`ai_model` on the list for the card preview).
 - An `analysis_run` scores one or more datasets with a grading prompt and model, and
   writes one `analysis_result` (score + rationale) per paper. `llm_call` logs token usage
   and USD for every LLM call.
@@ -160,7 +163,7 @@ popover), `Modal`/`ConfirmModal`, `DeleteMenu`, `PromptCombobox`. Backend calls 
 Fonts match the earlier project: Source Sans 3 and Source Code Pro, self-hosted
 via `@fontsource` (latin subset, imported at the top of `src/index.css`) and mapped to
 `--font-sans`/`--font-mono` in the `@theme` block. No serif is installed because nothing
-uses one. `index.css` also nudges any lucide icon that is a direct child of a `.flex` or
-`.inline-flex` by `-0.5px`, because Source Sans 3's line box makes text sit slightly above
+uses one. `index.css` also nudges any lucide icon, or provider logo from `ProviderIcons.jsx`
+(class `provider-icon`), that is a direct child of a `.flex` or `.inline-flex` by `-0.5px`, because Source Sans 3's line box makes text sit slightly above
 a centered icon. That rule is unlayered, so it overrides `translate-*` utilities on such
 icons; put those icons in a non-flex wrapper (as the absolute-positioned search icons are).

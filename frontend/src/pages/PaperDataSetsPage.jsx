@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import DeleteMenu from '../components/DeleteMenu'
+import ModelBadge from '../components/ModelBadge'
 import { deleteJson } from '../lib/api'
 import { formatDateTime, formatYearRange } from '../lib/format'
 
@@ -48,6 +49,7 @@ export default function PaperDataSetsPage() {
                   {formatDateTime(d.created_at) ? (
                     <p className="text-sm text-gray-400">created {formatDateTime(d.created_at)}</p>
                   ) : null}
+                  <ModelBadge aiApi={d.ai_api} aiModel={d.ai_model} className="mt-1 text-sm text-gray-300" />
                 </Card>
               </Link>
               <DeleteMenu

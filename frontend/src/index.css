@@ -19,11 +19,15 @@
 
 /* Source Sans 3's line box is taller above the baseline than below, so text in an
    items-center row sits slightly higher than a centered icon. Nudge any lucide icon
-   that is a direct child of a flex row (icon-only buttons here are not flex, so
-   they are unaffected). */
+   or provider logo (ProviderIcons.jsx, which carry .provider-icon) that is a direct
+   child of a flex row (icon-only buttons here are not flex, so they are unaffected).
+   Larger text needs a larger nudge: a parent can set --icon-nudge (for example
+   `[--icon-nudge:-1px]`, as the settings card titles do). */
 .flex > svg.lucide,
-.inline-flex > svg.lucide {
-  translate: 0 -0.5px;
+.inline-flex > svg.lucide,
+.flex > .provider-icon,
+.inline-flex > .provider-icon {
+  translate: 0 var(--icon-nudge, -0.5px);
 }
 
 /* Active text field: just a darker border, no outline or ring. Deliberately

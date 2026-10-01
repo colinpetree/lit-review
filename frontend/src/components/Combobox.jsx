@@ -3,8 +3,11 @@ import { ChevronDown } from 'lucide-react'
 
 // Type-to-filter dropdown used for every picker in the app.
 //
-// options: [{ value, label, group?, icon?, pinned?, emphasis?, asPlaceholder? }]
+// options: [{ value, label, group?, icon?, hint?, hintTitle?, pinned?, emphasis?, asPlaceholder? }]
 //   icon          optional lucide component shown before the label in the list
+//   hint          optional faded text right-aligned in the list row (e.g. "$$");
+//                 hintTitle is its hover text
+//   keywords      optional extra text the typed filter also searches (not shown)
 //   group         optional heading; shown only when there is more than one group
 //   pinned        stays in the list while filtering (e.g. "New prompt")
 //   emphasis      styles the option blue/medium
@@ -21,8 +24,14 @@ export default function Combobox({ options, value, onChange, placeholder, emptyT
   const listRef = useRef(null)
 
   const visible = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return options.filter((o) => o.pinned || !q || o.label.toLowerCase().includes(q))
+    // Every word typed must appear somewhere in the option's label, group
+    // heading or keywords (case-insensitive), in any order.
+    const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    return options.filter((o) => {
+      if (o.pinned || !words.length) return true
+      const text = [o.label, o.group, o.keywords].filter(Boolean).join(' ').toLowerCase()
+      return words.every((w) => text.includes(w))
+    })
   }, [options, query])
 
   const selected = options.find((o) => o.value === value)
@@ -121,31 +130,49 @@ export default function Combobox({ options, value, onChange, placeholder, emptyT
           onMouseDown={(e) => e.preventDefault()}
           className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg"
         >
-          {visible.map((option, i) => (
-            <li
-              key={option.value}
-              role="option"
-              aria-selected={option.value === value}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => choose(option)}
-              onMouseEnter={() => setHighlight(i)}
-              className={`cursor-pointer px-3 py-2 text-sm ${i === highlight ? 'bg-gray-100' : ''} ${
-                option.emphasis ? 'font-medium text-blue-600' : subtle ? 'text-gray-600' : 'text-gray-700'
-              }`}
-            >
-              {showGroups && option.group && option.group !== visible[i - 1]?.group ? (
-                <span className="mb-1 block text-xs uppercase text-gray-400">{option.group}</span>
-              ) : null}
-              {option.icon ? (
-                <span className="flex items-center gap-2">
-                  <option.icon size={14} className="shrink-0" />
-                  {option.label}
-                </span>
-              ) : (
-                option.label
-              )}
-            </li>
-          ))}
+          {visible.map((option, i) => {
+            const showHeading = showGroups && option.group && option.group !== visible[i - 1]?.group
+            return (
+              <li
+                key={option.value}
+                role="option"
+                aria-selected={option.value === value}
+                onMouseDown={(e) => e.preventDefault()}
+                className={`text-sm ${
+                  option.emphasis ? 'font-medium text-blue-600' : subtle ? 'text-gray-600' : 'text-gray-700'
+                }`}
+              >
+                {/* The group heading sits outside the clickable, highlighted row, so
+                    hovering or arrowing onto the first option never highlights it. */}
+                {showHeading ? (
+                  <span className="block px-3 pb-1 pt-2 text-xs font-normal uppercase text-gray-400">
+                    {option.group}
+                  </span>
+                ) : null}
+                <div
+                  onClick={() => choose(option)}
+                  onMouseEnter={() => setHighlight(i)}
+                  className={`cursor-pointer px-3 pb-2 ${showHeading ? 'pt-1' : 'pt-2'} ${
+                    i === highlight ? 'bg-gray-100' : ''
+                  }`}
+                >
+                  {option.icon || option.hint ? (
+                    <span className="flex items-center gap-2">
+                      {option.icon ? <option.icon size={14} className="shrink-0" /> : null}
+                      {option.label}
+                      {option.hint ? (
+                        <span title={option.hintTitle} className="ml-auto pl-3 pr-2 text-xs text-gray-300">
+                          {option.hint}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : (
+                    option.label
+                  )}
+                </div>
+              </li>
+            )
+          })}
           {visible.every((o) => o.pinned) && query.trim() ? (
             <li className="px-3 py-2 text-sm text-gray-400">{emptyText}</li>
           ) : null}

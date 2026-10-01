@@ -2,6 +2,8 @@
 // sync by hand since there's no shared schema between the two. Adding a
 // provider or model here also means adding it to the backend, and a key card
 // for the provider in SettingsPage.jsx.
+import { AnthropicIcon, GeminiIcon, GroqIcon, OpenAIIcon } from '../components/ProviderIcons'
+
 export const PROVIDER_LABELS = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
@@ -9,6 +11,8 @@ export const PROVIDER_LABELS = {
   groq: 'Groq',
 }
 
+// Each provider's models are listed cheapest first: the model picker shows the
+// position as a price tier ("$" for the first, "$$" for the second, and so on).
 export const MODELS_BY_PROVIDER = {
   anthropic: [
     { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
@@ -32,11 +36,19 @@ export const MODELS_BY_PROVIDER = {
   ],
 }
 
-// "Model name (Provider)" for a run's stored ai_api/ai_model, falling back to
-// the raw id for a model no longer listed.
-export function modelLabel(aiApi, aiModel) {
-  const model = MODELS_BY_PROVIDER[aiApi]?.find((m) => m.id === aiModel)
-  const provider = PROVIDER_LABELS[aiApi]
-  const name = model ? model.label : aiModel
-  return provider ? `${name} (${provider})` : name
+export const PROVIDER_ICONS = {
+  anthropic: AnthropicIcon,
+  openai: OpenAIIcon,
+  gemini: GeminiIcon,
+  groq: GroqIcon,
+}
+
+export function providerIcon(aiApi) {
+  return PROVIDER_ICONS[aiApi]
+}
+
+// Just the model's display name ("Claude Haiku 4.5"), for places where the
+// provider's logo already shows who makes it.
+export function modelName(aiApi, aiModel) {
+  return MODELS_BY_PROVIDER[aiApi]?.find((m) => m.id === aiModel)?.label ?? aiModel
 }

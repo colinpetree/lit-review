@@ -6,12 +6,13 @@ import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
 import { DEFAULT_PAPER_SORT, EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive, sortPapers } from '../lib/paperFilter'
 import EditableCardHeader from '../components/EditableCardHeader'
+import ModelBadge from '../components/ModelBadge'
 import useSavedState from '../lib/useSavedState'
 import useUnsavedChangesWarning from '../lib/useUnsavedChangesWarning'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { fetchJson, patchJson } from '../lib/api'
 import { driveFindAbstracts } from '../lib/findAbstracts'
-import { sourceLabel } from '../lib/paperSources'
+import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
 
 // The data set's short title (editable) and the topic it was retrieved with
@@ -80,8 +81,30 @@ function DatasetDetailsCard({ dataset, onSaved }) {
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-700">Paper sources</p>
-        <p className="text-sm text-gray-900">{dataset.sources.map(sourceLabel).join(', ')}</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-900">
+          {dataset.sources.map((id) => {
+            const Icon = sourceIcon(id)
+            return (
+              <span key={id} className="flex items-center gap-2">
+                {Icon ? <Icon size={14} className="shrink-0" /> : null}
+                {sourceLabel(id)}
+              </span>
+            )
+          })}
+        </div>
       </div>
+
+      {dataset.expansion ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-gray-700">AI model (query expansion)</p>
+          <ModelBadge
+            aiApi={dataset.expansion.ai_api}
+            aiModel={dataset.expansion.ai_model}
+            cost={dataset.expansion.cost}
+            className="text-sm text-gray-900"
+          />
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-700">Created</p>
@@ -251,7 +274,6 @@ export default function DatasetDetailPage() {
             {includedCount} paper{includedCount === 1 ? '' : 's'}
             {excludedCount ? ` (${excludedCount} excluded)` : ''}
             {yearRange ? ` · ${yearRange}` : ''}
-            {dataset.cost ? ` · est. expansion cost: $${dataset.cost.toFixed(4)}` : ''}
           </p>
           <button
             type="button"

@@ -3,6 +3,7 @@
 // #30cf43 green, the transient "Saved" state on the Edit button).
 export default function EditableCardHeader({
   title,
+  icon: Icon,
   description,
   linkUrl,
   linkLabel,
@@ -18,7 +19,10 @@ export default function EditableCardHeader({
   return (
     <div className="flex items-start justify-between gap-4">
       <div>
-        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 [--icon-nudge:-1px]">
+          {Icon ? <Icon size={18} className="shrink-0" /> : null}
+          {title}
+        </h2>
         {description && <p className="text-xs text-gray-400 mt-0.5">{description}</p>}
         {linkUrl && (
           <a

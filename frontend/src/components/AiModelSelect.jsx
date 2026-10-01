@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import Combobox from './Combobox'
-import { MODELS_BY_PROVIDER, PROVIDER_LABELS } from '../lib/models'
+import { MODELS_BY_PROVIDER, PROVIDER_LABELS, providerIcon } from '../lib/models'
 
 // The providers that can be chosen for AI work: configured AND having models
 // listed. `providers` also reports non-AI credentials (e.g. openalex), which
@@ -29,10 +29,17 @@ export default function AiModelSelect({ providers, value, onChange }) {
   const options = useMemo(
     () =>
       configured.flatMap((provider) =>
-        MODELS_BY_PROVIDER[provider].map((m) => ({
+        MODELS_BY_PROVIDER[provider].map((m, i, all) => ({
           value: `${provider}::${m.id}`,
           label: m.label,
+          // Models are listed cheapest first, so position is the price tier.
+          hint: '$'.repeat(i + 1),
+          hintTitle: `Price tier ${i + 1} of ${all.length} for ${PROVIDER_LABELS[provider]}`,
           group: PROVIDER_LABELS[provider] || provider,
+          // So typing a provider ("google", "groq", "anthropic") or a model id
+          // ("gpt-oss-20b", "claude-haiku") finds it, not just the display name.
+          keywords: `${provider} ${m.id.split('/').pop()}`,
+          icon: providerIcon(provider),
         }))
       ),
     [configured.join(',')]

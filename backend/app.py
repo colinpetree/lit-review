@@ -184,7 +184,16 @@ def _dataset_to_dict(dataset_row, papers):
         # lets the frontend show the newest paper's month, not just its year.
         "newest_publication_date": max(dates) if dates else None,
         "cost": round(db.get_cost(dataset_id=dataset_row["id"]), 6),
+        # Which AI model expanded the query and what that call cost (None for
+        # a dataset with no logged expansion call).
+        "expansion": _expansion_to_dict(db.get_dataset_expansion(dataset_row["id"])),
     }
+
+
+def _expansion_to_dict(expansion):
+    if expansion is None:
+        return None
+    return {**expansion, "cost": round(expansion["cost"], 6)}
 
 
 @app.post("/api/datasets/expand")

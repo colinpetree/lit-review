@@ -4,7 +4,7 @@ import { PageShell, Card } from '../components/ui'
 import DeleteMenu from '../components/DeleteMenu'
 import { deleteJson } from '../lib/api'
 import { datasetLabels, formatDate } from '../lib/format'
-import { modelLabel } from '../lib/models'
+import ModelBadge from '../components/ModelBadge'
 
 export default function PastResultsPage() {
   const [runs, setRuns] = useState(null)
@@ -40,10 +40,9 @@ export default function PastResultsPage() {
               <Card className="hover:border-gray-300">
                 <p className="pr-8 font-medium text-gray-900">{run.grading_prompt}</p>
                 <p className="mt-1 text-sm text-gray-500">{datasetLabels(run.datasets).join(', ')}</p>
-                <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-sm text-gray-400">
-                  <span>
-                    {formatDate(run.created_at)} · {modelLabel(run.ai_api, run.ai_model)} · est. ${run.cost.toFixed(4)}
-                  </span>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-gray-400">
+                  <span>{formatDate(run.created_at)} ·</span>
+                  <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-gray-300" />
                   <span className="ml-auto text-xs uppercase">{run.status}</span>
                 </div>
               </Card>

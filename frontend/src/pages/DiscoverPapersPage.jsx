@@ -7,6 +7,7 @@ import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { postJson } from '../lib/api'
 import { DEFAULT_SOURCES, PAPER_SOURCES } from '../lib/paperSources'
+import { PubMedIcon } from '../components/ProviderIcons'
 import { MODELS_BY_PROVIDER } from '../lib/models'
 import { loadDiscoverSettings, saveDiscoverSettings } from '../lib/discoverSettings'
 
@@ -228,6 +229,7 @@ export default function DiscoverPapersPage() {
                       }
                       className="rounded"
                     />
+                    <source.icon size={14} className="shrink-0" />
                     {source.label}
                     {needsKey ? (
                       <span className="text-xs">
@@ -243,6 +245,7 @@ export default function DiscoverPapersPage() {
               })}
               <label className="flex items-center gap-2 text-sm text-gray-400">
                 <input type="checkbox" checked={false} disabled className="rounded" />
+                <PubMedIcon size={14} className="shrink-0" />
                 PubMed (coming soon)
               </label>
             </div>

@@ -2,10 +2,25 @@ import { useEffect, useState } from 'react'
 import { PageShell, Card } from '../components/ui'
 import EditableCardHeader from '../components/EditableCardHeader'
 import useSavedState from '../lib/useSavedState'
+import {
+  AnthropicIcon,
+  ElsevierIcon,
+  GeminiIcon,
+  GroqIcon,
+  OpenAIIcon,
+  OpenAlexIcon,
+  SemanticScholarIcon,
+  SpringerNatureIcon,
+} from '../components/ProviderIcons'
+
+// Stands in for a saved key (the real value is never sent to the browser), long
+// enough that the field looks filled.
+const MASKED_KEY = '•'.repeat(48)
 
 function ProviderKeyCard({
   provider,
   label,
+  icon,
   keyName: keyNameOverride,
   description,
   keyUrl,
@@ -46,6 +61,7 @@ function ProviderKeyCard({
     <Card className="flex flex-col gap-5">
       <EditableCardHeader
         title={label}
+        icon={icon}
         description={description}
         linkUrl={keyUrl}
         linkLabel={`Get ${article} ${keyName}`}
@@ -66,7 +82,7 @@ function ProviderKeyCard({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={removing}
-            placeholder={hasKey ? '••••••••' : keyPlaceholder}
+            placeholder={hasKey ? MASKED_KEY : keyPlaceholder}
             className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 w-full disabled:bg-gray-50 disabled:text-gray-400"
           />
           {hasKey && !removing && (
@@ -96,7 +112,7 @@ function ProviderKeyCard({
       ) : (
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-700">{keyName}</p>
-          {hasKey ? <p className="text-sm text-gray-900">••••••••</p> : <p className="text-sm text-gray-400">Not set</p>}
+          {hasKey ? <p className="truncate text-sm text-gray-900">{MASKED_KEY}</p> : <p className="text-sm text-gray-400">Not set</p>}
         </div>
       )}
 
@@ -109,6 +125,7 @@ const AI_PROVIDERS = [
   {
     id: 'anthropic',
     label: 'Anthropic',
+    icon: AnthropicIcon,
     description: 'Claude models. Used to turn your topic into search queries and to score papers against your criteria. At least one AI integration is required. Stored locally in an encrypted file on this machine and only sent to Anthropic.',
     keyUrl: 'https://console.anthropic.com/settings/keys',
     keyPlaceholder: 'sk-ant-...',
@@ -116,6 +133,7 @@ const AI_PROVIDERS = [
   {
     id: 'openai',
     label: 'OpenAI',
+    icon: OpenAIIcon,
     description: 'GPT models, for the same query and scoring work as the other AI integrations. Stored locally in an encrypted file on this machine and only sent to OpenAI.',
     keyUrl: 'https://platform.openai.com/api-keys',
     keyPlaceholder: 'sk-...',
@@ -123,6 +141,7 @@ const AI_PROVIDERS = [
   {
     id: 'gemini',
     label: 'Google Gemini',
+    icon: GeminiIcon,
     description: 'Gemini models, for the same query and scoring work as the other AI integrations. Has a free tier. Stored locally in an encrypted file on this machine and only sent to Google.',
     keyUrl: 'https://aistudio.google.com/apikey',
     keyPlaceholder: 'AIza...',
@@ -130,6 +149,7 @@ const AI_PROVIDERS = [
   {
     id: 'groq',
     label: 'Groq',
+    icon: GroqIcon,
     description: 'Fast, low-cost open models (GPT-OSS), for the same query and scoring work as the other AI integrations. Stored locally in an encrypted file on this machine and only sent to Groq.',
     keyUrl: 'https://console.groq.com/keys',
     keyPlaceholder: 'gsk_...',
@@ -140,16 +160,27 @@ const PAPER_DB_KEY_PROVIDERS = [
   {
     id: 'openalex',
     label: 'OpenAlex',
+    icon: OpenAlexIcon,
     description: 'Recommended, not required. OpenAlex is the main source searched on Discover Papers. Without a key, requests share a small daily limit with everyone on your network, which a university network can use up quickly. A free key gets its own private daily limit.',
     keyUrl: 'https://openalex.org/settings/api',
     keyPlaceholder: 'Paste your OpenAlex API key...',
   },
+  {
+    id: 'semanticscholar',
+    label: 'Semantic Scholar',
+    icon: SemanticScholarIcon,
+    description: 'Optional. Adds Semantic Scholar as a search source on Discover Papers (it only appears once a key is saved) and makes abstract lookup more reliable. Abstract lookup still tries it without a key, but the shared limit is often used up. Free, but approved by hand and revoked after 60 days without use.',
+    keyUrl: 'https://www.semanticscholar.org/product/api#api-key-form',
+    keyPlaceholder: 'Paste your Semantic Scholar API key...',
+  },
   // Elsevier and Springer Nature don't let OpenAlex redistribute their
   // abstracts, so the "Find missing abstracts" button on a data set uses their
-  // own free APIs for those papers.
+  // own free APIs for those papers. Springer Nature publishes only a PNG
+  // favicon, so its icon is a full-color image.
   {
     id: 'elsevier',
     label: 'Elsevier',
+    icon: ElsevierIcon,
     description: 'Optional. Adds Elsevier (Scopus) as a search source on Discover Papers and looks up missing abstracts for Elsevier papers (DOIs starting 10.1016), which other sources often can’t provide. Free for non-commercial use. Stored locally and only sent to Elsevier.',
     keyUrl: 'https://dev.elsevier.com/',
     keyPlaceholder: 'Paste your Elsevier API key...',
@@ -157,17 +188,11 @@ const PAPER_DB_KEY_PROVIDERS = [
   {
     id: 'springernature',
     label: 'Springer Nature',
+    icon: SpringerNatureIcon,
     keyName: 'Springer Nature Meta API Key',
     description: 'Optional. Used only to look up missing abstracts for Springer and Nature papers (DOIs starting 10.1007, 10.1038 and 10.1186), which other sources often can’t provide. Free plan, no institution needed. Stored locally and only sent to Springer Nature.',
     keyUrl: 'https://dev.springernature.com/',
     keyPlaceholder: 'Paste your Springer Nature API key...',
-  },
-  {
-    id: 'semanticscholar',
-    label: 'Semantic Scholar',
-    description: 'Optional. Adds Semantic Scholar as a search source on Discover Papers (it only appears once a key is saved) and makes abstract lookup more reliable. Abstract lookup still tries it without a key, but the shared limit is often used up. Free, but approved by hand and revoked after 60 days without use.',
-    keyUrl: 'https://www.semanticscholar.org/product/api#api-key-form',
-    keyPlaceholder: 'Paste your Semantic Scholar API key...',
   },
 ]
 
@@ -213,7 +238,10 @@ export default function SettingsPage() {
   }
 
   return (
-    <PageShell title="Settings">
+    <PageShell
+      title="Settings"
+      description="Install API Keys for paper databases and AI platforms. Minimum is OpenAlex and one AI provider. More paper databases gives you more papers in your datasets and cross-check each other to fill in missing abstracts. More AI providers just gives you more AI model options to choose from."
+    >
       <div className="flex flex-col gap-8">
         <SettingsSection title="Paper Databases">
           {PAPER_DB_KEY_PROVIDERS.map((provider) => (
@@ -221,6 +249,7 @@ export default function SettingsPage() {
               key={provider.id}
               provider={provider.id}
               label={provider.label}
+              icon={provider.icon}
               keyName={provider.keyName}
               description={provider.description}
               keyUrl={provider.keyUrl}
@@ -238,6 +267,7 @@ export default function SettingsPage() {
               key={provider.id}
               provider={provider.id}
               label={provider.label}
+              icon={provider.icon}
               description={provider.description}
               keyUrl={provider.keyUrl}
               keyPlaceholder={provider.keyPlaceholder}

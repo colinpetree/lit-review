@@ -502,7 +502,13 @@ def list_datasets():
                    COUNT(dp.paper_id) AS paper_count,
                    MIN(p.year) AS oldest_year,
                    MAX(p.year) AS newest_year,
-                   MAX(p.publication_date) AS newest_publication_date
+                   MAX(p.publication_date) AS newest_publication_date,
+                   (SELECT ai_api FROM llm_call
+                     WHERE dataset_id = d.id AND run_id IS NULL AND purpose = 'query_expansion'
+                     ORDER BY id DESC LIMIT 1) AS ai_api,
+                   (SELECT ai_model FROM llm_call
+                     WHERE dataset_id = d.id AND run_id IS NULL AND purpose = 'query_expansion'
+                     ORDER BY id DESC LIMIT 1) AS ai_model
             FROM dataset d
             LEFT JOIN dataset_paper dp ON dp.dataset_id = d.id AND dp.excluded_at IS NULL
             LEFT JOIN paper p ON p.id = dp.paper_id
@@ -1001,6 +1007,28 @@ def get_cost(dataset_id=None, run_id=None):
         else:
             row = conn.execute("SELECT SUM(usd) AS total FROM llm_call").fetchone()
         return row["total"] or 0.0
+
+
+def get_dataset_expansion(dataset_id):
+    """The AI model that expanded this dataset's query and what that cost, as
+    {"ai_api", "ai_model", "cost"}, or None if no expansion call was logged. The
+    model is the latest logged call's; the cost sums every expansion call."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT ai_api, ai_model, usd FROM llm_call
+            WHERE dataset_id = ? AND run_id IS NULL AND purpose = 'query_expansion'
+            ORDER BY id DESC
+            """,
+            (dataset_id,),
+        ).fetchall()
+    if not rows:
+        return None
+    return {
+        "ai_api": rows[0]["ai_api"],
+        "ai_model": rows[0]["ai_model"],
+        "cost": sum(row["usd"] for row in rows),
+    }
 
 
 def get_run_cost(run_id):

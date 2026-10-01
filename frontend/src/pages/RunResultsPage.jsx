@@ -7,7 +7,7 @@ import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/pa
 import { fetchJson, postJson } from '../lib/api'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
 import { datasetLabels } from '../lib/format'
-import { modelLabel } from '../lib/models'
+import ModelBadge from '../components/ModelBadge'
 
 export default function RunResultsPage() {
   const { id } = useParams()
@@ -108,9 +108,10 @@ export default function RunResultsPage() {
       <p className="mt-1 text-sm text-gray-500">
         Datasets: {datasetLabels(run.datasets).join(', ')}
       </p>
-      <p className="mt-1 text-sm text-gray-500">
-        {modelLabel(run.ai_api, run.ai_model)} · {run.status} · est. ${run.cost.toFixed(4)}
-      </p>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-gray-500">
+        <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-gray-500" />
+        <span>· {run.status}</span>
+      </div>
 
       {run.remaining > 0 ? (
         <button

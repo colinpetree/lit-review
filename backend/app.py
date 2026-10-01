@@ -6,10 +6,13 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.utils import safe_join
 
+import abstracts
 import credentials
 import db
 import llm
 import openalex
+import search_sources
+from source_http import SourceError
 
 SUPPORTED_PROVIDERS = {"anthropic"}
 
@@ -20,8 +23,18 @@ SUPPORTED_PROVIDERS = {"anthropic"}
 # an (free) OpenAlex API key gets its own private per-day credit budget
 # instead of sharing the anonymous pool's much smaller one with every other
 # anonymous caller on the same IP - the same encrypted credential storage
-# credentials.py already has for Anthropic works unchanged for this.
-CREDENTIAL_PROVIDERS = SUPPORTED_PROVIDERS | {"openalex"}
+# credentials.py already has for Anthropic works unchanged for this. The same
+# goes for the keys used to look up missing abstracts (abstracts.py): Elsevier
+# and Springer Nature need one for their publishers' DOIs, Semantic Scholar's
+# is optional and only raises its rate limit.
+CREDENTIAL_PROVIDERS = SUPPORTED_PROVIDERS | {"openalex", "elsevier", "springernature", "semanticscholar"}
+# The providers abstracts.py can use for lookups, so saving one of their keys
+# makes an earlier "no abstract found" worth retrying.
+LOOKUP_KEY_PROVIDERS = {"elsevier", "springernature", "semanticscholar"}
+
+# Papers looked up per request. Semantic Scholar's unauthenticated limit is
+# about one call a second, so this keeps a request to roughly ten seconds.
+FIND_ABSTRACTS_CHUNK_SIZE = 8
 
 # Sized to control cost/latency per LLM call without hitting output-token
 # limits (each candidate needs a full rationale in the response) - see
@@ -74,6 +87,10 @@ def set_api_key():
     if not api_key:
         return jsonify({"error": "missing 'api_key'"}), 400
     credentials.set_key(provider, api_key)
+    if provider in LOOKUP_KEY_PROVIDERS:
+        # A new source for abstract lookup: let papers it could now help with
+        # be tried again.
+        db.clear_abstract_checked()
     return jsonify({"ok": True})
 
 
@@ -141,6 +158,7 @@ def _dataset_to_dict(dataset_row, papers):
         "from_year": dataset_row["from_year"],
         "to_year": dataset_row["to_year"],
         "expanded_queries": dataset_row["expanded_queries"],
+        "sources": dataset_row["sources"],
         "created_at": dataset_row["created_at"],
         "papers": papers,
         # The actual publication-year spread of what got retrieved (not to
@@ -174,16 +192,18 @@ def expand_dataset_query():
         from_year = _optional_year(body, "from_year")
         to_year = _optional_year(body, "to_year")
         _validate_ai_model(ai_model)
+        sources = search_sources.validate_sources(body.get("sources"))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    # Reuse an existing dataset for the exact same question + filters instead
-    # of re-running expansion/retrieval - this is what makes repeat testing
-    # free. force_new opts out (e.g. periodically re-checking a field later).
-    # Reuse deliberately ignores ai_model - it's about whether the same paper
-    # pool was already retrieved, not which model happened to expand it.
+    # Reuse an existing dataset for the exact same question + filters + paper
+    # sources instead of re-running expansion/retrieval - this is what makes
+    # repeat testing free. force_new opts out (e.g. periodically re-checking a
+    # field later). Reuse deliberately ignores ai_model - it's about whether
+    # the same paper pool was already retrieved, not which model happened to
+    # expand it.
     if not body.get("force_new"):
-        existing_id = db.find_dataset(question, from_year=from_year, to_year=to_year)
+        existing_id = db.find_dataset(question, from_year=from_year, to_year=to_year, sources=sources)
         if existing_id is not None:
             dataset_row = db.get_dataset(existing_id)
             papers = db.get_dataset_papers(existing_id)
@@ -236,12 +256,18 @@ def create_dataset():
         _validate_ai_model(usage_model)
         input_tokens = int(usage.get("input_tokens") or 0)
         output_tokens = int(usage.get("output_tokens") or 0)
+        sources = search_sources.validate_sources(body.get("sources"))
     except (ValueError, TypeError) as exc:
         return jsonify({"error": str(exc) or "invalid 'usage'"}), 400
 
+    # Every selected source is searched with every query. All of them have to
+    # succeed: a source that fails (rate limit, rejected key) fails the whole
+    # retrieval, with nothing saved, so the retry button is always safe and a
+    # dataset never silently lacks a source the user asked for.
     try:
         result_lists = [
-            openalex.search_works(q, per_page=50, from_year=from_year, to_year=to_year)
+            search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_year, to_year)
+            for source_id in sources
             for q in queries
         ]
         candidates = openalex.dedupe(result_lists)
@@ -250,9 +276,13 @@ def create_dataset():
     except requests.RequestException as exc:
         app.logger.warning("OpenAlex request failed: %s", exc)
         return jsonify({"error": "Failed to reach OpenAlex. Please try again."}), 502
+    except SourceError as exc:
+        return jsonify({"error": str(exc)}), 502
 
     expand_usage = llm.Usage(input_tokens, output_tokens, model=usage_model)
-    dataset_id = db.create_dataset(question, queries, from_year=from_year, to_year=to_year, name=title)
+    dataset_id = db.create_dataset(
+        question, queries, from_year=from_year, to_year=to_year, name=title, sources=sources
+    )
     db.record_llm_call("query_expansion", "anthropic", expand_usage.model, expand_usage, dataset_id=dataset_id)
     paper_ids = [db.get_or_create_paper(candidate) for candidate in candidates]
     db.add_papers_to_dataset(dataset_id, paper_ids)
@@ -311,6 +341,69 @@ def delete_analysis_run(run_id):
     return jsonify({"ok": True})
 
 
+@app.post("/api/datasets/<int:dataset_id>/find-abstracts")
+def find_dataset_abstracts(dataset_id):
+    """Look up missing abstracts (by DOI, from abstracts.py's sources) for one
+    chunk of the dataset's papers. The client calls this repeatedly, like an
+    analysis run's /process, until `remaining` is 0. It is stateless: the
+    client sends back the paper ids already attempted (skip_ids, so a paper
+    with no abstract anywhere isn't retried forever) and any sources that
+    failed (skip_sources, so a rejected key isn't retried per paper)."""
+    if db.get_dataset(dataset_id) is None:
+        return jsonify({"error": "dataset not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    skip_ids = body.get("skip_ids") or []
+    skip_sources = body.get("skip_sources") or []
+    if not isinstance(skip_ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in skip_ids):
+        return jsonify({"error": "'skip_ids' must be a list of integers"}), 400
+    if (
+        not isinstance(skip_sources, list)
+        or not all(isinstance(s, str) for s in skip_sources)
+        or not set(skip_sources) <= abstracts.SOURCE_IDS
+    ):
+        return jsonify({"error": "'skip_sources' must be a list of known source ids"}), 400
+
+    # Papers a lookup already completed for without finding an abstract are
+    # left out, so opening a dataset or clicking the button again doesn't ask
+    # the same sources the same question. Saving a new API key clears those
+    # marks (see set_api_key), since a new source can be asked.
+    attempted_before = set(skip_ids)
+    missing = db.get_dataset_papers_missing_abstract(dataset_id)
+    no_doi = sum(1 for _, doi, _, _ in missing if not abstracts.normalize_doi(doi))
+    candidates = [
+        (paper_id, doi, title)
+        for paper_id, doi, checked, title in missing
+        if paper_id not in attempted_before and abstracts.normalize_doi(doi) and not checked
+    ]
+    batch = candidates[:FIND_ABSTRACTS_CHUNK_SIZE]
+
+    skipped = set(skip_sources)
+    source_errors = {}
+    filled = []
+    checked_ids = []
+    for paper_id, doi, title in batch:
+        abstract, source, errors, answered = abstracts.find_abstract(doi, skipped, title=title)
+        source_errors.update(errors)
+        skipped.update(errors)
+        if abstract and db.set_paper_abstract_if_blank(paper_id, abstract, source):
+            filled.append(db.get_paper(paper_id))
+        elif answered:
+            db.mark_abstract_checked(paper_id)
+            checked_ids.append(paper_id)
+
+    return jsonify(
+        {
+            "attempted": [paper_id for paper_id, _, _ in batch],
+            "filled": filled,
+            "checked": checked_ids,
+            "remaining": len(candidates) - len(batch),
+            "no_doi": no_doi,
+            "source_errors": source_errors,
+        }
+    )
+
+
 @app.patch("/api/datasets/<int:dataset_id>/papers/<int:paper_id>")
 def update_dataset_paper(dataset_id, paper_id):
     """Exclude (or restore) a paper within this dataset. Excluded papers stay
@@ -344,8 +437,9 @@ def update_paper(paper_id):
         fields["title"] = title
     if "abstract" in body:
         fields["abstract"] = (body.get("abstract") or "").strip()
-    if "doi" in body:
-        fields["doi"] = (body.get("doi") or "").strip() or None
+    # The DOI is deliberately not editable: it's how the same paper is
+    # recognized across searches (db.get_or_create_paper), so changing it
+    # would split off a duplicate that lacks the user's edits.
     if "venue" in body:
         fields["venue"] = (body.get("venue") or "").strip() or None
     if "url" in body:

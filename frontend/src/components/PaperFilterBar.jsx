@@ -68,7 +68,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total }) {
           {open ? (
             <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border border-gray-200 bg-white p-3 shadow-lg">
               <div className="flex items-center justify-between gap-3 text-sm text-gray-700">
-                <span id="missing-abstract-label">Only papers without abstracts</span>
+                <span id="missing-abstract-label">Papers missing abstracts</span>
                 <button
                   type="button"
                   role="switch"

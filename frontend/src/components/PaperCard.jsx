@@ -20,7 +20,6 @@ function EditForm({ result, onSave, onCancel }) {
   const [form, setForm] = useState({
     title: result.title || '',
     abstract: result.abstract || '',
-    doi: result.doi || '',
     venue: result.venue || '',
     year: result.year ?? '',
     url: result.url || '',
@@ -38,7 +37,6 @@ function EditForm({ result, onSave, onCancel }) {
       const updated = await patchJson(`/api/papers/${result.id}`, {
         title: form.title,
         abstract: form.abstract,
-        doi: form.doi,
         venue: form.venue,
         year: form.year === '' ? null : Number(form.year),
         url: form.url,
@@ -67,7 +65,11 @@ function EditForm({ result, onSave, onCancel }) {
         <div className="flex gap-3">
           <div className="flex-1">
             <label className={label}>DOI</label>
-            <input value={form.doi} onChange={set('doi')} className={field} />
+            {/* Read-only: the DOI is how the same paper is recognized across searches,
+                so changing it would split off a duplicate without your edits. */}
+            <p className="break-all rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm text-gray-600">
+              {result.doi || 'None'}
+            </p>
           </div>
           <div className="w-24">
             <label className={label}>Year</label>

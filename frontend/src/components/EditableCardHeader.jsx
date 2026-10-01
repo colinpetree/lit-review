@@ -18,14 +18,14 @@ export default function EditableCardHeader({
   return (
     <div className="flex items-start justify-between gap-4">
       <div>
-        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
         {description && <p className="text-xs text-gray-400 mt-0.5">{description}</p>}
         {linkUrl && (
           <a
             href={linkUrl}
             target="_blank"
             rel="noreferrer"
-            className="mt-1 inline-block text-xs text-blue-600 hover:underline"
+            className="mt-1 inline-block text-xs text-blue-600 transition-colors hover:text-blue-800"
           >
             {linkLabel}
           </a>

@@ -142,6 +142,16 @@ def _migrate(conn):
     if "publication_date" not in existing_columns:
         conn.execute("ALTER TABLE paper ADD COLUMN publication_date TEXT")
         conn.commit()
+    # Which source an abstract was looked up from after the fact (NULL for
+    # abstracts that came with the paper or were typed in by hand).
+    if "abstract_source" not in existing_columns:
+        conn.execute("ALTER TABLE paper ADD COLUMN abstract_source TEXT")
+        conn.commit()
+    # When an abstract lookup last completed for a paper without finding one,
+    # so the automatic lookup on opening a dataset doesn't retry it every time.
+    if "abstract_checked_at" not in existing_columns:
+        conn.execute("ALTER TABLE paper ADD COLUMN abstract_checked_at TEXT")
+        conn.commit()
 
     # Soft delete: hidden from the UI but kept, since scored runs are meant to
     # stay available as examples for reusable prompts.
@@ -150,6 +160,13 @@ def _migrate(conn):
         if "deleted_at" not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
             conn.commit()
+
+    # Which paper sources a dataset was retrieved from (JSON list of ids).
+    # NULL on datasets from before sources could be chosen: all OpenAlex.
+    dataset_columns = {row["name"] for row in conn.execute("PRAGMA table_info(dataset)")}
+    if "sources" not in dataset_columns:
+        conn.execute("ALTER TABLE dataset ADD COLUMN sources TEXT")
+        conn.commit()
 
     # Datasets from before titles existed get the first few words of their
     # topic as a title (editable later). New datasets always set a name.
@@ -321,6 +338,10 @@ def _paper_row_to_dict(row):
     # page's existing excluded state when merged into it.
     if "excluded_at" in row.keys():
         paper["excluded"] = bool(row["excluded_at"])
+    # Whether an abstract lookup has already completed for this paper. Left out
+    # (not False) when the row doesn't carry the column, for the same reason.
+    if "abstract_checked_at" in row.keys():
+        paper["abstract_checked"] = row["abstract_checked_at"] is not None
     return paper
 
 
@@ -331,8 +352,9 @@ def get_paper(paper_id):
 
 
 # Fields the user is allowed to hand-edit - the paper table's identity
-# columns (source, source_id, first_seen_at) are deliberately excluded.
-EDITABLE_PAPER_FIELDS = {"title", "abstract", "doi", "year", "citation_count", "venue", "url", "authors"}
+# columns (source, source_id, first_seen_at) and the DOI (the key papers are
+# matched on across searches) are deliberately excluded.
+EDITABLE_PAPER_FIELDS = {"title", "abstract", "year", "citation_count", "venue", "url", "authors"}
 
 
 def update_paper(paper_id, fields):
@@ -353,17 +375,85 @@ def update_paper(paper_id, fields):
         conn.commit()
 
 
-def create_dataset(verbose_query, expanded_queries, from_year=None, to_year=None, name=None):
+def get_dataset_papers_missing_abstract(dataset_id):
+    """(id, doi, checked, title) of each non-excluded paper in the dataset with
+    a blank abstract; doi may be None, and checked is whether a lookup already
+    completed for it without finding one. Excluded papers are left alone,
+    since they won't be scored and a lookup would only spend API quota."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT p.id, p.doi, p.abstract_checked_at IS NOT NULL AS checked, p.title
+            FROM dataset_paper dp
+            JOIN paper p ON p.id = dp.paper_id
+            WHERE dp.dataset_id = ? AND dp.excluded_at IS NULL
+              AND (p.abstract IS NULL OR TRIM(p.abstract) = '')
+            ORDER BY p.id
+            """,
+            (dataset_id,),
+        ).fetchall()
+        return [(row["id"], row["doi"], bool(row["checked"]), row["title"]) for row in rows]
+
+
+def mark_abstract_checked(paper_id):
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute("UPDATE paper SET abstract_checked_at = ? WHERE id = ?", (_now(), paper_id))
+        conn.commit()
+
+
+def clear_abstract_checked():
+    """Forget which papers an abstract lookup already gave up on, so the next
+    lookup tries them all again. Called when a new lookup API key is saved,
+    since a source that couldn't be asked before now can be."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute("UPDATE paper SET abstract_checked_at = NULL WHERE abstract_checked_at IS NOT NULL")
+        conn.commit()
+
+
+def set_paper_abstract_if_blank(paper_id, abstract, source):
+    """Fill a blank abstract and record where it came from. Never overwrites
+    one that's there (the user may have typed one in since the lookup
+    started). Returns whether it was written."""
+    with _LOCK, closing(_connect()) as conn:
+        cur = conn.execute(
+            "UPDATE paper SET abstract = ?, abstract_source = ? "
+            "WHERE id = ? AND (abstract IS NULL OR TRIM(abstract) = '')",
+            (abstract, source, paper_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def _dataset_sources(raw):
+    """A dataset's source ids from its stored JSON; OpenAlex for datasets that
+    predate the column."""
+    try:
+        sources = json.loads(raw) if raw else None
+    except ValueError:
+        sources = None
+    return sources or ["openalex"]
+
+
+def create_dataset(verbose_query, expanded_queries, from_year=None, to_year=None, name=None, sources=None):
     """name is the short title (AI-written at expansion time); without one, the
-    first few words of the topic stand in."""
+    first few words of the topic stand in. sources are the paper source ids it
+    was retrieved from (default OpenAlex)."""
     name = (name or "").strip() or _placeholder_title(verbose_query)
     with _LOCK, closing(_connect()) as conn:
         cur = conn.execute(
             """
-            INSERT INTO dataset (name, verbose_query, from_year, to_year, expanded_queries, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO dataset (name, verbose_query, from_year, to_year, expanded_queries, sources, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (name, verbose_query, from_year, to_year, json.dumps(expanded_queries), _now()),
+            (
+                name,
+                verbose_query,
+                from_year,
+                to_year,
+                json.dumps(expanded_queries),
+                json.dumps(sources or ["openalex"]),
+                _now(),
+            ),
         )
         conn.commit()
         return cur.lastrowid
@@ -379,24 +469,29 @@ def add_papers_to_dataset(dataset_id, paper_ids):
         conn.commit()
 
 
-def find_dataset(verbose_query, from_year=None, to_year=None):
-    """Look up an existing dataset with the same question + year filters, so
-    resubmitting an identical search reuses it instead of re-running
-    expansion/retrieval (see PLAN.md's reuse-first rule for POST /api/datasets)."""
+def find_dataset(verbose_query, from_year=None, to_year=None, sources=None):
+    """Look up an existing dataset with the same question + year filters +
+    paper sources, so resubmitting an identical search reuses it instead of
+    re-running expansion/retrieval (see PLAN.md's reuse-first rule for
+    POST /api/datasets). The same topic searched in different sources is a
+    different paper pool, so it isn't reused."""
+    wanted = sorted(sources or ["openalex"])
     with closing(_connect()) as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT id FROM dataset
+            SELECT id, sources FROM dataset
             WHERE verbose_query = ?
               AND deleted_at IS NULL
               AND (from_year IS ? OR from_year = ?)
               AND (to_year IS ? OR to_year = ?)
             ORDER BY created_at DESC
-            LIMIT 1
             """,
             (verbose_query, from_year, from_year, to_year, to_year),
-        ).fetchone()
-        return row["id"] if row else None
+        ).fetchall()
+        for row in rows:
+            if sorted(_dataset_sources(row["sources"])) == wanted:
+                return row["id"]
+        return None
 
 
 def list_datasets():
@@ -429,6 +524,7 @@ def get_dataset(dataset_id, include_deleted=False):
             return None
         d = dict(row)
         d["expanded_queries"] = json.loads(d["expanded_queries"])
+        d["sources"] = _dataset_sources(d.get("sources"))
         return d
 
 

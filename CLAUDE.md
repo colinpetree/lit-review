@@ -73,6 +73,32 @@ routes survive refresh. In dev, run Flask on 5175 (hardcoded) next to `npm run d
   `/api/papers/<id>`, `/api/analysis-runs/*`, `/api/settings/api-key`.
 - `openalex.py` - Works API client with retry and cross-query `dedupe`. Reconstructs
   abstracts from OpenAlex's inverted-index format (`{word: [positions]}`).
+- `search_sources.py` - the paper sources a dataset can be retrieved from: OpenAlex
+  (`openalex.py`), Semantic Scholar and Elsevier (Scopus Search). Springer Nature is
+  deliberately lookup-only (its search matched too strictly to be useful).
+  `POST /api/datasets` searches every selected source with every
+  expanded query, and any source failing fails the whole retrieval with nothing saved. A
+  dataset records its `sources` (NULL = OpenAlex) and "reuse an identical search" also
+  matches on sources. Every source reports DOIs as `https://doi.org/...` so cross-source
+  duplicates merge. Scopus results have no abstracts (fill with "Find missing abstracts");
+  Semantic Scholar without a key is often rate limited. `source_http.py` holds the shared
+  HTTP helpers and `SourceError`.
+- `abstracts.py` - looks up a missing abstract by DOI: Elsevier (Scopus `META_ABS`) and
+  Springer Nature first, when the user has saved a key and the DOI prefix matches, then
+  Europe PMC, then Semantic Scholar. Accepts only abstracts of `llm.MIN_ABSTRACT_CHARS`+.
+  A source that fails (bad key, quota) raises `SourceError` and is skipped for the rest of
+  the run. Driven by `POST /api/datasets/<id>/find-abstracts` (one chunk per call, stateless:
+  the client sends back `skip_ids`/`skip_sources`; loop in `frontend/src/lib/findAbstracts.js`).
+  Filled abstracts record `paper.abstract_source`. The dataset page starts this lookup
+  automatically when it loads; `paper.abstract_checked_at` marks papers a lookup completed
+  for without finding an abstract, so neither the automatic run nor the button asks again
+  (saving a new Elsevier/Springer/Semantic Scholar key clears the marks, since a new source
+  can be asked). A paper is not marked if every source errored. A looked-up abstract is
+  dropped when the paper title the source returns clearly differs from the stored title
+  (`title_match.py`; guards against a DOI pointing at a different paper). The DOI is
+  deliberately read-only for users, since it is how the same paper is matched across searches. The lookup panel is a
+  sticky side column on the dataset page, hidden once every included paper with a DOI has
+  an abstract.
 - `llm.py` - provider-agnostic interface (`expand_query`, `score_batch`) plus per-model
   `PRICING_PER_MTOK` used for cost tracking. Adding a model means adding a pricing entry
   here (`_validate_ai_model` in `app.py` rejects any model not in this table with a 400)

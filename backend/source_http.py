@@ -1,0 +1,114 @@
+"""HTTP helpers shared by the scholarly-API modules (abstracts.py for abstract
+lookup, search_sources.py for paper search).
+
+A SourceError means a source can't be used right now (rejected key, quota or
+rate limit reached, unreachable, unreadable reply); its message is written for
+the user. Callers either stop using that source for the rest of the run
+(abstract lookup) or report it and fail the search (paper search).
+"""
+
+import re
+import time
+
+import requests
+
+import credentials
+
+REQUEST_TIMEOUT = 20
+USER_AGENT = "lit-review/0.1 (local research tool)"
+
+# Semantic Scholar's unauthenticated pool is about one request per second,
+# shared with everyone else; a saved key raises it.
+_SEMANTIC_SCHOLAR_MIN_INTERVAL = 1.1
+_last_semantic_scholar_call = 0.0
+
+
+class SourceError(Exception):
+    """This source can't be used right now."""
+
+
+def normalize_doi(doi):
+    """Bare lowercase DOI, from either a bare DOI or a https://doi.org/ URL."""
+    return re.sub(r"^https?://(dx\.)?doi\.org/", "", (doi or "").strip(), flags=re.I).lower()
+
+
+def doi_url(doi):
+    """The https://doi.org/... form OpenAlex uses, which is what papers are
+    deduped on, so every source should report its DOIs this way."""
+    doi = normalize_doi(doi)
+    return f"https://doi.org/{doi}" if doi else None
+
+
+def clean_text(text):
+    """Plain text from an API's text field (which may carry JATS/HTML tags)."""
+    text = re.sub(r"<[^>]+>", " ", text or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    # Some publishers prefix an abstract with the word "Abstract".
+    return re.sub(r"^abstract\s*[:.\-]?\s+(?=\S)", "", text, flags=re.I)
+
+
+def get(source_label, url, **kwargs):
+    headers = {"User-Agent": USER_AGENT, **kwargs.pop("headers", {})}
+    try:
+        return requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT, **kwargs)
+    except requests.RequestException as exc:
+        raise SourceError(f"Could not reach {source_label}.") from exc
+
+
+def json_of(response, source_label):
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise SourceError(f"{source_label} returned an unreadable response.") from exc
+
+
+SEMANTIC_SCHOLAR_KEY_REJECTED = (
+    "Semantic Scholar rejected the saved API key. Keys can be revoked after 60 days without "
+    "use; request a new one at semanticscholar.org/product/api and save it in Settings."
+)
+
+
+def _semanticscholar_request(url, params, key):
+    """One Semantic Scholar GET, with `key` (or none), spaced out to its rate
+    limit when there's no key and retried once on a 429. Raises SourceError if
+    it stays rate limited."""
+    global _last_semantic_scholar_call
+    headers = {}
+    if key:
+        headers["x-api-key"] = key
+    else:
+        wait = _SEMANTIC_SCHOLAR_MIN_INTERVAL - (time.monotonic() - _last_semantic_scholar_call)
+        if wait > 0:
+            time.sleep(wait)
+
+    for attempt in range(2):
+        _last_semantic_scholar_call = time.monotonic()
+        response = get("Semantic Scholar", url, params=params, headers=headers)
+        if response.status_code != 429:
+            return response
+        if attempt == 0:
+            time.sleep(3)
+    if key:
+        raise SourceError("Semantic Scholar's rate limit was reached. Try again in a moment.")
+    raise SourceError(
+        "Semantic Scholar's rate limit was reached. A free Semantic Scholar API key in "
+        "Settings raises it."
+    )
+
+
+def semanticscholar_get(url, params, keyless_fallback=False):
+    """GET a Semantic Scholar Graph API URL with the saved key, if any.
+    Returns the response (the caller handles other statuses); raises
+    SourceError if it stays rate limited or the saved key is rejected.
+
+    A rejected key (they're revoked after 60 days without use) is retried
+    without it when keyless_fallback is set, which suits lookups that work,
+    just more slowly, with no key; otherwise it raises, with a message saying
+    how to get a new one."""
+    key = credentials.get_key("semanticscholar")
+    response = _semanticscholar_request(url, params, key)
+    if key and response.status_code in (401, 403):
+        if not keyless_fallback:
+            raise SourceError(SEMANTIC_SCHOLAR_KEY_REJECTED)
+        response = _semanticscholar_request(url, params, None)
+    return response

@@ -188,18 +188,22 @@ export default function DiscoverPapersPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700">From year</label>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
                 value={fromYear}
-                onChange={(e) => setFromYear(e.target.value)}
+                onChange={(e) => setFromYear(e.target.value.replace(/\D/g, ''))}
                 className="mt-1 w-28 rounded-md border border-gray-300 px-3 py-2 text-sm"
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">To year</label>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
                 value={toYear}
-                onChange={(e) => setToYear(e.target.value)}
+                onChange={(e) => setToYear(e.target.value.replace(/\D/g, ''))}
                 className="mt-1 w-28 rounded-md border border-gray-300 px-3 py-2 text-sm"
               />
             </div>

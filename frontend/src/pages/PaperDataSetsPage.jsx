@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
+import ListFilterBar from '../components/ListFilterBar'
+import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import DeleteMenu from '../components/DeleteMenu'
 import ModelBadge from '../components/ModelBadge'
 import { deleteJson } from '../lib/api'
@@ -9,6 +11,8 @@ import { formatDateTime, formatYearRange } from '../lib/format'
 export default function PaperDataSetsPage() {
   const [datasets, setDatasets] = useState(null)
   const [error, setError] = useState(null)
+  const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
+  const [sort, setSort] = useState(DEFAULT_LIST_SORT)
 
   useEffect(() => {
     fetch('/api/datasets')
@@ -16,6 +20,18 @@ export default function PaperDataSetsPage() {
       .then((data) => setDatasets(data.datasets ?? []))
       .catch((err) => setError(err.message))
   }, [])
+
+  const visible = useMemo(
+    () =>
+      sortByCreated(
+        filterList(datasets ?? [], filter, {
+          getSearchText: (d) => `${d.name ?? ''} ${d.verbose_query ?? ''}`,
+          getModel: (d) => (d.ai_model ? modelKey(d.ai_api, d.ai_model) : null),
+        }),
+        sort
+      ),
+    [datasets, filter, sort]
+  )
 
   const deleteDataset = async (id) => {
     await deleteJson(`/api/datasets/${id}`)
@@ -33,8 +49,25 @@ export default function PaperDataSetsPage() {
           No datasets yet - run a search from Discover Papers to create one.
         </p>
       ) : null}
+      {datasets && datasets.length > 0 ? (
+        <ListFilterBar
+          filter={filter}
+          onChange={setFilter}
+          sort={sort}
+          onSortChange={setSort}
+          placeholder="Filter data sets by title or topic"
+          noun="data sets"
+          shown={visible.length}
+          total={datasets.length}
+          items={datasets}
+          showModelFilter
+        />
+      ) : null}
+      {datasets && datasets.length > 0 && visible.length === 0 ? (
+        <p className="text-sm text-gray-500">No data sets match these filters.</p>
+      ) : null}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {(datasets ?? []).map((d) => {
+        {visible.map((d) => {
           const yearRange = formatYearRange(d.oldest_year, d.newest_year, d.newest_publication_date)
           return (
             <div key={d.id} className="relative">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
@@ -6,11 +6,15 @@ import MoreMenu from '../components/MoreMenu'
 import ConfirmModal from '../components/ConfirmModal'
 import PromptFormModal from '../components/PromptFormModal'
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
-import { formatDate } from '../lib/format'
+import { formatDateTime } from '../lib/format'
+import ListFilterBar from '../components/ListFilterBar'
+import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, sortByCreated } from '../lib/listFilter'
 
 export default function ScoringPromptsPage() {
   const [prompts, setPrompts] = useState(null)
   const [error, setError] = useState(null)
+  const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
+  const [sort, setSort] = useState(DEFAULT_LIST_SORT)
   // null | { type: 'create' } | { type: 'edit' | 'delete', prompt }
   const [dialog, setDialog] = useState(null)
 
@@ -19,6 +23,17 @@ export default function ScoringPromptsPage() {
       .then((data) => setPrompts(data.prompts ?? []))
       .catch((err) => setError(err.message))
   }, [])
+
+  const visible = useMemo(
+    () =>
+      sortByCreated(
+        filterList(prompts ?? [], filter, {
+          getSearchText: (p) => `${p.name ?? ''} ${p.description ?? ''}`,
+        }),
+        sort
+      ),
+    [prompts, filter, sort]
+  )
 
   const createPrompt = async (fields) => {
     const created = await postJson('/api/prompts', fields)
@@ -59,15 +74,30 @@ export default function ScoringPromptsPage() {
           No prompts yet - create one here, or run an analysis from Analyze Papers.
         </p>
       ) : null}
+      {prompts && prompts.length > 0 ? (
+        <ListFilterBar
+          filter={filter}
+          onChange={setFilter}
+          sort={sort}
+          onSortChange={setSort}
+          placeholder="Filter prompts by name or criteria"
+          noun="prompts"
+          shown={visible.length}
+          total={prompts.length}
+        />
+      ) : null}
+      {prompts && prompts.length > 0 && visible.length === 0 ? (
+        <p className="text-sm text-gray-500">No prompts match these filters.</p>
+      ) : null}
       <div className="flex flex-col gap-3">
-        {(prompts ?? []).map((p) => (
+        {visible.map((p) => (
           <div key={p.id} className="relative">
             <Link to={`/prompts/${p.id}`}>
               <Card className="hover:border-gray-300">
                 <p className="pr-8 font-medium text-gray-900">{p.name}</p>
                 <p className="mt-1 line-clamp-2 text-sm text-gray-500">{p.description}</p>
                 <p className="mt-1 text-sm text-gray-400">
-                  {p.example_count} example{p.example_count === 1 ? '' : 's'} · {formatDate(p.created_at)}
+                  {p.example_count} example{p.example_count === 1 ? '' : 's'} · {formatDateTime(p.created_at)}
                 </p>
               </Card>
             </Link>

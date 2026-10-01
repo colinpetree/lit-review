@@ -110,7 +110,7 @@ localhost.
   `webbrowser.open()`, so there's no separate "installer" UX — just run the script.
 - **Frontend**: React 19 + Vite + Tailwind v4 + react-router, with lucide icons and
   self-hosted Source Sans 3 / Source Code Pro fonts. Pages: Discover Papers, Paper Data Sets
-  (+ detail), Analyze Papers, Scoring Prompts (+ detail), Past Results (+ run results) and
+  (+ detail), Analyze Papers, Scoring Prompts (+ detail), Analysis Results (+ run results) and
   Settings, under a shared layout. `vite build` writes straight into `backend/static`,
   which Flask serves, so the shipped app is a single Flask process (no separate frontend dev
   server needed at runtime; in dev, `npm run dev` proxies `/api` to Flask on 5175).

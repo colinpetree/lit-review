@@ -157,7 +157,7 @@ def _openalex_error_response(exc):
 def _dataset_to_dict(dataset_row, papers):
     # Deliberately no run/score info here - a dataset is pure retrieval
     # (PLAN.md's Paper/Dataset model), never joined to any analysis_run for
-    # display. Scores only ever appear on the Analyze Papers / Past Results
+    # display. Scores only ever appear on the Analyze Papers / Analysis Results
     # side (RunResultsPage), never on Paper Data Sets.
     # Excluded papers are in `papers` (so the detail page can show them grayed
     # out) but don't count toward the year spread, matching list_datasets.

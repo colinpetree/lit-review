@@ -91,7 +91,7 @@ export default function RunResultsPage() {
 
   return (
     <PageShell title={run.grading_prompt}>
-      <BackLink to="/results">Back to Past Results</BackLink>
+      <BackLink to="/results">Back to Analysis Results</BackLink>
 
       {run.prompt ? (
         <p className="mt-4 text-sm text-gray-500">

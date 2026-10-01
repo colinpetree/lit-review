@@ -5,7 +5,7 @@ const NAV_ITEMS = [
   { to: '/datasets', label: 'Paper Data Sets' },
   { to: '/analyze', label: 'Analyze Papers' },
   { to: '/prompts', label: 'Scoring Prompts' },
-  { to: '/results', label: 'Past Results' },
+  { to: '/results', label: 'Analysis Results' },
 ]
 
 const linkClass = ({ isActive }) =>

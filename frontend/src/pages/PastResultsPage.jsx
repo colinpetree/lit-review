@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
+import ListFilterBar from '../components/ListFilterBar'
+import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import DeleteMenu from '../components/DeleteMenu'
 import { deleteJson } from '../lib/api'
 import { datasetLabels, formatDate } from '../lib/format'
@@ -9,6 +11,8 @@ import ModelBadge from '../components/ModelBadge'
 export default function PastResultsPage() {
   const [runs, setRuns] = useState(null)
   const [error, setError] = useState(null)
+  const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
+  const [sort, setSort] = useState(DEFAULT_LIST_SORT)
 
   useEffect(() => {
     fetch('/api/analysis-runs')
@@ -17,6 +21,18 @@ export default function PastResultsPage() {
       .catch((err) => setError(err.message))
   }, [])
 
+  const visible = useMemo(
+    () =>
+      sortByCreated(
+        filterList(runs ?? [], filter, {
+          getSearchText: (r) => `${r.grading_prompt ?? ''} ${(r.datasets ?? []).map((d) => d.name).join(' ')}`,
+          getModel: (r) => (r.ai_model ? modelKey(r.ai_api, r.ai_model) : null),
+        }),
+        sort
+      ),
+    [runs, filter, sort]
+  )
+
   const deleteRun = async (id) => {
     await deleteJson(`/api/analysis-runs/${id}`)
     setRuns((prev) => prev.filter((r) => r.id !== id))
@@ -24,7 +40,7 @@ export default function PastResultsPage() {
 
   return (
     <PageShell
-      title="Past Results"
+      title="Analysis Results"
       description="Saved results from previous runs where the AI judge scored papers based on your research criteria."
     >
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
@@ -33,8 +49,25 @@ export default function PastResultsPage() {
           No analysis runs yet - run one from Discover Papers or Analyze Papers.
         </p>
       ) : null}
+      {runs && runs.length > 0 ? (
+        <ListFilterBar
+          filter={filter}
+          onChange={setFilter}
+          sort={sort}
+          onSortChange={setSort}
+          placeholder="Filter results by prompt or data set"
+          noun="results"
+          shown={visible.length}
+          total={runs.length}
+          items={runs}
+          showModelFilter
+        />
+      ) : null}
+      {runs && runs.length > 0 && visible.length === 0 ? (
+        <p className="text-sm text-gray-500">No results match these filters.</p>
+      ) : null}
       <div className="flex flex-col gap-3">
-        {(runs ?? []).map((run) => (
+        {visible.map((run) => (
           <div key={run.id} className="relative">
             <Link to={`/results/${run.id}`}>
               <Card className="hover:border-gray-300">

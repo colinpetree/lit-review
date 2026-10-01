@@ -109,9 +109,30 @@ const AI_PROVIDERS = [
   {
     id: 'anthropic',
     label: 'Anthropic',
-    description: 'Required. Used to turn your topic into search queries and to score papers against your criteria. Stored locally in an encrypted file on this machine and only sent to Anthropic.',
+    description: 'Claude models. Used to turn your topic into search queries and to score papers against your criteria. At least one AI integration is required. Stored locally in an encrypted file on this machine and only sent to Anthropic.',
     keyUrl: 'https://console.anthropic.com/settings/keys',
     keyPlaceholder: 'sk-ant-...',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    description: 'GPT models, for the same query and scoring work as the other AI integrations. Stored locally in an encrypted file on this machine and only sent to OpenAI.',
+    keyUrl: 'https://platform.openai.com/api-keys',
+    keyPlaceholder: 'sk-...',
+  },
+  {
+    id: 'gemini',
+    label: 'Google Gemini',
+    description: 'Gemini models, for the same query and scoring work as the other AI integrations. Has a free tier. Stored locally in an encrypted file on this machine and only sent to Google.',
+    keyUrl: 'https://aistudio.google.com/apikey',
+    keyPlaceholder: 'AIza...',
+  },
+  {
+    id: 'groq',
+    label: 'Groq',
+    description: 'Fast, low-cost open models (GPT-OSS), for the same query and scoring work as the other AI integrations. Stored locally in an encrypted file on this machine and only sent to Groq.',
+    keyUrl: 'https://console.groq.com/keys',
+    keyPlaceholder: 'gsk_...',
   },
 ]
 

@@ -1,38 +1,69 @@
 """Provider-agnostic LLM interface for query expansion and relevance scoring.
 
-Only the Claude ("anthropic") provider is implemented so far. PLAN.md calls
-for OpenAI/Gemini/Groq too - add them as sibling provider modules behind the
-same two functions (expand_query, score_batch) when it's time; callers in
-app.py should not need to change.
+Prompts, JSON schemas and score handling live here and are shared by every
+provider. Each provider's SDK specifics (client, structured-output request,
+error mapping) live in its own module under providers/, behind one function,
+complete_json. To add a provider: write that module, register it in
+PROVIDERS, list its models in MODELS, and mirror the models in the frontend's
+lib/models.js. Callers in app.py pass `ai_api` and `model` explicitly.
 """
 
-import json
+import importlib
 
-import anthropic
+from providers import LLMError
 
-import credentials
-
-# Default suggested model when a caller doesn't specify one - expand_query()
-# and score_batch() always take the model to use as an explicit argument,
-# never read this internally.
-MODEL = "claude-haiku-4-5"
-PRICING_PER_MTOK = {
-    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
-    "claude-sonnet-5": {"input": 2.00, "output": 10.00},
-    "claude-opus-5": {"input": 5.00, "output": 25.00},
-    "claude-fable-5-1": {"input": 10.00, "output": 50.00},
+# provider id -> module exposing complete_json(). The ids are also the
+# credential names in credentials.py and what analysis_run.ai_api stores.
+# Modules are imported on first use (_provider_module), so a provider whose SDK
+# isn't installed only breaks that provider, and startup doesn't load all four SDKs.
+PROVIDERS = {
+    "anthropic": "providers.anthropic",
+    "openai": "providers.openai",
+    "gemini": "providers.gemini",
+    "groq": "providers.groq",
 }
 
+# provider id -> {model id: {input/output USD per million tokens (approximate,
+# for the cost estimate only), max_output_tokens}}. The first model listed for
+# a provider is its default. A model not listed here is rejected by app.py.
+MODELS = {
+    "anthropic": {
+        "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "max_output_tokens": 16000},
+        "claude-sonnet-5": {"input": 2.00, "output": 10.00, "max_output_tokens": 16000},
+        "claude-opus-5": {"input": 5.00, "output": 25.00, "max_output_tokens": 16000},
+        "claude-fable-5-1": {"input": 10.00, "output": 50.00, "max_output_tokens": 16000},
+    },
+    "openai": {
+        "gpt-6-luna": {"input": 0.10, "output": 0.50, "max_output_tokens": 16000},
+        "gpt-6.1-sol": {"input": 2.00, "output": 10.00, "max_output_tokens": 16000},
+        "gpt-6-astra": {"input": 10.00, "output": 50.00, "max_output_tokens": 16000},
+    },
+    "gemini": {
+        "gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50, "max_output_tokens": 16000},
+        "gemini-3.5-flash": {"input": 1.50, "output": 9.00, "max_output_tokens": 16000},
+        # Priced at the rate for prompts up to 200k tokens; a scoring chunk is far below that.
+        "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00, "max_output_tokens": 16000},
+    },
+    "groq": {
+        "openai/gpt-oss-20b": {"input": 0.075, "output": 0.30, "max_output_tokens": 16000},
+        "openai/gpt-oss-120b": {"input": 0.15, "output": 0.60, "max_output_tokens": 16000},
+    },
+}
 
-class LLMError(Exception):
-    """Missing credentials or an unrecoverable provider error."""
+DEFAULT_PROVIDER = "anthropic"
+
+
+def default_model(ai_api):
+    """The model used when a caller names a provider but no model."""
+    return next(iter(MODELS[ai_api]))
 
 
 class Usage:
-    def __init__(self, input_tokens=0, output_tokens=0, model=MODEL):
+    def __init__(self, input_tokens=0, output_tokens=0, model=None, provider=DEFAULT_PROVIDER):
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
-        self.model = model
+        self.provider = provider
+        self.model = model or default_model(provider)
 
     def add(self, other):
         self.input_tokens += other.input_tokens
@@ -40,64 +71,19 @@ class Usage:
 
     @property
     def usd(self):
-        rates = PRICING_PER_MTOK[self.model]
+        rates = MODELS[self.provider][self.model]
         return (
             self.input_tokens * rates["input"] + self.output_tokens * rates["output"]
         ) / 1_000_000
 
     def to_dict(self):
         return {
+            "provider": self.provider,
             "model": self.model,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "usd": round(self.usd, 6),
         }
-
-
-def _client():
-    key = credentials.get_key("anthropic")
-    if not key:
-        raise LLMError(
-            "No Anthropic API key configured. Add one in Settings before running "
-            "an AI-assisted review."
-        )
-    return anthropic.Anthropic(api_key=key)
-
-
-def _call(client, **kwargs):
-    try:
-        return client.messages.create(**kwargs)
-    except anthropic.AuthenticationError as exc:
-        raise LLMError("Anthropic rejected the API key - check it in Settings.") from exc
-    except anthropic.RateLimitError as exc:
-        raise LLMError("Anthropic rate limit reached. Please wait and try again.") from exc
-    except anthropic.APIStatusError as exc:
-        raise LLMError(f"Anthropic API error: {exc.message}") from exc
-    except anthropic.APIConnectionError as exc:
-        raise LLMError("Failed to reach Anthropic. Check your network connection.") from exc
-
-
-def _parsed_json(response):
-    """Pull the structured-output JSON out of a response, raising LLMError
-    (instead of an unhandled StopIteration/JSONDecodeError) for every way a
-    response can fail to be the clean text block output_config.format
-    promises - a refusal, a mid-response cutoff at max_tokens, or otherwise
-    malformed JSON."""
-    if response.stop_reason == "refusal":
-        raise LLMError("Anthropic declined to process this request.")
-    if response.stop_reason == "max_tokens":
-        raise LLMError(
-            "Anthropic's response was cut off before finishing - try a smaller batch."
-        )
-
-    text_block = next((b for b in response.content if b.type == "text"), None)
-    if text_block is None:
-        raise LLMError("Anthropic returned no text content to parse.")
-
-    try:
-        return json.loads(text_block.text)
-    except json.JSONDecodeError as exc:
-        raise LLMError(f"Anthropic returned unparseable JSON: {exc}") from exc
 
 
 MAX_TITLE_CHARS = 60
@@ -109,16 +95,57 @@ def _clean_title(raw):
     return " ".join(str(raw or "").split())[:MAX_TITLE_CHARS] or None
 
 
-def expand_query(research_question, model, n=4):
+def _provider_module(ai_api):
+    try:
+        return importlib.import_module(PROVIDERS[ai_api])
+    except ModuleNotFoundError as exc:
+        raise LLMError(
+            f"The Python package for '{ai_api}' is not installed ({exc.name or ai_api}). "
+            "Run `pip install -r requirements.txt` in the backend folder and restart the app."
+        ) from exc
+    except ImportError as exc:
+        # Installed but unusable (e.g. a version mismatch), so "not installed"
+        # would be wrong; show the real reason.
+        raise LLMError(
+            f"The Python package for '{ai_api}' failed to load: {exc}. Try "
+            "`pip install -r requirements.txt` in the backend folder and restart the app."
+        ) from exc
+
+
+def _whole_number(value):
+    """value as an int if it is a whole number (85, 85.0 or "85"), else None.
+    Strict schemas guarantee an integer; plain JSON mode (some Groq models)
+    can return the others."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _complete_json(ai_api, model, system, user, schema, max_tokens):
+    """One provider call: (parsed_json, Usage)."""
+    parsed, input_tokens, output_tokens = _provider_module(ai_api).complete_json(
+        model, system, user, schema, max_tokens
+    )
+    return parsed, Usage(input_tokens, output_tokens, model=model, provider=ai_api)
+
+
+def expand_query(research_question, ai_api, model, n=4):
     """Turn a free-text research question into a handful of literal keyword
     queries suitable for OpenAlex's search param (which is literal, not
     semantic), plus a 2-4 word title naming the topic (used as the dataset's
     name). Returns (queries, Usage, title); title is None if unusable."""
-    client = _client()
-    response = _call(
-        client,
-        model=model,
-        max_tokens=1024,
+    parsed, usage = _complete_json(
+        ai_api,
+        model,
         system=(
             f"You expand a researcher's free-text research question into at most {n} "
             "literal keyword search queries for a scholarly database (OpenAlex). "
@@ -127,28 +154,25 @@ def expand_query(research_question, model, n=4):
             "Vary vocabulary/synonyms across queries to broaden recall. Also return a "
             "`title`: a 2-4 word title that names the topic."
         ),
-        messages=[{"role": "user", "content": research_question}],
-        output_config={
-            "format": {
-                "type": "json_schema",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "queries": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": ["title", "queries"],
-                    "additionalProperties": False,
+        user=research_question,
+        schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "queries": {
+                    "type": "array",
+                    "items": {"type": "string"},
                 },
-            }
+            },
+            "required": ["title", "queries"],
+            "additionalProperties": False,
         },
+        max_tokens=1024,
     )
-    parsed = _parsed_json(response)
-    usage = Usage(response.usage.input_tokens, response.usage.output_tokens, model=model)
-    return parsed["queries"], usage, _clean_title(parsed.get("title"))
+    queries = parsed.get("queries") if isinstance(parsed, dict) else None
+    if not isinstance(queries, list) or not all(isinstance(q, str) for q in queries):
+        raise LLMError("The AI returned search queries in an unexpected format.")
+    return queries, usage, _clean_title(parsed.get("title"))
 
 
 # (name, low, high) - ordered best to worst. The prompt text below and the
@@ -237,7 +261,7 @@ def _examples_block(examples):
     )
 
 
-def score_batch(grading_prompt, candidates, model, examples=None, want_title=False):
+def score_batch(grading_prompt, candidates, ai_api, model, examples=None, want_title=False):
     """Score a batch of candidate papers (each needs at least id/title/abstract)
     against the user's grading prompt. Returns
     ({id: {"score": 0-100 or None, "rationale": str}}, Usage, title), with one
@@ -251,11 +275,15 @@ def score_batch(grading_prompt, candidates, model, examples=None, want_title=Fal
     A paper the model skips is retried once on its own. If it is skipped
     again it gets score None with an explanatory rationale, so the run can
     finish instead of re-selecting the same unscored paper forever."""
-    scores, usage, title = _score_call(grading_prompt, candidates, model, examples, want_title)
+    scores, usage, title = _score_call(
+        grading_prompt, candidates, ai_api, model, examples, want_title
+    )
 
     missing = [c for c in candidates if str(c["id"]) not in scores]
     if missing:
-        retry_scores, retry_usage, _ = _score_call(grading_prompt, missing, model, examples, False)
+        retry_scores, retry_usage, _ = _score_call(
+            grading_prompt, missing, ai_api, model, examples, False
+        )
         scores.update(retry_scores)
         usage.add(retry_usage)
 
@@ -266,11 +294,9 @@ def score_batch(grading_prompt, candidates, model, examples=None, want_title=Fal
     return scores, usage, title
 
 
-def _score_call(grading_prompt, candidates, model, examples=None, want_title=False):
+def _score_call(grading_prompt, candidates, ai_api, model, examples=None, want_title=False):
     """One LLM call. Only ids that belong to `candidates` are returned, so a
     made-up or non-numeric id from the model is dropped here."""
-    client = _client()
-
     has_abstract = {str(c["id"]): bool(_usable_abstract(c)) for c in candidates}
     papers_block = "\n\n".join(
         f"[{c['id']}] {c.get('title') or '(no title)'}\n"
@@ -288,64 +314,62 @@ def _score_call(grading_prompt, candidates, model, examples=None, want_title=Fal
         properties["title"] = {"type": "string"}
     required = ["title", "scores"] if want_title else ["scores"]
 
-    response = _call(
-        client,
-        model=model,
-        max_tokens=16000,
+    parsed, usage = _complete_json(
+        ai_api,
+        model,
         system=_JUDGE_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"{title_instruction}{_examples_block(examples)}"
-                    f"Grading prompt: {grading_prompt}\n\nPapers:\n\n{papers_block}"
-                ),
-            }
-        ],
-        output_config={
-            "format": {
-                "type": "json_schema",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        **properties,
-                        "scores": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                # Property order matters: comparison comes before
-                                # bracket/score so the model reasons first.
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "comparison": {"type": "string"},
-                                    "bracket": {
-                                        "type": "string",
-                                        "enum": list(_BRACKET_RANGES),
-                                    },
-                                    "score": {"type": "integer"},
-                                },
-                                "required": ["id", "comparison", "bracket", "score"],
-                                "additionalProperties": False,
+        user=(
+            f"{title_instruction}{_examples_block(examples)}"
+            f"Grading prompt: {grading_prompt}\n\nPapers:\n\n{papers_block}"
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                **properties,
+                "scores": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        # Property order matters: comparison comes before
+                        # bracket/score so the model reasons first.
+                        "properties": {
+                            "id": {"type": "string"},
+                            "comparison": {"type": "string"},
+                            "bracket": {
+                                "type": "string",
+                                "enum": list(_BRACKET_RANGES),
                             },
-                        }
+                            "score": {"type": "integer"},
+                        },
+                        "required": ["id", "comparison", "bracket", "score"],
+                        "additionalProperties": False,
                     },
-                    "required": required,
-                    "additionalProperties": False,
                 },
-            }
+            },
+            "required": required,
+            "additionalProperties": False,
         },
+        max_tokens=MODELS[ai_api][model]["max_output_tokens"],
     )
-    parsed = _parsed_json(response)
     title = None
     if want_title:
         title = _clean_title(parsed.get("title"))
+    rows = parsed.get("scores") if isinstance(parsed, dict) else None
+    if not isinstance(rows, list):
+        raise LLMError("The AI returned scores in an unexpected format.")
     scores = {}
-    for row in parsed["scores"]:
-        paper_id = str(row["id"]).strip()
-        if paper_id not in has_abstract:
+    for row in rows:
+        # Strict schemas guarantee these fields; plain JSON mode (some Groq
+        # models) does not, so a malformed row is skipped and the paper is
+        # retried by score_batch instead of crashing the chunk.
+        if not isinstance(row, dict):
+            continue
+        score = _whole_number(row.get("score"))
+        paper_id = str(row.get("id", "")).strip()
+        if score is None or paper_id not in has_abstract or not row.get("comparison"):
             continue
         scores[paper_id] = {
-            "score": _enforce_bracket(row["score"], row["bracket"], has_abstract[paper_id]),
+            "score": _enforce_bracket(score, row.get("bracket"), has_abstract[paper_id]),
             "rationale": row["comparison"],
         }
-    return scores, Usage(response.usage.input_tokens, response.usage.output_tokens, model=model), title
+    return scores, usage, title

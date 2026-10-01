@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import Combobox from './Combobox'
-import { MODELS_BY_PROVIDER } from '../lib/models'
+import { MODELS_BY_PROVIDER, PROVIDER_LABELS } from '../lib/models'
 
 // The providers that can be chosen for AI work: configured AND having models
 // listed. `providers` also reports non-AI credentials (e.g. openalex), which
@@ -32,7 +32,7 @@ export default function AiModelSelect({ providers, value, onChange }) {
         MODELS_BY_PROVIDER[provider].map((m) => ({
           value: `${provider}::${m.id}`,
           label: m.label,
-          group: provider,
+          group: PROVIDER_LABELS[provider] || provider,
         }))
       ),
     [configured.join(',')]

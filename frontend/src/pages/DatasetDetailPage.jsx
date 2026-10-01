@@ -251,7 +251,7 @@ export default function DatasetDetailPage() {
             {includedCount} paper{includedCount === 1 ? '' : 's'}
             {excludedCount ? ` (${excludedCount} excluded)` : ''}
             {yearRange ? ` · ${yearRange}` : ''}
-            {dataset.cost ? ` · expansion cost: $${dataset.cost.toFixed(4)}` : ''}
+            {dataset.cost ? ` · est. expansion cost: $${dataset.cost.toFixed(4)}` : ''}
           </p>
           <button
             type="button"

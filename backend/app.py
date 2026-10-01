@@ -14,7 +14,7 @@ import openalex
 import search_sources
 from source_http import SourceError
 
-SUPPORTED_PROVIDERS = {"anthropic"}
+SUPPORTED_PROVIDERS = set(llm.PROVIDERS)
 
 # Broader than SUPPORTED_PROVIDERS (which only gates *AI* provider/model
 # choice for datasets/analysis runs) - this set is which providers the
@@ -113,14 +113,27 @@ def _optional_year(body, field):
     return value
 
 
-def _validate_ai_model(ai_model):
-    if ai_model not in llm.PRICING_PER_MTOK:
-        raise ValueError(f"Unsupported ai_model '{ai_model}'.")
-
-
 def _validate_ai_api(ai_api):
     if ai_api not in SUPPORTED_PROVIDERS:
         raise ValueError(f"Unsupported ai_api '{ai_api}'.")
+
+
+def _validate_ai_model(ai_api, ai_model):
+    """Models are only unique within a provider, so the pair is validated."""
+    _validate_ai_api(ai_api)
+    if ai_model not in llm.MODELS[ai_api]:
+        raise ValueError(f"Unsupported ai_model '{ai_model}' for '{ai_api}'.")
+
+
+def _ai_choice(body):
+    """(ai_api, ai_model) from a request body, validated. A missing ai_api
+    means the default provider and a missing ai_model that provider's default
+    model. Raises ValueError for an unsupported provider or model."""
+    ai_api = body.get("ai_api") or llm.DEFAULT_PROVIDER
+    _validate_ai_api(ai_api)
+    ai_model = body.get("ai_model") or llm.default_model(ai_api)
+    _validate_ai_model(ai_api, ai_model)
+    return ai_api, ai_model
 
 
 def _openalex_error_response(exc):
@@ -187,11 +200,10 @@ def expand_dataset_query():
     if not question:
         return jsonify({"error": "missing 'question'"}), 400
 
-    ai_model = body.get("ai_model") or llm.MODEL
     try:
         from_year = _optional_year(body, "from_year")
         to_year = _optional_year(body, "to_year")
-        _validate_ai_model(ai_model)
+        ai_api, ai_model = _ai_choice(body)
         sources = search_sources.validate_sources(body.get("sources"))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -210,7 +222,7 @@ def expand_dataset_query():
             return jsonify({"reused": True, "dataset": _dataset_to_dict(dataset_row, papers)})
 
     try:
-        queries, expand_usage, title = llm.expand_query(question, ai_model)
+        queries, expand_usage, title = llm.expand_query(question, ai_api, ai_model)
     except llm.LLMError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -222,6 +234,7 @@ def expand_dataset_query():
             "usage": {
                 "input_tokens": expand_usage.input_tokens,
                 "output_tokens": expand_usage.output_tokens,
+                "ai_api": expand_usage.provider,
                 "model": expand_usage.model,
             },
         }
@@ -252,8 +265,7 @@ def create_dataset():
     try:
         from_year = _optional_year(body, "from_year")
         to_year = _optional_year(body, "to_year")
-        usage_model = usage.get("model") or llm.MODEL
-        _validate_ai_model(usage_model)
+        usage_api, usage_model = _ai_choice({"ai_api": usage.get("ai_api"), "ai_model": usage.get("model")})
         input_tokens = int(usage.get("input_tokens") or 0)
         output_tokens = int(usage.get("output_tokens") or 0)
         sources = search_sources.validate_sources(body.get("sources"))
@@ -279,11 +291,11 @@ def create_dataset():
     except SourceError as exc:
         return jsonify({"error": str(exc)}), 502
 
-    expand_usage = llm.Usage(input_tokens, output_tokens, model=usage_model)
+    expand_usage = llm.Usage(input_tokens, output_tokens, model=usage_model, provider=usage_api)
     dataset_id = db.create_dataset(
         question, queries, from_year=from_year, to_year=to_year, name=title, sources=sources
     )
-    db.record_llm_call("query_expansion", "anthropic", expand_usage.model, expand_usage, dataset_id=dataset_id)
+    db.record_llm_call("query_expansion", usage_api, expand_usage.model, expand_usage, dataset_id=dataset_id)
     paper_ids = [db.get_or_create_paper(candidate) for candidate in candidates]
     db.add_papers_to_dataset(dataset_id, paper_ids)
 
@@ -466,8 +478,6 @@ def create_analysis_run():
     dataset_ids = body.get("dataset_ids")
     grading_prompt = (body.get("grading_prompt") or "").strip()
     prompt_id = body.get("prompt_id")
-    ai_api = body.get("ai_api") or "anthropic"
-    ai_model = body.get("ai_model") or llm.MODEL
 
     if not isinstance(dataset_ids, list) or not dataset_ids:
         return jsonify({"error": "missing or empty 'dataset_ids'"}), 400
@@ -487,8 +497,7 @@ def create_analysis_run():
         # analysis_run_dataset's (run_id, dataset_id) PK constraint on the
         # second insert and crash with a raw 500 instead of a clean error.
         dataset_ids = list(dict.fromkeys(int(d) for d in dataset_ids))
-        _validate_ai_api(ai_api)
-        _validate_ai_model(ai_model)
+        ai_api, ai_model = _ai_choice(body)
     except (ValueError, TypeError) as exc:
         return jsonify({"error": str(exc) or "invalid 'dataset_ids'"}), 400
 
@@ -556,6 +565,7 @@ def process_analysis_run(run_id):
         scores, usage, title = llm.score_batch(
             run_row["grading_prompt"],
             [{**paper, "id": str(paper["id"])} for paper in chunk],
+            run_row["ai_api"],
             run_row["ai_model"],
             examples=run_row["examples_snapshot"],
             want_title=want_title,

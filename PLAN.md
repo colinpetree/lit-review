@@ -141,18 +141,25 @@ localhost.
   fallback reads the `<NAME>_API_KEY` env var. Saving a new Elsevier, Springer Nature or
   Semantic Scholar key clears the "abstract already checked" marks, since a new source can
   now be asked.
-- **LLM**: user supplies their own API key at runtime (never bundled/hardcoded). Only the
-  `anthropic` provider is implemented so far (Haiku 4.5, Sonnet 5, Opus 5 and Fable 5.1,
-  with per-model rates in `PRICING_PER_MTOK` in `llm.py`; a model not in that table is
-  rejected with a 400, and `frontend/src/lib/models.js` mirrors the keys by hand). The
-  provider-agnostic interface (`expand_query()`, `score_batch()`) is in place so more
-  providers can be added with one implementation each. OpenAI (`openai` SDK), Google Gemini
-  (`google-genai` SDK) and Groq (OpenAI-compatible API, reusing the `openai` SDK pointed at
-  Groq's base URL) remain planned, not built; Gemini's free tier and Groq's low cost/high
-  speed would give cost-conscious users (e.g. a grad student paying out of pocket) real
-  options beyond pay-as-you-go-only pricing. Use prompt caching (Claude) / equivalent
-  batching (other providers) for the scoring system prompt since it's a repeated,
-  structured task per batch.
+- **LLM** (built): user supplies their own API key at runtime (never bundled/hardcoded) and
+  picks a provider and model for each run. Four providers are implemented: Anthropic
+  (`anthropic` SDK), OpenAI (`openai` SDK), Google Gemini (`google-genai` SDK) and Groq
+  (OpenAI-compatible API, the `openai` SDK pointed at Groq's base URL). The interface
+  (`expand_query()`, `score_batch()`, both taking `ai_api` and `model`) lives in `llm.py`
+  with the shared prompts, schemas and score clamping. Each provider's SDK specifics sit in
+  `backend/providers/<name>.py` behind one `complete_json` function, registered in
+  `PROVIDERS` as module paths imported on first use, so a missing SDK only breaks that
+  provider (with an install hint) instead of stopping the app. Provider errors are mapped
+  to messages that separate a rejected key, denied access, an exhausted quota and a plain
+  rate limit. `MODELS` in `llm.py` lists each provider's models with approximate prices
+  (a cost estimate, never a bill) and `max_output_tokens`; a provider/model pair not in it
+  is rejected with a 400, and `frontend/src/lib/models.js` mirrors it by hand. Structured
+  output: Anthropic, OpenAI and Gemini get the JSON schema directly; Groq gets strict
+  schemas only on the models listed in `STRICT_SCHEMA_MODELS` and plain JSON mode (schema
+  in the prompt, shape checked in code) elsewhere. Gemini's thinking tokens are counted as
+  output tokens. Gemini's free tier and Groq's low cost/high speed give cost-conscious users
+  (e.g. a grad student paying out of pocket) real options beyond pay-as-you-go-only
+  pricing. Prompt caching is not used yet; it would suit the repeated scoring system prompt.
 - **Considered, deferred**: Cohere's Rerank API as a cheap first-pass filter (rerank
   all candidates, then only send the top-K to the chosen LLM for rationale) could cut
   per-search LLM cost/latency, but adds a second API/key to manage and a coordination
@@ -251,12 +258,11 @@ Currently in `backend/requirements.txt`:
 - `requests` - HTTP client for OpenAlex, Semantic Scholar, Elsevier, Springer Nature and
   Europe PMC
 - `anthropic` - Claude API SDK
+- `openai` (pinned) - OpenAI API SDK, also used for Groq, which is OpenAI-API-compatible
+- `google-genai` (pinned) - Gemini API SDK
 - `sqlite3` (stdlib) - DB; no ORM
 - `cryptography` + `platformdirs` + `filelock` - cross-platform encrypted local-file storage
   for API keys (deliberately not `keyring`/OS credential managers, see Architecture)
-
-Planned, not yet added: `openai` (OpenAI, also reused for Groq, which is
-OpenAI-API-compatible) and `google-genai` (Gemini), if those providers are built.
 
 **Frontend (JS)**
 - `react` 19, `react-dom`, `react-router-dom` 7, `vite`
@@ -288,6 +294,7 @@ not built.
 **Added after Phase 3 (done)**
 - Multi-source retrieval (OpenAlex, Semantic Scholar, Elsevier/Scopus), with cross-source
   dedupe by DOI.
+- OpenAI, Google Gemini and Groq AI providers alongside Anthropic, chosen per run.
 - Automatic abstract lookup (see Data sources) and manual paper editing.
 - Per-paper exclude toggle on dataset pages, plus search, sort and filter bars on the
   paper lists.
@@ -298,7 +305,7 @@ not built.
 Not built: PubMed as a search source, Semantic Scholar citation-graph exploration ("show me
 what cites/references this shortlisted paper"), export shortlist to BibTeX/RIS for the
 user's reference manager, Web of Science integration if the primary user's institution has
-API access, the OpenAI/Gemini/Groq providers, and packaging (see Distribution / packaging).
+API access, and packaging (see Distribution / packaging).
 
 **Find missing abstracts (built).** The risk with automating this is *how* the gap is
 filled: asking an LLM to recall an abstract from its training data risks a fabricated
@@ -403,7 +410,8 @@ saves confirmed good calls as well.
 Status: nothing here is built yet. There is no PyInstaller spec, no GitHub Actions
 workflow and no update check in the repo, and the app currently runs from source
 (`python app.py` in `backend/`). The `collect_all()` list below will also need `requests`
-and any later provider SDKs. Target user has never used a command line or downloaded code
+and the `openai` and `google-genai` SDKs, and the `providers.*` modules must be listed as
+hidden imports, because `llm.py` loads them by name at runtime. Target user has never used a command line or downloaded code
 from GitHub before, so "clone the repo and run pip install" is not acceptable UX. Plan:
 
 - **Packaging**: PyInstaller `--onedir` bundles the Flask backend + all Python deps +
@@ -470,7 +478,8 @@ from GitHub before, so "clone the repo and run pip install" is not acceptable UX
   the end user (see Distribution / packaging above).
 - **AI provider**: the user supplies their own API key, persisted to a single
   cross-platform encrypted local file (see Architecture, not the OS-native
-  keyring/credential manager). Only Claude is built; OpenAI, Gemini and Groq remain planned.
+  keyring/credential manager). Claude, OpenAI, Gemini and Groq are built, and the user picks
+  one per run.
   Cohere Rerank considered and deferred (see architecture section above).
 - **Source keys**: OpenAlex, Semantic Scholar, Elsevier and Springer Nature keys are stored
   the same way as the AI key. In practice every source hits its keyless limit almost

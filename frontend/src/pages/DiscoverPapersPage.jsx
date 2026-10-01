@@ -88,6 +88,7 @@ export default function DiscoverPapersPage() {
           question: trimmed,
           from_year: fromYear ? Number(fromYear) : undefined,
           to_year: toYear ? Number(toYear) : undefined,
+          ai_api: choice.ai_api,
           ai_model: choice.ai_model,
           sources: activeSources,
         },

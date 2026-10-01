@@ -7,6 +7,7 @@ import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/pa
 import { fetchJson, postJson } from '../lib/api'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
 import { datasetLabels } from '../lib/format'
+import { modelLabel } from '../lib/models'
 
 export default function RunResultsPage() {
   const { id } = useParams()
@@ -108,7 +109,7 @@ export default function RunResultsPage() {
         Datasets: {datasetLabels(run.datasets).join(', ')}
       </p>
       <p className="mt-1 text-sm text-gray-500">
-        {run.ai_model} · {run.status} · ${run.cost.toFixed(4)}
+        {modelLabel(run.ai_api, run.ai_model)} · {run.status} · est. ${run.cost.toFixed(4)}
       </p>
 
       {run.remaining > 0 ? (

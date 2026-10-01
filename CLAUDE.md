@@ -13,8 +13,8 @@ can't assume one discipline's databases or vocabulary. See [PLAN.md](PLAN.md) fo
 full design: data sources, pipeline stages, architecture decisions, and phased build-out.
 
 Current state: Phases 1-3 are built (OpenAlex retrieval, Claude-based query expansion and
-relevance scoring, SQLite persistence, multi-page UI). Only the `anthropic` AI provider is
-implemented. PubMed and Semantic Scholar are planned additional data sources, not deferred
+relevance scoring, SQLite persistence, multi-page UI). Four AI providers are implemented
+(Anthropic, OpenAI, Google Gemini, Groq); the user picks one per run. PubMed and Semantic Scholar are planned additional data sources, not deferred
 (needed for authoritative biology/health-medicine coverage).
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
@@ -99,10 +99,18 @@ routes survive refresh. In dev, run Flask on 5175 (hardcoded) next to `npm run d
   deliberately read-only for users, since it is how the same paper is matched across searches. The lookup panel is a
   sticky side column on the dataset page, hidden once every included paper with a DOI has
   an abstract.
-- `llm.py` - provider-agnostic interface (`expand_query`, `score_batch`) plus per-model
-  `PRICING_PER_MTOK` used for cost tracking. Adding a model means adding a pricing entry
-  here (`_validate_ai_model` in `app.py` rejects any model not in this table with a 400)
-  and to the frontend's `lib/models.js`, which mirrors these keys by hand.
+- `llm.py` - provider-agnostic interface (`expand_query`, `score_batch`, both taking
+  `ai_api` and `model`). Prompts, JSON schemas and score clamping live here and are shared;
+  each provider's SDK specifics (client, structured-output request, error mapping, token
+  counts) live in `providers/<name>.py` behind one `complete_json` function, registered in
+  `PROVIDERS` (module paths, imported on first use so a missing SDK only breaks that
+  provider; a packaged build must list them as hidden imports). OpenAI and Groq share `providers/openai_compat.py` (Groq uses plain JSON mode
+  except for models in `providers/groq.py` `STRICT_SCHEMA_MODELS`). `MODELS` maps provider
+  to model to approximate prices (cost estimate only) and `max_output_tokens`; the first
+  model listed is that provider's default, and `_validate_ai_model` in `app.py` rejects any
+  provider/model pair not in it with a 400. Adding a model means a `MODELS` entry plus the
+  frontend's `lib/models.js`, which mirrors it by hand. Adding a provider also needs a key
+  card in `SettingsPage.jsx` and a `PROVIDER_LABELS` entry.
 - `db.py` - stdlib `sqlite3` (no ORM), short-lived connection per call, a module `_LOCK`
   serializing writes. DB lives in the platformdirs user-data dir, not the repo. Schema
   changes to existing tables go through the idempotent ALTER-based `_migrate`, since

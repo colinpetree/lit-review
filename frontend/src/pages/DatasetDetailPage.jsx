@@ -4,7 +4,7 @@ import { PageShell, Card, BackLink } from '../components/ui'
 import Spinner from '../components/Spinner'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
-import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
+import { DEFAULT_PAPER_SORT, EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive, sortPapers } from '../lib/paperFilter'
 import EditableCardHeader from '../components/EditableCardHeader'
 import useSavedState from '../lib/useSavedState'
 import useUnsavedChangesWarning from '../lib/useUnsavedChangesWarning'
@@ -114,6 +114,7 @@ export default function DatasetDetailPage() {
   const [error, setError] = useState(null)
   const [toggleError, setToggleError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
+  const [sort, setSort] = useState(DEFAULT_PAPER_SORT)
   // null until an abstract lookup has run on this data set.
   const [lookup, setLookup] = useState(null)
   const lookupRequestRef = useRef(null)
@@ -227,7 +228,7 @@ export default function DatasetDetailPage() {
 
   const includedCount = dataset.papers.filter((p) => !p.excluded).length
   const excludedCount = dataset.papers.length - includedCount
-  const visiblePapers = filterPapers(dataset.papers, filter)
+  const visiblePapers = sortPapers(filterPapers(dataset.papers, filter), sort)
 
   const yearRange = formatYearRange(dataset.oldest_year, dataset.newest_year, dataset.newest_publication_date)
 
@@ -340,6 +341,8 @@ export default function DatasetDetailPage() {
           onChange={setFilter}
           shown={visiblePapers.length}
           total={dataset.papers.length}
+          sort={sort}
+          onSortChange={setSort}
         />
 
         {isPaperFilterActive(filter) && visiblePapers.length === 0 ? (

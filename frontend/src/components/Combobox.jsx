@@ -3,7 +3,8 @@ import { ChevronDown } from 'lucide-react'
 
 // Type-to-filter dropdown used for every picker in the app.
 //
-// options: [{ value, label, group?, pinned?, emphasis?, asPlaceholder? }]
+// options: [{ value, label, group?, icon?, pinned?, emphasis?, asPlaceholder? }]
+//   icon          optional lucide component shown before the label in the list
 //   group         optional heading; shown only when there is more than one group
 //   pinned        stays in the list while filtering (e.g. "New prompt")
 //   emphasis      styles the option blue/medium
@@ -11,7 +12,8 @@ import { ChevronDown } from 'lucide-react'
 //                 field reads as empty, so clicking lists everything and typing
 //                 filters from scratch instead of editing the label
 // value: the selected option's value, or null/undefined for none.
-export default function Combobox({ options, value, onChange, placeholder, emptyText = 'No matches.' }) {
+// subtle: a shade lighter gray for the text and icons, for secondary controls.
+export default function Combobox({ options, value, onChange, placeholder, emptyText = 'No matches.', subtle = false }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState(0)
@@ -99,10 +101,18 @@ export default function Combobox({ options, value, onChange, placeholder, emptyT
         // Tabbing (or clicking) away closes the list. Option and scrollbar
         // mousedowns are prevented below, so they never blur the input.
         onBlur={() => setOpen(false)}
-        className={`w-full rounded-md border border-gray-300 py-2 pl-3 pr-9 text-sm ${
-          darkPlaceholder ? 'placeholder:text-gray-700' : ''
+        className={`w-full rounded-md border border-gray-300 py-2 pr-9 text-sm ${
+          selected?.icon ? 'pl-9' : 'pl-3'
+        } ${subtle ? 'text-gray-600' : ''} ${
+          darkPlaceholder ? (subtle ? 'placeholder:text-gray-600' : 'placeholder:text-gray-700') : ''
         }`}
       />
+      {selected?.icon ? (
+        <selected.icon
+          size={14}
+          className={`pointer-events-none absolute left-3 top-3 ${subtle ? 'text-gray-600' : 'text-gray-700'}`}
+        />
+      ) : null}
       <ChevronDown size={16} className="pointer-events-none absolute right-3 top-3 text-gray-400" />
       {open ? (
         <ul
@@ -120,13 +130,20 @@ export default function Combobox({ options, value, onChange, placeholder, emptyT
               onClick={() => choose(option)}
               onMouseEnter={() => setHighlight(i)}
               className={`cursor-pointer px-3 py-2 text-sm ${i === highlight ? 'bg-gray-100' : ''} ${
-                option.emphasis ? 'font-medium text-blue-600' : 'text-gray-700'
+                option.emphasis ? 'font-medium text-blue-600' : subtle ? 'text-gray-600' : 'text-gray-700'
               }`}
             >
               {showGroups && option.group && option.group !== visible[i - 1]?.group ? (
                 <span className="mb-1 block text-xs uppercase text-gray-400">{option.group}</span>
               ) : null}
-              {option.label}
+              {option.icon ? (
+                <span className="flex items-center gap-2">
+                  <option.icon size={14} className="shrink-0" />
+                  {option.label}
+                </span>
+              ) : (
+                option.label
+              )}
             </li>
           ))}
           {visible.every((o) => o.pinned) && query.trim() ? (

@@ -1,11 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
-import { Search, SlidersHorizontal, X } from 'lucide-react'
-import { EMPTY_PAPER_FILTER, isPaperFilterActive } from '../lib/paperFilter'
+import {
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
+  CalendarArrowDown,
+  CalendarArrowUp,
+  Search,
+  SlidersHorizontal,
+  X,
+} from 'lucide-react'
+import Combobox from './Combobox'
+import { EMPTY_PAPER_FILTER, PAPER_SORT_OPTIONS, isPaperFilterActive } from '../lib/paperFilter'
 
-// Search box (filters on every keystroke) plus a popover of extra filters.
-// shown/total are the filtered and unfiltered paper counts, used for the
-// "Showing X of Y" line while a filter is active.
-export default function PaperFilterBar({ filter, onChange, shown, total }) {
+const digitsOnly = (value) => value.replace(/\D/g, '')
+
+// asPlaceholder: clicking lists every sort instead of editing the current label.
+const SORT_ICONS = {
+  'date-desc': CalendarArrowDown,
+  'date-asc': CalendarArrowUp,
+  'citations-desc': ArrowDownWideNarrow,
+  'citations-asc': ArrowUpNarrowWide,
+}
+const SORT_OPTIONS = PAPER_SORT_OPTIONS.map((o) => ({ ...o, icon: SORT_ICONS[o.value], asPlaceholder: true }))
+
+// Search box (filters on every keystroke), a popover of extra filters and,
+// when onSortChange is given, a sort picker. shown/total are the filtered and
+// unfiltered paper counts, used for the "Showing X of Y" line while a filter
+// is active.
+export default function PaperFilterBar({ filter, onChange, shown, total, sort, onSortChange }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -56,17 +77,17 @@ export default function PaperFilterBar({ filter, onChange, shown, total }) {
             aria-expanded={open}
             onClick={() => setOpen((o) => !o)}
             className={`relative flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-gray-100 ${
-              filter.missingAbstractOnly ? 'border-blue-300 text-blue-700' : 'border-gray-300 text-gray-700'
+              active ? 'border-blue-300 text-blue-700' : 'border-gray-300 text-gray-600'
             }`}
           >
             <SlidersHorizontal size={14} />
             Filters
-            {filter.missingAbstractOnly ? (
+            {active ? (
               <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-blue-600" />
             ) : null}
           </button>
           {open ? (
-            <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border border-gray-200 bg-white p-3 shadow-lg">
+            <div className="absolute right-0 z-10 mt-1 w-72 rounded-md border border-gray-200 bg-white p-3 shadow-lg">
               <div className="flex items-center justify-between gap-3 text-sm text-gray-700">
                 <span id="missing-abstract-label">Papers missing abstracts</span>
                 <button
@@ -86,9 +107,50 @@ export default function PaperFilterBar({ filter, onChange, shown, total }) {
                   />
                 </button>
               </div>
+              <div className="mt-3 border-t border-gray-100 pt-3 text-sm text-gray-700">
+                <span className="block">Publication year</span>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    aria-label="From year"
+                    placeholder="From"
+                    value={filter.yearFrom}
+                    onChange={(e) => onChange({ ...filter, yearFrom: digitsOnly(e.target.value) })}
+                    className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-900"
+                  />
+                  <span className="text-gray-400">to</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    aria-label="To year"
+                    placeholder="To"
+                    value={filter.yearTo}
+                    onChange={(e) => onChange({ ...filter, yearTo: digitsOnly(e.target.value) })}
+                    className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-900"
+                  />
+                </div>
+              </div>
+              <label className="mt-3 block text-sm text-gray-700">
+                Minimum citations
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={filter.minCitations}
+                  onChange={(e) => onChange({ ...filter, minCitations: digitsOnly(e.target.value) })}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-900"
+                />
+              </label>
             </div>
           ) : null}
         </div>
+
+        {onSortChange ? (
+          <div className="w-40 shrink-0">
+            <Combobox options={SORT_OPTIONS} value={sort} onChange={onSortChange} placeholder="Sort by" subtle />
+          </div>
+        ) : null}
       </div>
 
       {active ? (

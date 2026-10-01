@@ -150,6 +150,12 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   scoring call via `title_pending`; never for existing prompts, and any user edit clears
   the flag). Prompts, runs and datasets are soft-deleted (`deleted_at`).
 
+- A run has its own `analysis_run.name`, unique among live (not deleted) runs, case-insensitive
+  (`db._unique_run_name` adds " (2)" etc.; renames that clash get a 409). It starts as the
+  prompt's name; for a run that created its own prompt, `name_auto` lets the AI-generated
+  prompt title replace the placeholder unless the user renamed first. Renamed via
+  `PATCH /api/analysis-runs/<id>` (`RunMenu` + `RenameModal`, on the Analysis Results cards
+  and the run page). Old runs are backfilled from their prompt name in `_migrate`.
 - User-set paper states: `paper.read_at` (global, so Read follows the paper into every
   dataset and run; set via `PATCH /api/papers/<id>` with `{read}`, deliberately outside
   `EDITABLE_PAPER_FIELDS`) and `analysis_result.relevance` (per run; NULL = neutral, else

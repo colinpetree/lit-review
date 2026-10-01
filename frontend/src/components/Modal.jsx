@@ -1,9 +1,15 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 
 // Centered dialog with a backdrop, an X in the top right, and Escape / backdrop
 // click to close. While `busy` (a request in flight) it can't be dismissed.
-export default function Modal({ title, onClose, busy = false, children }) {
+// closeOnBackdrop={false} is for dialogs with text fields, where a stray click
+// outside would throw away what was typed. Otherwise a backdrop click only
+// closes when the press started on the backdrop too, so dragging to select text
+// and releasing outside the dialog doesn't close it.
+export default function Modal({ title, onClose, busy = false, closeOnBackdrop = true, children }) {
+  const pressStartedOnBackdrop = useRef(false)
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape' && !busy) onClose()
@@ -15,7 +21,13 @@ export default function Modal({ title, onClose, busy = false, children }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-      onClick={() => !busy && onClose()}
+      onMouseDown={(e) => {
+        pressStartedOnBackdrop.current = e.target === e.currentTarget
+      }}
+      onClick={(e) => {
+        if (closeOnBackdrop && !busy && pressStartedOnBackdrop.current && e.target === e.currentTarget) onClose()
+        pressStartedOnBackdrop.current = false
+      }}
     >
       <div
         role="dialog"

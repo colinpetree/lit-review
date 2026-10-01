@@ -131,6 +131,32 @@ def _placeholder_title(text):
     return " ".join(text.split()[:4])[:60] or "Untitled"
 
 
+MAX_RUN_NAME_CHARS = 120
+
+
+def _unique_run_name(conn, base, exclude_run_id=None):
+    """`base`, or `base (2)`, `base (3)`... when another live (not deleted) run
+    already has the name. Case-insensitive. Callers hold _LOCK, so two writers
+    can't pick the same name."""
+    base = " ".join((base or "").split())[:MAX_RUN_NAME_CHARS] or "Untitled"
+    taken = {
+        row["name"].lower()
+        for row in conn.execute(
+            "SELECT name FROM analysis_run WHERE deleted_at IS NULL AND name IS NOT NULL AND id != ?",
+            (exclude_run_id or -1,),
+        )
+    }
+    if base.lower() not in taken:
+        return base
+    n = 2
+    while True:
+        suffix = f" ({n})"
+        candidate = base[: MAX_RUN_NAME_CHARS - len(suffix)] + suffix
+        if candidate.lower() not in taken:
+            return candidate
+        n += 1
+
+
 def _migrate(conn):
     """Idempotent ALTER-based migrations for columns added after a table's
     initial CREATE TABLE IF NOT EXISTS - CREATE TABLE IF NOT EXISTS only
@@ -194,7 +220,15 @@ def _migrate(conn):
     # examples it was scored with (examples_snapshot), so editing a prompt
     # later never changes what an old run's results mean.
     run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_run)")}
-    for column, ddl in (("prompt_id", "INTEGER"), ("examples_snapshot", "TEXT")):
+    # name: the run's own, unique (among live runs) and renamable title.
+    # name_auto: still the placeholder from a run that created its own prompt,
+    # so the AI-generated prompt title replaces it unless the user renamed first.
+    for column, ddl in (
+        ("prompt_id", "INTEGER"),
+        ("examples_snapshot", "TEXT"),
+        ("name", "TEXT"),
+        ("name_auto", "INTEGER NOT NULL DEFAULT 0"),
+    ):
         if column not in run_columns:
             conn.execute(f"ALTER TABLE analysis_run ADD COLUMN {column} {ddl}")
             conn.commit()
@@ -229,6 +263,28 @@ def _migrate(conn):
             (cur.lastrowid, row["grading_prompt"]),
         )
     if legacy:
+        conn.commit()
+
+    # Runs from before they had their own name start from their prompt's name,
+    # made unique in the order the runs were created. Deleted runs are kept
+    # out of the uniqueness check, so they just take the plain name.
+    unnamed = conn.execute(
+        """
+        SELECT run.id, run.grading_prompt, run.deleted_at, pr.name AS prompt_name
+        FROM analysis_run run LEFT JOIN prompt pr ON pr.id = run.prompt_id
+        WHERE run.name IS NULL
+        ORDER BY run.created_at, run.id
+        """
+    ).fetchall()
+    for row in unnamed:
+        base = row["prompt_name"] or _placeholder_title(row["grading_prompt"])
+        name = (
+            _unique_run_name(conn, base, row["id"])
+            if row["deleted_at"] is None
+            else " ".join(base.split())[:MAX_RUN_NAME_CHARS] or "Untitled"
+        )
+        conn.execute("UPDATE analysis_run SET name = ? WHERE id = ?", (name, row["id"]))
+    if unnamed:
         conn.commit()
 
 
@@ -608,6 +664,22 @@ def delete_dataset(dataset_id):
         conn.commit()
 
 
+def rename_analysis_run(run_id, name):
+    """Give a run a new name. Returns the saved (whitespace-normalized) name, or
+    None if another live run already has it (case-insensitive). A rename also
+    stops the AI prompt title from replacing the name later."""
+    name = " ".join(name.split())
+    with _LOCK, closing(_connect()) as conn:
+        if _unique_run_name(conn, name, run_id) != name:
+            return None
+        conn.execute(
+            "UPDATE analysis_run SET name = ?, name_auto = 0 WHERE id = ? AND deleted_at IS NULL",
+            (name, run_id),
+        )
+        conn.commit()
+        return name
+
+
 def delete_analysis_run(run_id):
     """Soft delete: the run and its scores are hidden, not removed."""
     with _LOCK, closing(_connect()) as conn:
@@ -649,27 +721,40 @@ def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id
     scoring call supplies a real title."""
     with _LOCK, closing(_connect()) as conn:
         now = _now()
+        # The run's name starts as its prompt's. For a new prompt that is only a
+        # placeholder until the AI title arrives, so name_auto lets that title
+        # replace it (see set_generated_prompt_title).
         if prompt_id is None:
+            prompt_name = _placeholder_title(grading_prompt)
             cur = conn.execute(
                 """
                 INSERT INTO prompt (name, description, title_pending, created_at, updated_at)
                 VALUES (?, ?, 1, ?, ?)
                 """,
-                (_placeholder_title(grading_prompt), grading_prompt, now, now),
+                (prompt_name, grading_prompt, now, now),
             )
             prompt_id = cur.lastrowid
             examples = []
+            name_auto = 1
         else:
-            prompt = conn.execute("SELECT description FROM prompt WHERE id = ?", (prompt_id,)).fetchone()
+            prompt = conn.execute(
+                "SELECT name, description FROM prompt WHERE id = ?", (prompt_id,)
+            ).fetchone()
             grading_prompt = prompt["description"]
+            prompt_name = prompt["name"]
             examples = _scoring_examples(conn, prompt_id)
+            name_auto = 0
         cur = conn.execute(
             """
             INSERT INTO analysis_run
-                (grading_prompt, ai_api, ai_model, status, created_at, prompt_id, examples_snapshot)
-            VALUES (?, ?, ?, 'running', ?, ?, ?)
+                (grading_prompt, ai_api, ai_model, status, created_at, prompt_id, examples_snapshot,
+                 name, name_auto)
+            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)
             """,
-            (grading_prompt, ai_api, ai_model, now, prompt_id, json.dumps(examples)),
+            (
+                grading_prompt, ai_api, ai_model, now, prompt_id, json.dumps(examples),
+                _unique_run_name(conn, prompt_name), name_auto,
+            ),
         )
         run_id = cur.lastrowid
         conn.executemany(
@@ -705,7 +790,7 @@ def list_all_runs():
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            SELECT run.id, run.grading_prompt, run.ai_api, run.ai_model, run.status,
+            SELECT run.id, run.name, run.grading_prompt, run.ai_api, run.ai_model, run.status,
                    run.created_at, run.completed_at, pr.name AS prompt_name,
                    json_group_array(json_object('name', d.name, 'created_at', d.created_at)) AS datasets,
                    (SELECT COUNT(*) FROM (
@@ -817,10 +902,21 @@ def set_generated_prompt_title(prompt_id, title):
     (title_pending), and clears the flag either way."""
     with _LOCK, closing(_connect()) as conn:
         if title:
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE prompt SET name = ? WHERE id = ? AND title_pending = 1",
                 (title, prompt_id),
             )
+            if cur.rowcount:
+                # The run that made this prompt is still on its placeholder
+                # name unless the user already renamed it.
+                for run in conn.execute(
+                    "SELECT id FROM analysis_run WHERE prompt_id = ? AND name_auto = 1", (prompt_id,)
+                ).fetchall():
+                    conn.execute(
+                        "UPDATE analysis_run SET name = ? WHERE id = ?",
+                        (_unique_run_name(conn, title, run["id"]), run["id"]),
+                    )
+        conn.execute("UPDATE analysis_run SET name_auto = 0 WHERE prompt_id = ?", (prompt_id,))
         conn.execute("UPDATE prompt SET title_pending = 0 WHERE id = ?", (prompt_id,))
         conn.commit()
 

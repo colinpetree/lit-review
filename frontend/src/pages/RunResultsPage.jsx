@@ -8,6 +8,7 @@ import { fetchJson, patchJson, postJson } from '../lib/api'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
 import { datasetLabels, formatDateTime } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
+import RunMenu from '../components/RunMenu'
 
 export default function RunResultsPage() {
   const { id } = useParams()
@@ -27,8 +28,12 @@ export default function RunResultsPage() {
   // can be built before a save lands and would show the old value, so every
   // scoring update is re-overlaid with these.
   const editsRef = useRef(new Map())
+  // Same idea for a rename made while scoring (the AI prompt title can also
+  // change the name in a scoring response, until the user picks one).
+  const renamedRef = useRef(null)
   const withEdits = (r) => ({
     ...r,
+    ...(renamedRef.current ? { name: renamedRef.current } : {}),
     results: r.results.map((p) => (editsRef.current.has(p.id) ? { ...p, ...editsRef.current.get(p.id) } : p)),
   })
 
@@ -36,6 +41,7 @@ export default function RunResultsPage() {
     let cancelled = false
     activeRequestRef.current?.abort()
     editsRef.current = new Map()
+    renamedRef.current = null
     setError(null)
     setRun(null)
     setResuming(false)
@@ -139,7 +145,18 @@ export default function RunResultsPage() {
   const runDate = formatDateTime(run.completed_at || run.created_at)
 
   return (
-    <PageShell title={run.prompt?.name || run.grading_prompt}>
+    <PageShell
+      title={run.name || run.prompt?.name || run.grading_prompt}
+      actions={
+        <RunMenu
+          run={run}
+          onRenamed={(name) => {
+            renamedRef.current = name
+            setRun((prev) => ({ ...prev, name }))
+          }}
+        />
+      }
+    >
       <BackLink to="/results">Back to Analysis Results</BackLink>
 
       {run.prompt ? (

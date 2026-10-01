@@ -28,7 +28,7 @@ export default function PromptFormModal({ heading, initial, onSave, onClose }) {
   }
 
   return (
-    <Modal title={heading} onClose={onClose} busy={busy}>
+    <Modal title={heading} onClose={onClose} busy={busy} closeOnBackdrop={false}>
       <form onSubmit={submit} className="mt-4 flex flex-col gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700">Title</label>

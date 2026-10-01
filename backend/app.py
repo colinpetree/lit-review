@@ -354,6 +354,22 @@ def delete_dataset(dataset_id):
     return jsonify({"ok": True})
 
 
+@app.patch("/api/analysis-runs/<int:run_id>")
+def update_analysis_run(run_id):
+    """Rename a run. Names are unique among live runs (case-insensitive)."""
+    if db.get_analysis_run(run_id) is None:
+        return jsonify({"error": "analysis run not found"}), 404
+    name = " ".join(str((request.get_json(silent=True) or {}).get("name") or "").split())
+    if not name:
+        return jsonify({"error": "'name' cannot be blank"}), 400
+    if len(name) > db.MAX_RUN_NAME_CHARS:
+        return jsonify({"error": f"'name' must be at most {db.MAX_RUN_NAME_CHARS} characters"}), 400
+    saved = db.rename_analysis_run(run_id, name)
+    if saved is None:
+        return jsonify({"error": "Another analysis run already has that name"}), 409
+    return jsonify({"id": run_id, "name": saved})
+
+
 @app.delete("/api/analysis-runs/<int:run_id>")
 def delete_analysis_run(run_id):
     if db.get_analysis_run(run_id) is None:
@@ -537,6 +553,7 @@ def _run_to_dict(run_row):
     # The scoring snapshot is internal (full abstracts); the client only
     # needs to know which prompt the run belongs to.
     run.pop("examples_snapshot", None)
+    run.pop("name_auto", None)
     prompt = db.get_prompt(run["prompt_id"], include_deleted=True) if run.get("prompt_id") else None
     run["prompt"] = (
         {"id": prompt["id"], "name": prompt["name"], "deleted": prompt["deleted_at"] is not None}

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import ListFilterBar from '../components/ListFilterBar'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
-import DeleteMenu from '../components/DeleteMenu'
+import RunMenu from '../components/RunMenu'
 import { deleteJson } from '../lib/api'
 import { datasetLabels, formatDateTime } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
@@ -26,13 +26,15 @@ export default function PastResultsPage() {
       sortByCreated(
         filterList(runs ?? [], filter, {
           getSearchText: (r) =>
-            `${r.prompt_name ?? ''} ${r.grading_prompt ?? ''} ${(r.datasets ?? []).map((d) => d.name).join(' ')}`,
+            `${r.name ?? ''} ${r.prompt_name ?? ''} ${r.grading_prompt ?? ''} ${(r.datasets ?? []).map((d) => d.name).join(' ')}`,
           getModel: (r) => (r.ai_model ? modelKey(r.ai_api, r.ai_model) : null),
         }),
         sort
       ),
     [runs, filter, sort]
   )
+
+  const renameRun = (id, name) => setRuns((prev) => prev.map((r) => (r.id === id ? { ...r, name } : r)))
 
   const deleteRun = async (id) => {
     await deleteJson(`/api/analysis-runs/${id}`)
@@ -72,7 +74,7 @@ export default function PastResultsPage() {
           <div key={run.id} className="relative">
             <Link to={`/results/${run.id}`}>
               <Card className="hover:border-gray-300">
-                <p className="pr-8 font-medium text-gray-900">{run.prompt_name || run.grading_prompt}</p>
+                <p className="pr-8 font-medium text-gray-900">{run.name || run.prompt_name || run.grading_prompt}</p>
                 <p className="mt-1 text-sm text-gray-500">
                   {datasetLabels(run.datasets).join(', ')}
                   {` · ${run.paper_count} paper${run.paper_count === 1 ? '' : 's'}`}
@@ -84,11 +86,11 @@ export default function PastResultsPage() {
                 </div>
               </Card>
             </Link>
-            <DeleteMenu
+            <RunMenu
               className="absolute right-5 top-[22px]"
-              title="Delete this result run?"
-              message="This removes the run and its scores from your results. The papers and datasets are not affected."
-              onConfirm={() => deleteRun(run.id)}
+              run={run}
+              onRenamed={(name) => renameRun(run.id, name)}
+              onDelete={() => deleteRun(run.id)}
             />
           </div>
         ))}

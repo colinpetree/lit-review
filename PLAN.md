@@ -27,23 +27,53 @@ user's gender.)
 
 ## Data sources
 
-- **OpenAlex** (primary) — free, no key required, broad multidisciplinary coverage including
-  engineering. Structured metadata: abstract (inverted index format, needs reconstruction),
-  citation counts, concepts/topics, referenced_works, related_works. Good for keyword + topic
-  search and citation-graph traversal.
-- **Semantic Scholar API** (secondary) — free, works without a key at low volume, but a free
-  API key raises rate limits meaningfully — supported in-app (see Architecture) since the
-  pipeline batch-queries it every run. Strong in STEM, has a built-in "recommendations"
-  endpoint and citation-graph lookups (citations/references of a given paper) that OpenAlex
-  also supports but S2's are convenient. Good cross-check / dedupe source.
-- **PubMed** — needed given health/medicine and biology are target test fields, not just
-  an edge case; add via NCBI E-utilities. Free, no key required for low-volume use (an
-  NCBI API key raises rate limits, same pattern as Semantic Scholar's). Authoritative for
-  biomedical literature (MeSH terms, clinical studies) in a way OpenAlex/Semantic Scholar's
-  broader coverage doesn't guarantee.
-- **Web of Science / Scopus** — optional future addition, gated behind whether the primary
-  user's institution has an API license (not just a browser subscription — those are separate
-  entitlements). Worth one email to the library; don't block the build on this.
+Status: OpenAlex, Semantic Scholar and Elsevier (Scopus) are built as search sources
+(`backend/search_sources.py`); a dataset is retrieved from any selected combination.
+PubMed is still planned. Several more sources are used only to look up missing abstracts
+(see "Abstract lookup" below).
+
+- **OpenAlex** (primary, built) - free, broad multidisciplinary coverage including
+  engineering. Effectively needs a free API key, entered in Settings (`openalex.py` reads it
+  via `credentials.get_key("openalex")`): without one the shared keyless daily limit is used
+  up almost immediately and searches stop working. The code does not enforce this (the key
+  is only added to the request when present), and Settings still labels it "recommended, not
+  required". Structured metadata: abstract (inverted index format,
+  reconstructed in `openalex.py`), citation counts, concepts/topics, referenced_works,
+  related_works. Good for keyword + topic search and citation-graph traversal.
+- **Semantic Scholar API** (built) - free. Searching it requires a saved key, because the
+  shared keyless rate limit is usually used up and a keyless search would mostly fail. The
+  keyless API is still tried for abstract lookup. Strong in STEM, has a built-in
+  "recommendations" endpoint and citation-graph lookups (citations/references of a given
+  paper) that OpenAlex also supports but S2's are convenient. Good cross-check / dedupe
+  source.
+- **Elsevier / Scopus Search** (built, needs an Elsevier key) - an additional search source.
+  Scopus results carry no abstracts, so they are filled afterwards by abstract lookup.
+- **Springer Nature** (lookup only) - deliberately not a search source (its search matched too
+  strictly to be useful); used only to fetch a missing abstract when a key is saved and the
+  DOI prefix matches.
+- **Europe PMC** (lookup only) - keyless, used to fetch missing abstracts by DOI.
+- **PubMed** (planned, not built) - needed given health/medicine and biology are target test
+  fields, not just an edge case; add via NCBI E-utilities. Free, no key required for
+  low-volume use (an NCBI API key raises rate limits, same pattern as Semantic Scholar's).
+  Authoritative for biomedical literature (MeSH terms, clinical studies) in a way
+  OpenAlex/Semantic Scholar's broader coverage doesn't guarantee.
+- **Web of Science** - optional future addition, gated behind whether the primary user's
+  institution has an API license (not just a browser subscription, those are separate
+  entitlements). Worth one email to the library; don't block the build on this. (Scopus is
+  covered above via an Elsevier key.)
+
+**Cross-source behavior.** `POST /api/datasets` searches every selected source with every
+expanded query. If any source fails, the whole retrieval fails and nothing is saved. Every
+source reports DOIs as `https://doi.org/...` so cross-source duplicates merge, and OpenAlex
+is searched first so its (fullest) record is the one kept. A dataset records its `sources`
+(NULL means OpenAlex only), and "reuse an identical search" also matches on sources.
+
+**Abstract lookup (built).** `backend/abstracts.py` fills a missing abstract by DOI: Elsevier
+(Scopus `META_ABS`) and Springer Nature first when a key is saved and the DOI prefix matches,
+then Europe PMC, then Semantic Scholar. It only accepts abstracts of
+`llm.MIN_ABSTRACT_CHARS` (100) or more, and drops one when the title the source returns
+clearly differs from the stored title (`title_match.py`). A source that fails (bad key,
+quota) is skipped for the rest of the run. See Phase 4 below for the design rationale.
 
 ## Core pipeline
 
@@ -51,8 +81,9 @@ user's gender.)
    (date range, exclude reviews, require full text available, etc).
 2. **Query expansion**: LLM turns the free-text question into a handful of structured
    search queries / keyword sets (since API keyword search is literal, not semantic).
-3. **Retrieval**: run expanded queries against OpenAlex (+ Semantic Scholar), pull top N
-   results per query (e.g. 50-100), merge.
+3. **Retrieval**: run expanded queries against the selected sources (OpenAlex by default,
+   optionally Semantic Scholar and Elsevier/Scopus), pull top N results per query (e.g.
+   50-100), merge.
 4. **Dedupe**: match across sources by DOI, fall back to title+year fuzzy match.
 5. **Relevance/novelty scoring**: LLM scores each candidate abstract against the original
    research question. Score should include a short rationale, not just a number, so the user
@@ -62,9 +93,9 @@ user's gender.)
    the main UI — see Cost tracking below.
 6. **Shortlist**: sort by score, surface top K (e.g. 15-25) with rationale, citation count,
    year, source link. Everything else stays available but collapsed, not discarded.
-7. **Iteration**: allow the user to mark papers as "yes/no/maybe", and feed that signal back
-   into re-ranking remaining candidates (basic relevance feedback) or into the next search
-   round's query expansion.
+7. **Iteration**: originally planned as per-paper "yes/no/maybe" labels. Replaced by saved
+   prompts with examples (see "Saved prompts with examples" below): a well-scored paper is
+   marked as an example from a run's results and calibrates later runs of that prompt.
 
 ## Architecture
 
@@ -77,16 +108,18 @@ localhost.
   project). Runs a local dev/WSGI server bound to `127.0.0.1` on a fixed or
   auto-selected port; app entry point opens the user's default browser to that URL via
   `webbrowser.open()`, so there's no separate "installer" UX — just run the script.
-- **Frontend**: React 18 + Vite + Tailwind — a search input, a results list with
-  expandable rationale per paper, label buttons (yes/no/maybe) that persist, and a
-  "past runs" view. `vite build` output is served as static files by Flask, so the
-  shipped app is a single Flask process (no separate frontend dev server needed at
-  runtime).
-- **DB**: SQLite (stdlib `sqlite3`, or `SQLAlchemy`/`sqlmodel` if an ORM layer is
-  wanted) — local file, zero config, matches local-only/no-networking requirement.
-  Persists retrieved papers, datasets, analysis runs, scores/rationale, and (future)
-  yes/no/maybe labels so past results are always browsable. See Data model (Phase 3)
-  below for the actual table design.
+- **Frontend**: React 19 + Vite + Tailwind v4 + react-router, with lucide icons and
+  self-hosted Source Sans 3 / Source Code Pro fonts. Pages: Discover Papers, Paper Data Sets
+  (+ detail), Analyze Papers, Scoring Prompts (+ detail), Past Results (+ run results) and
+  Settings, under a shared layout. `vite build` writes straight into `backend/static`,
+  which Flask serves, so the shipped app is a single Flask process (no separate frontend dev
+  server needed at runtime; in dev, `npm run dev` proxies `/api` to Flask on 5175).
+- **DB**: SQLite via stdlib `sqlite3` (no ORM), a short-lived connection per call and a
+  module lock serializing writes. The file lives in the platformdirs user-data dir, not the
+  repo. Schema changes to existing tables go through an idempotent ALTER-based `_migrate`,
+  since user data must never need deleting. Persists retrieved papers, datasets, analysis
+  runs, scores/rationale, saved prompts and their examples, so past results are always
+  browsable. See Data model (Phase 3) below for the actual table design.
 - **Cost tracking**: every LLM call (query expansion + scoring) logs provider, model,
   input/output token counts, and computed $ cost against whichever dataset or analysis
   run it belongs to (see `LlmCall` in Data model below). Not necessarily shown anywhere
@@ -95,26 +128,31 @@ localhost.
   the SQLite file) can show total spend over time. This is what makes the still-open
   per-search cost cap/estimate question (see Open questions) answerable from real data
   instead of guessing.
-- **API keys, general**: any credential the app needs — AI provider keys and the optional
-  Semantic Scholar key — is entered once via the UI and persisted to a single encrypted
-  local file (via `cryptography`'s Fernet, key file at 0600 perms), located with
-  `platformdirs`'s per-user config dir. Deliberately *not* the OS-native credential
-  manager (Windows Credential Manager/macOS Keychain/Secret Service): those differ enough
-  across platforms — Linux Secret Service in particular is often unavailable on headless/
-  minimal installs — that "same code, same behavior on every OS" wins over integrating
-  with each OS's native store. Never written to SQLite or in plaintext. Semantic Scholar's
-  key is optional (the API works unauthenticated at low volume); if omitted, the app just
-  runs retrieval against it at the lower unauthenticated rate limit instead of blocking
-  the feature.
-- **LLM**: user supplies their own API key at runtime (never bundled/hardcoded) and
-  picks their provider from four supported options — Claude (`anthropic` SDK), OpenAI
-  (`openai` SDK), Google Gemini (`google-genai` SDK), and Groq (OpenAI-compatible API,
-  reuses the `openai` SDK pointed at Groq's base URL) — via a small provider-agnostic
-  interface (e.g. `expand_query()`, `score_batch()`) with one implementation per
-  provider. Gemini's free tier and Groq's low cost/high speed give cost-conscious
-  users (e.g. a grad student paying out of pocket) real options beyond Claude/OpenAI's
-  pay-as-you-go-only pricing. Use prompt caching (Claude) / equivalent batching (other
-  providers) for the scoring system prompt since it's a repeated, structured task per batch.
+- **API keys, general** (built): any credential the app needs is entered once via the UI
+  (Settings) and persisted to a single encrypted local file (via `cryptography`'s Fernet,
+  guarded by thread and file locks), located with `platformdirs`'s per-user config dir
+  (`backend/credentials.py`). Keys are stored by lowercase provider name: `anthropic`,
+  `openalex`, `elsevier`, `springernature`, `semanticscholar` (the allowed set is
+  `CREDENTIAL_PROVIDERS` in `app.py`). Deliberately *not* the OS-native credential manager
+  (Windows Credential Manager/macOS Keychain/Secret Service): those differ enough across
+  platforms (Linux Secret Service in particular is often unavailable on headless/minimal
+  installs) that "same code, same behavior on every OS" wins over integrating with each
+  OS's native store. Never written to SQLite or in plaintext. When no key is stored, a dev
+  fallback reads the `<NAME>_API_KEY` env var. Saving a new Elsevier, Springer Nature or
+  Semantic Scholar key clears the "abstract already checked" marks, since a new source can
+  now be asked.
+- **LLM**: user supplies their own API key at runtime (never bundled/hardcoded). Only the
+  `anthropic` provider is implemented so far (Haiku 4.5, Sonnet 5, Opus 5 and Fable 5.1,
+  with per-model rates in `PRICING_PER_MTOK` in `llm.py`; a model not in that table is
+  rejected with a 400, and `frontend/src/lib/models.js` mirrors the keys by hand). The
+  provider-agnostic interface (`expand_query()`, `score_batch()`) is in place so more
+  providers can be added with one implementation each. OpenAI (`openai` SDK), Google Gemini
+  (`google-genai` SDK) and Groq (OpenAI-compatible API, reusing the `openai` SDK pointed at
+  Groq's base URL) remain planned, not built; Gemini's free tier and Groq's low cost/high
+  speed would give cost-conscious users (e.g. a grad student paying out of pocket) real
+  options beyond pay-as-you-go-only pricing. Use prompt caching (Claude) / equivalent
+  batching (other providers) for the scoring system prompt since it's a repeated,
+  structured task per batch.
 - **Considered, deferred**: Cohere's Rerank API as a cheap first-pass filter (rerank
   all candidates, then only send the top-K to the chosen LLM for rationale) could cut
   per-search LLM cost/latency, but adds a second API/key to manage and a coordination
@@ -129,28 +167,46 @@ not one row per "search" - so the same pulled-in pool of papers can be graded by
 different prompts/models without re-querying the scholarly APIs, and so a paper's data is
 never duplicated just because it showed up in more than one dataset.
 
+All of this is built (table names are lowercase snake_case in `backend/db.py`).
+
 - **`Paper`** (global, source-agnostic, one row per real paper): `id`, `source` (e.g.
-  `"openalex"` - `"pubmed"`/`"semantic_scholar"` later), `source_id`, `doi`, `title`,
-  `abstract`, `year`, `citation_count`, `venue`, `authors`, `url`, `is_review`,
-  `first_seen_at`. Dedup key is `doi` if present, else normalized `(title, year)` - the
-  same rule `openalex.dedupe()` already applies in-memory per-request, just enforced once
-  at insert time instead of every run. Once a paper is in this table it's "already loaded
-  and ready to go" for any future dataset that pulls it in again - no re-fetch, no re-dedupe.
-- **`Dataset`**: `id`, `name`, `verbose_query` (the free-text research question the user
-  typed), `expanded_queries` (the LLM's keyword breakdown that produced it, kept for
-  auditability), `created_at` (so the user can tell when a dataset might be stale - see
-  Open questions for what "stale" should actually do).
+  `"openalex"`), `source_id` (unique together with `source`), `doi`, `title`, `abstract`,
+  `year`, `publication_date`, `citation_count`, `venue`, `authors`, `url`, `is_review`,
+  `first_seen_at`, plus `abstract_source` (which lookup source filled the abstract, NULL if
+  it came with the paper or was typed by hand) and `abstract_checked_at` (set when an
+  abstract lookup completed without finding one, so it is not retried; cleared when a new
+  lookup key is saved). Dedup key is `doi` if present, else normalized `(title, year)`,
+  enforced once at insert time. Once a paper is in this table it's "already loaded and
+  ready to go" for any future dataset that pulls it in again - no re-fetch, no re-dedupe.
+  A user can hand-edit a paper through `PATCH /api/papers/<id>` (title, abstract, year,
+  venue, URL); since `paper` is one shared row an edit shows everywhere it appears. The DOI
+  is read-only, since it is how the same paper is matched across searches.
+- **`Dataset`**: `id`, `name` (a 2-4 word title written by the same LLM call that expands the
+  query, editable through `PATCH /api/datasets/<id>`), `verbose_query` (the free-text
+  research question the user typed, read-only), `expanded_queries` (the LLM's keyword
+  breakdown that produced it, kept for auditability), `from_year`/`to_year`, `sources`
+  (JSON list of source ids, NULL means OpenAlex), `created_at` (so the user can tell when a
+  dataset might be stale - see Open questions for what "stale" should actually do) and
+  `deleted_at` (soft delete).
 - **`DatasetPaper`** (join table, dataset membership + soft delete): `dataset_id`,
   `paper_id`, `added_at`, `excluded_at` (nullable - set when the user manually removes a
   paper from the dataset; `NULL` means still in the dataset). Excluded papers are kept,
   not hard-deleted, so removal is reversible and never breaks a past analysis run that
   already scored them.
-- **`AnalysisRun`**: `id`, `dataset_id`, `grading_prompt` (the exact prompt text used to
-  judge relevance for this run - saved in full so the user can reuse or refine it later
-  and compare results), `ai_api`, `ai_model`, `status` (`running` / `completed`),
-  `created_at`, `completed_at`. Because `ai_api`/`ai_model` are stored per run, the same
-  dataset + grading prompt can be run against different providers/models and compared
-  side by side.
+- **`AnalysisRun`**: `id`, `prompt_id`, `grading_prompt` (the exact prompt text used to
+  judge relevance for this run, a snapshot so editing the saved prompt never changes old
+  results), `examples_snapshot` (the prompt's examples as they were when the run started),
+  `ai_api`, `ai_model`, `status` (`running` / `completed`), `created_at`, `completed_at`,
+  `deleted_at`. A run can score several datasets at once, linked through
+  **`AnalysisRunDataset`** (`run_id`, `dataset_id`) rather than a single `dataset_id`
+  column. Because `ai_api`/`ai_model` are stored per run, the same dataset + prompt can be
+  run against different models and compared side by side.
+- **`Prompt`**: `id`, `name`, `description` (the research paper criteria), `title_pending`,
+  `created_at`, `updated_at`, `deleted_at`. Reusable across datasets. See "Saved prompts
+  with examples" below.
+- **`PromptExample`**: `id`, `prompt_id`, `paper_id`, `source_run_id`, `score`, `rationale`,
+  `created_at`, unique on `(prompt_id, paper_id)` so re-marking a paper replaces its
+  example. Stores its own copy of the score and reasoning.
 - **`AnalysisResult`**: `id`, `run_id`, `paper_id`, `rationale`, `score`, `created_at`.
   Rationale is generated *before* score (both in the LLM's structured-output schema field
   order and in the prompt) so the model reasons before committing to a number, rather than
@@ -164,11 +220,11 @@ never duplicated just because it showed up in more than one dataset.
   `output_tokens`, `usd`, `created_at`. Total spend for a dataset or a run is just
   `SUM(usd)` filtered by the right id.
 
-**Scoring in resumable chunks**: candidates are scored in batches (the same
-`SCORE_CHUNK_SIZE`-style chunking already used in Phase 2, sized to control cost/latency
-without hitting output-token limits), and each chunk's `AnalysisResult` rows + its
-`LlmCall` row are written in one DB transaction immediately after that chunk's LLM call
-succeeds - not batched up and written all at once at the end. This means:
+**Scoring in resumable chunks**: candidates are scored in batches (`SCORE_CHUNK_SIZE` = 20
+in `app.py`, sized to control cost/latency without hitting output-token limits), and each
+chunk's `AnalysisResult` rows + its `LlmCall` row are written in one DB transaction
+immediately after that chunk's LLM call succeeds - not batched up and written all at once
+at the end. This means:
 
 1. If the run is interrupted (crash, app closed, network drop) partway through, only
    fully-completed chunks exist in the DB - there's no half-written chunk to clean up,
@@ -177,9 +233,10 @@ succeeds - not batched up and written all at once at the end. This means:
    Re-select dataset papers (`excluded_at IS NULL`) that have no `AnalysisResult` yet
    under this `run_id` (a `LEFT JOIN ... WHERE AnalysisResult.id IS NULL`), chunk only the
    remainder, and continue. When nothing's left unscored, mark the run `completed`.
-3. At the API level this is one endpoint (e.g. `POST /api/analysis-runs/<id>/process`)
-   that processes remaining chunks - calling it once does a full run, calling it again
-   after an interruption just picks up where it stopped.
+3. At the API level this is one endpoint, `POST /api/analysis-runs/<id>/process`, which
+   scores one chunk of still-unscored papers per call. The client
+   (`frontend/src/lib/driveAnalysisRun.js`) calls it repeatedly until the run's status is
+   `completed`, and calling it again after an interruption just picks up where it stopped.
 
 This setup is also what enables comparing different AI providers/models against each
 other: run the same dataset through multiple `AnalysisRun`s with different `ai_api`/
@@ -189,65 +246,82 @@ rankings side by side.
 ## Dependencies
 
 **Backend (Python)**
-- `flask` — web server + API layer (existing stack, already installed/working)
-- `requests` or `httpx` — OpenAlex / Semantic Scholar HTTP clients
-- `anthropic` — Claude API SDK
-- `openai` — OpenAI API SDK (also reused for Groq, which is OpenAI-API-compatible)
-- `google-genai` — Google Gemini API SDK
-- `sqlite3` (stdlib) — DB; add `sqlalchemy` only if the schema grows enough to want an ORM
-- `cryptography` + `platformdirs` — cross-platform encrypted local-file storage for the
-  user's AI provider API key (deliberately not `keyring`/OS credential managers — see
-  Architecture)
+Currently in `backend/requirements.txt`:
+- `flask` - web server + API layer
+- `requests` - HTTP client for OpenAlex, Semantic Scholar, Elsevier, Springer Nature and
+  Europe PMC
+- `anthropic` - Claude API SDK
+- `sqlite3` (stdlib) - DB; no ORM
+- `cryptography` + `platformdirs` + `filelock` - cross-platform encrypted local-file storage
+  for API keys (deliberately not `keyring`/OS credential managers, see Architecture)
+
+Planned, not yet added: `openai` (OpenAI, also reused for Groq, which is
+OpenAI-API-compatible) and `google-genai` (Gemini), if those providers are built.
 
 **Frontend (JS)**
-- `react` 18, `vite` — existing, familiar
-- `tailwindcss` — existing, reused from prior project's working styles
+- `react` 19, `react-dom`, `react-router-dom` 7, `vite`
+- `tailwindcss` 4 via `@tailwindcss/vite`
+- `lucide-react` (icons), `@fontsource/source-sans-3` and `@fontsource/source-code-pro`
+- `oxlint` for linting (no test suite exists in backend or frontend)
 
 All of the above are open-source/free to use; only the AI provider API calls
 themselves are metered, and that cost is the user's own (their key, their bill).
 
 ## Phased build-out
 
-**Phase 1 — retrieval only, no AI**
+**Phase 1 - retrieval only, no AI (done)**
 Search box → OpenAlex query → flat list of results (title, abstract, year, citations, link).
 Validates the data source is good enough before spending effort on ranking.
 
-**Phase 2 — AI scoring**
-Add LLM-based query expansion and relevance scoring on top of Phase 1's results. Ship the
-shortlist view with rationale.
+**Phase 2 - AI scoring (done)**
+LLM-based query expansion and relevance scoring on top of Phase 1's results, with a
+shortlist view showing the rationale.
 
-**Phase 3 — persistence + feedback loop**
-Persist retrieval (datasets of papers) and LLM judgment (analysis runs that grade a
-dataset against a prompt) as two separate, independently reusable models - see Data
-model (Phase 3) above for the full table design and the resumable-chunk-processing
-approach. Once that's in place, use yes/no/maybe labels to bias re-ranking and future
-query expansion. (Under review: per-paper yes/no/maybe labels may be replaced by the
-saved-prompt-with-examples design in "Saved prompts with examples" below, which is
-easier for users to understand.)
+**Phase 3 - persistence + feedback loop (done)**
+Retrieval (datasets of papers) and LLM judgment (analysis runs that grade datasets against
+a prompt) are persisted as two separate, independently reusable models - see Data model
+(Phase 3) above for the table design and the resumable-chunk-processing approach. The
+feedback loop is saved prompts with examples (see below), which replaced the per-paper
+yes/no/maybe labels originally planned here. Using examples to inform query expansion is
+not built.
+
+**Added after Phase 3 (done)**
+- Multi-source retrieval (OpenAlex, Semantic Scholar, Elsevier/Scopus), with cross-source
+  dedupe by DOI.
+- Automatic abstract lookup (see Data sources) and manual paper editing.
+- Per-paper exclude toggle on dataset pages, plus search, sort and filter bars on the
+  paper lists.
+- Soft-deletable datasets, runs and prompts, and AI-written short titles for datasets and
+  prompts.
 
 **Phase 4 (optional, later)**
-Semantic Scholar citation-graph exploration ("show me what cites/references this shortlisted
-paper"), export shortlist to BibTeX/RIS for the user's reference manager, WoS/Scopus
-integration if the primary user's institution has API access.
+Not built: PubMed as a search source, Semantic Scholar citation-graph exploration ("show me
+what cites/references this shortlisted paper"), export shortlist to BibTeX/RIS for the
+user's reference manager, Web of Science integration if the primary user's institution has
+API access, the OpenAI/Gemini/Groq providers, and packaging (see Distribution / packaging).
 
-Also under consideration: an AI-assisted "find missing abstracts" action on the Paper Data
-Sets page, on top of the manual paper-editing capability already built (`PATCH
-/api/papers/<id>` - lets the user hand-correct/fill in any paper's title, abstract, DOI,
-year, venue, URL; since `paper` is a single shared row, an edit is visible everywhere that
-paper appears). The risk with an automated version is specifically *how* it fills the gap:
-asking an LLM to recall the abstract from its own training data risks a fabricated abstract
-silently sitting in a real paper's record, which violates this project's core "never invent
-citations" principle worse than a blank abstract does - a hallucinated one looks legitimate.
-If built, it should fetch the paper's DOI landing page and extract the real abstract text
-from what's actually returned, never ask the model to recall it from memory - and even then,
-flag the result as "auto-filled, unverified" (a paywall/JS-rendered page/redirect can still
-yield wrong or truncated text) rather than making it indistinguishable from a real
-OpenAlex-sourced abstract.
+**Find missing abstracts (built).** The risk with automating this is *how* the gap is
+filled: asking an LLM to recall an abstract from its training data risks a fabricated
+abstract silently sitting in a real paper's record, which violates this project's core
+"never invent citations" principle worse than a blank abstract does, because a hallucinated
+one looks legitimate. The built version never asks a model. It queries real sources by DOI
+(Elsevier, Springer Nature, Europe PMC, Semantic Scholar; see "Abstract lookup" under Data
+sources) rather than scraping the DOI landing page, and guards against wrong matches by
+requiring a minimum length and a matching title. Filled abstracts record
+`paper.abstract_source`, so they stay distinguishable from ones that came with the paper.
+`POST /api/datasets/<id>/find-abstracts` handles one chunk per call and is stateless (the
+client sends back `skip_ids`/`skip_sources`; the loop is `frontend/src/lib/findAbstracts.js`).
+The dataset page starts the lookup automatically on load, and a sticky side panel (hidden
+once every included paper with a DOI has an abstract) shows progress and has the manual
+button.
 
-## Saved prompts with examples (decided, being built)
+## Saved prompts with examples (built)
 
-Status: design settled, see "Decided design" at the end of this section. The original
-proposal is kept below for context.
+Status: built as described in "Decided design" at the end of this section. The original
+proposal is kept below for context. Differences from the proposal: examples are added with
+a "Mark as example" action on a run's results (copying that paper's score and reasoning),
+not a "Fix this score" action with a user-picked bracket and note, and there is no separate
+"this one is right" action.
 
 **Problem.** The judge's strictness is now fixed by a system prompt with score brackets
 (see `backend/llm.py`), but a user has no way to teach it what "relevant" means for their
@@ -282,11 +356,10 @@ saves confirmed good calls as well.
 - **Real papers only.** Examples reference actual API-returned `paper` rows, preserving
   the "never invent citations" rule.
 
-**Suggested phasing.**
+**Suggested phasing.** Steps 1 and 2 are done; step 3 is not.
 1. Saved prompts only (no examples): new `prompt` table, Analyze picks or creates one,
    prompt snapshot stored on the run. Small, and clarifies what the prompt box is.
-2. Examples on prompts: results-page correction action, examples injected into
-   `score_batch`. Needs a UX mockup of the results page first.
+2. Examples on prompts: results-page action, examples injected into `score_batch`.
 3. Later: use examples to inform query expansion.
 
 **Open questions (resolved below).**
@@ -317,7 +390,7 @@ saves confirmed good calls as well.
   for that prompt replaces the old example. Removing an example is a hard delete.
 - **Snapshot per run.** A run stores the prompt text and the examples it was scored with,
   so editing a prompt never changes old results and a resumed run scores consistently.
-- **Cap.** Only the 6 most recent examples are sent to the judge.
+- **Cap.** Only the 6 most recent examples are sent to the judge (`db.EXAMPLE_LIMIT`).
 - **Existing runs** are backfilled into prompts named after their first four words.
 - **Soft deletes.** Deleting a run or prompt only hides it, so a deleted run's scored
   papers can still be used as examples. Corrections apply to later runs only, they do not
@@ -327,8 +400,11 @@ saves confirmed good calls as well.
 
 ## Distribution / packaging
 
-Target user has never used a command line or downloaded code from GitHub before, so
-"clone the repo and run pip install" is not acceptable UX. Plan:
+Status: nothing here is built yet. There is no PyInstaller spec, no GitHub Actions
+workflow and no update check in the repo, and the app currently runs from source
+(`python app.py` in `backend/`). The `collect_all()` list below will also need `requests`
+and any later provider SDKs. Target user has never used a command line or downloaded code
+from GitHub before, so "clone the repo and run pip install" is not acceptable UX. Plan:
 
 - **Packaging**: PyInstaller `--onedir` bundles the Flask backend + all Python deps +
   the built React/Vite/Tailwind static assets into a folder containing the executable
@@ -392,13 +468,17 @@ Target user has never used a command line or downloaded code from GitHub before,
 - **Distribution**: packaged as a standalone executable per OS via PyInstaller + GitHub
   Actions, downloaded from GitHub Releases — no command line or `git clone` required of
   the end user (see Distribution / packaging above).
-- **AI provider**: user's choice of Claude, OpenAI, Gemini, or Groq, using their own API
-  key, persisted to a single cross-platform encrypted local file (see Architecture — not
-  the OS-native keyring/credential manager). Cohere Rerank considered and deferred (see
-  architecture section above).
-- **Semantic Scholar key**: supported (optional) so users can get higher rate limits;
-  stored the same way as the AI provider keys, but the app still works without it at
-  the unauthenticated rate limit.
+- **AI provider**: the user supplies their own API key, persisted to a single
+  cross-platform encrypted local file (see Architecture, not the OS-native
+  keyring/credential manager). Only Claude is built; OpenAI, Gemini and Groq remain planned.
+  Cohere Rerank considered and deferred (see architecture section above).
+- **Source keys**: OpenAlex, Semantic Scholar, Elsevier and Springer Nature keys are stored
+  the same way as the AI key. In practice every source hits its keyless limit almost
+  immediately, so keys are needed for any real use. Only Semantic Scholar and Elsevier are
+  enforced in code (a search is refused without a saved key); OpenAlex is not, and
+  Semantic Scholar is still tried keyless for abstract lookup. Elsevier is needed for Scopus search, and Elsevier and Springer Nature keys
+  also enable abstract lookup.
+- **Feedback mechanism**: saved prompts with examples, not per-paper yes/no/maybe labels.
 
 ## Open questions to resolve before/while building
 

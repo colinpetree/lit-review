@@ -108,7 +108,8 @@ routes survive refresh. In dev, run Flask on 5175 (hardcoded) next to `npm run d
   changes to existing tables go through the idempotent ALTER-based `_migrate`, since
   `CREATE TABLE IF NOT EXISTS` won't alter an existing table and user data must never
   need deleting.
-- `credentials.py` - API keys (Anthropic, OpenAlex) in a Fernet-encrypted file in the
+- `credentials.py` - API keys (anthropic, openalex, elsevier, springernature,
+  semanticscholar; allowed names are `CREDENTIAL_PROVIDERS` in `app.py`) in a Fernet-encrypted file in the
   platformdirs config dir, guarded by thread and file locks. Deliberately not the OS
   keyring, so one mechanism works identically on every OS.
 

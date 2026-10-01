@@ -82,7 +82,6 @@ export default function PastResultsPage() {
                 <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-gray-400">
                   <span>{formatDateTime(run.completed_at || run.created_at)} ·</span>
                   <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} />
-                  <span className="ml-auto text-xs uppercase">{run.status}</span>
                 </div>
               </Card>
             </Link>

@@ -145,33 +145,39 @@ export default function RunResultsPage() {
   const runDate = formatDateTime(run.completed_at || run.created_at)
 
   return (
-    <PageShell
-      title={run.name || run.prompt?.name || run.grading_prompt}
-      actions={
-        <RunMenu
-          run={run}
-          onRenamed={(name) => {
-            renamedRef.current = name
-            setRun((prev) => ({ ...prev, name }))
-          }}
-        />
-      }
-    >
+    <PageShell>
       <BackLink to="/results">Back to Analysis Results</BackLink>
 
+      <div className="mt-4 flex items-start justify-between gap-4">
+        <h1 className="text-2xl font-semibold text-gray-900">
+          {run.name || run.prompt?.name || run.grading_prompt}
+        </h1>
+        <div className="shrink-0">
+          <RunMenu
+            run={run}
+            onRenamed={(name) => {
+              renamedRef.current = name
+              setRun((prev) => ({ ...prev, name }))
+            }}
+          />
+        </div>
+      </div>
+
       {run.prompt ? (
-        <p className="mt-4 text-sm text-gray-500">
-          Prompt:{' '}
-          {run.prompt.deleted ? (
-            run.prompt.name
-          ) : (
-            <Link
-              to={`/prompts/${run.prompt.id}`}
-              className="text-blue-600 transition-colors hover:text-blue-800"
-            >
-              {run.prompt.name}
-            </Link>
-          )}
+        <p className="mt-3 flex gap-1 text-sm text-gray-500">
+          <span className="shrink-0">Prompt:</span>
+          <span className="min-w-0">
+            {run.prompt.deleted ? (
+              run.prompt.name
+            ) : (
+              <Link
+                to={`/prompts/${run.prompt.id}`}
+                className="text-blue-600 transition-colors hover:text-blue-800"
+              >
+                {run.prompt.name}
+              </Link>
+            )}
+          </span>
         </p>
       ) : null}
       {/* A flex row, so wrapped lines line up under the text, not the label. */}
@@ -179,33 +185,34 @@ export default function RunResultsPage() {
         <span className="shrink-0">Criteria:</span>
         <span className="min-w-0 whitespace-pre-line">{run.grading_prompt}</span>
       </p>
-      <p className="mt-1 text-sm text-gray-500">
-        Datasets:{' '}
-        {datasetLabels(run.datasets).map((label, i) => {
-          const dataset = run.datasets[i]
-          return (
-            <span key={dataset.id}>
-              {i > 0 ? ', ' : ''}
-              {dataset.deleted ? (
-                label
-              ) : (
-                <Link
-                  to={`/datasets/${dataset.id}`}
-                  className="text-blue-600 transition-colors hover:text-blue-800"
-                >
-                  {label}
-                </Link>
-              )}
-            </span>
-          )
-        })}
-        {` · ${run.results.length} paper${run.results.length === 1 ? '' : 's'}`}
+      <p className="mt-1 flex gap-1 text-sm text-gray-500">
+        <span className="shrink-0">Datasets:</span>
+        <span className="min-w-0">
+          {datasetLabels(run.datasets).map((label, i) => {
+            const dataset = run.datasets[i]
+            return (
+              <span key={dataset.id}>
+                {i > 0 ? ', ' : ''}
+                {dataset.deleted ? (
+                  label
+                ) : (
+                  <Link
+                    to={`/datasets/${dataset.id}`}
+                    className="text-blue-600 transition-colors hover:text-blue-800"
+                  >
+                    {label}
+                  </Link>
+                )}
+              </span>
+            )
+          })}
+          {` · ${run.results.length} paper${run.results.length === 1 ? '' : 's'}`}
+        </span>
       </p>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-gray-500">
         <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-gray-500" />
         <span>
-          · {run.status}
-          {runDate ? ` · ${runDate}` : ''}
+          {runDate ? `· ${runDate}` : ''}
         </span>
       </div>
 

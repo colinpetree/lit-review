@@ -8,14 +8,9 @@
 @import '@fontsource/source-code-pro/latin-400.css';
 @import '@fontsource/source-code-pro/latin-700.css';
 
-@import "tailwindcss";
-
-@theme {
-  --font-sans: "Source Sans 3", ui-sans-serif, system-ui, sans-serif,
-    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-mono: "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Monaco,
-    Consolas, "Liberation Mono", "Courier New", monospace;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 /* Source Sans 3's line box is taller above the baseline than below, so text in an
    items-center row sits slightly higher than a centered icon. Nudge any lucide icon
@@ -52,7 +47,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: var(--color-gray-500);
+  border-color: #6b7280;
 }
 
 /* No drag handle on any textarea; fields that should grow use AutoGrowTextarea. */

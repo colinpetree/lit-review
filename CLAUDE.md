@@ -168,7 +168,7 @@ API-returned abstracts and must never invent citations.
 
 ### Frontend
 
-React 19 + Vite + Tailwind v4 (`@tailwindcss/vite`) + react-router. Routes are in
+React 19 + Vite + Tailwind v3 (PostCSS, `tailwind.config.js`, same as an earlier project) + react-router. Routes are in
 `src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), analyze,
 prompts (+ `:id`), results (+ `:id`), settings. Shared UI: `MoreMenu` (more-horizontal
 popover), `Modal`/`ConfirmModal`, `DeleteMenu`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.

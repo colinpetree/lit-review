@@ -75,7 +75,7 @@ function DatasetDetailsCard({ dataset, onSaved }) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <p className="text-sm font-medium text-gray-700">Topic</p>
+        <p className="text-sm font-medium text-gray-700">Research Paper Topic</p>
         <p className="whitespace-pre-wrap text-sm text-gray-900">{dataset.verbose_query}</p>
       </div>
 

@@ -18,7 +18,6 @@ export const MODELS_BY_PROVIDER = {
     { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
     { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
     { id: 'claude-opus-5', label: 'Claude Opus 5' },
-    { id: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
   ],
   openai: [
     { id: 'gpt-6-luna', label: 'GPT-6 Luna' },

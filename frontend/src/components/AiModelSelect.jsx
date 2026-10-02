@@ -4,9 +4,10 @@ import { MODELS_BY_PROVIDER, PROVIDER_LABELS, providerIcon } from '../lib/models
 
 // The providers that can be chosen for AI work: configured AND having models
 // listed. `providers` also reports non-AI credentials (e.g. openalex), which
-// must never show up as a model choice.
+// must never show up as a model choice. Listed in MODELS_BY_PROVIDER's order, not
+// the order the server reports them in (which is arbitrary).
 function aiProviders(providers) {
-  return Object.keys(providers || {}).filter((p) => providers[p] && MODELS_BY_PROVIDER[p])
+  return Object.keys(MODELS_BY_PROVIDER).filter((p) => providers?.[p])
 }
 
 // Callers use hasConfiguredProvider(providers) to decide whether to show the
@@ -56,6 +57,7 @@ export default function AiModelSelect({ providers, value, onChange }) {
         onChange({ ai_api, ai_model })
       }}
       placeholder="Choose a model"
+      narrowScrollbar
     />
   )
 }

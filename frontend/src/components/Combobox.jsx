@@ -16,7 +16,16 @@ import { ChevronDown } from 'lucide-react'
 //                 filters from scratch instead of editing the label
 // value: the selected option's value, or null/undefined for none.
 // subtle: a shade lighter gray for the text and icons, for secondary controls.
-export default function Combobox({ options, value, onChange, placeholder, emptyText = 'No matches.', subtle = false }) {
+// narrowScrollbar: the list uses the thin scrollbar (.narrow-scrollbar in index.css).
+export default function Combobox({
+  options,
+  value,
+  onChange,
+  placeholder,
+  emptyText = 'No matches.',
+  subtle = false,
+  narrowScrollbar = false,
+}) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState(0)
@@ -111,7 +120,8 @@ export default function Combobox({ options, value, onChange, placeholder, emptyT
         // mousedowns are prevented below, so they never blur the input.
         onBlur={() => setOpen(false)}
         className={`w-full rounded-md border border-gray-300 py-2 pr-9 text-sm ${
-          selected?.icon ? 'pl-9' : 'pl-3'
+          // With an icon, the text sits 1px lower so it lines up with it (same height overall).
+          selected?.icon ? 'pl-9 pb-[7px] pt-[9px]' : 'pl-3'
         } ${subtle ? 'text-gray-600' : ''} ${
           darkPlaceholder ? (subtle ? 'placeholder:text-gray-600' : 'placeholder:text-gray-700') : ''
         }`}
@@ -128,7 +138,9 @@ export default function Combobox({ options, value, onChange, placeholder, emptyT
           ref={listRef}
           role="listbox"
           onMouseDown={(e) => e.preventDefault()}
-          className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg"
+          className={`absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg ${
+            narrowScrollbar ? 'narrow-scrollbar' : ''
+          }`}
         >
           {visible.map((option, i) => {
             const showHeading = showGroups && option.group && option.group !== visible[i - 1]?.group

@@ -4,6 +4,8 @@ import { PageShell, Card } from '../components/ui'
 import { StageIndicator } from '../components/Spinner'
 import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from '../components/AiModelSelect'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
+import Checkbox from '../components/Checkbox'
+import DateRangeField from '../components/DateRangeField'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { postJson } from '../lib/api'
 import { DEFAULT_SOURCES, PAPER_SOURCES } from '../lib/paperSources'
@@ -174,7 +176,7 @@ export default function DiscoverPapersPage() {
       <Card>
         <form onSubmit={runDiscovery} className="flex flex-col gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Topic</label>
+            <label className="block text-sm font-medium text-gray-700">Research Paper Topic</label>
             <AutoGrowTextarea
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
@@ -184,29 +186,15 @@ export default function DiscoverPapersPage() {
             />
           </div>
 
-          <div className="flex gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">From year</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={4}
-                value={fromYear}
-                onChange={(e) => setFromYear(e.target.value.replace(/\D/g, ''))}
-                className="mt-1 w-28 rounded-md border border-gray-300 px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">To year</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={4}
-                value={toYear}
-                onChange={(e) => setToYear(e.target.value.replace(/\D/g, ''))}
-                className="mt-1 w-28 rounded-md border border-gray-300 px-3 py-2 text-sm"
-              />
-            </div>
+          <div>
+            <span className="block text-sm font-medium text-gray-700">Dates</span>
+            <DateRangeField
+              fromYear={fromYear}
+              toYear={toYear}
+              onFromChange={setFromYear}
+              onToChange={setToYear}
+              disabled={status === 'loading'}
+            />
           </div>
 
           <div>
@@ -216,42 +204,36 @@ export default function DiscoverPapersPage() {
                 // A source that needs an API key can't be chosen until one is saved.
                 const needsKey = source.key && !providers?.[source.key]
                 return (
-                  <label
+                  <Checkbox
                     key={source.id}
-                    className={`flex items-center gap-2 text-sm ${needsKey ? 'text-gray-400' : 'text-gray-700'}`}
+                    checked={activeSources.includes(source.id)}
+                    disabled={needsKey || status === 'loading'}
+                    onChange={(checked) =>
+                      setSources(
+                        checked ? [...activeSources, source.id] : activeSources.filter((id) => id !== source.id)
+                      )
+                    }
                   >
-                    <input
-                      type="checkbox"
-                      checked={activeSources.includes(source.id)}
-                      disabled={needsKey || status === 'loading'}
-                      onChange={(e) =>
-                        setSources(
-                          e.target.checked
-                            ? [...activeSources, source.id]
-                            : activeSources.filter((id) => id !== source.id)
-                        )
-                      }
-                      className="rounded"
-                    />
                     <source.icon size={14} className="shrink-0" />
-                    {source.label}
-                    {needsKey ? (
-                      <span className="text-xs">
-                        (needs an API key in{' '}
-                        <Link to="/settings" className="underline">
-                          Settings
-                        </Link>
-                        )
-                      </span>
-                    ) : null}
-                  </label>
+                    <span>
+                      {source.label}
+                      {needsKey ? (
+                        <span className="ml-1 text-xs">
+                          (needs an API key in{' '}
+                          <Link to="/settings" className="underline">
+                            Settings
+                          </Link>
+                          )
+                        </span>
+                      ) : null}
+                    </span>
+                  </Checkbox>
                 )
               })}
-              <label className="flex items-center gap-2 text-sm text-gray-400">
-                <input type="checkbox" checked={false} disabled className="rounded" />
+              <Checkbox checked={false} disabled>
                 <PubMedIcon size={14} className="shrink-0" />
                 PubMed (coming soon)
-              </label>
+              </Checkbox>
             </div>
           </div>
 

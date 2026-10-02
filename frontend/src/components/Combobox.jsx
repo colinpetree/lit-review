@@ -7,6 +7,8 @@ import { ChevronDown } from 'lucide-react'
 //   icon          optional lucide component shown before the label in the list
 //   hint          optional faded text right-aligned in the list row (e.g. "$$");
 //                 hintTitle is its hover text
+//   suffix        optional faded text right after the label (e.g. a paper count)
+//   detail        optional faded second line under the label (clamped to one line)
 //   keywords      optional extra text the typed filter also searches (not shown)
 //   group         optional heading; shown only when there is more than one group
 //   pinned        stays in the list while filtering (e.g. "New prompt")
@@ -16,6 +18,8 @@ import { ChevronDown } from 'lucide-react'
 //                 filters from scratch instead of editing the label
 // value: the selected option's value, or null/undefined for none.
 // subtle: a shade lighter gray for the text and icons, for secondary controls.
+// blurOnChoose: take focus out of the field after a choice (for multi-select
+//   pickers, where the field stays empty and the cursor would just sit there).
 export default function Combobox({
   options,
   value,
@@ -23,7 +27,9 @@ export default function Combobox({
   placeholder,
   emptyText = 'No matches.',
   subtle = false,
+  blurOnChoose = false,
 }) {
+  const inputRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState(0)
@@ -69,6 +75,7 @@ export default function Combobox({
     onChange(option.value)
     setOpen(false)
     setQuery('')
+    if (blurOnChoose) inputRef.current?.blur()
   }
 
   const onKeyDown = (e) => {
@@ -99,6 +106,7 @@ export default function Combobox({
   return (
     <div ref={ref} className="relative">
       <input
+        ref={inputRef}
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
@@ -164,7 +172,17 @@ export default function Combobox({
                     i === highlight ? 'bg-gray-100' : ''
                   }`}
                 >
-                  {option.icon || option.hint ? (
+                  {option.detail || option.suffix ? (
+                    <>
+                      <span>
+                        {option.label}
+                        {option.suffix ? <span className="text-gray-400"> {option.suffix}</span> : null}
+                      </span>
+                      {option.detail ? (
+                        <span className="block line-clamp-1 text-xs text-gray-400">{option.detail}</span>
+                      ) : null}
+                    </>
+                  ) : option.icon || option.hint ? (
                     <span className="flex items-center gap-2">
                       {option.icon ? <option.icon size={14} className="shrink-0" /> : null}
                       {option.label}

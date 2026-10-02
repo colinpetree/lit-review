@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { X } from 'lucide-react'
+import Combobox from '../components/Combobox'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import { StageIndicator } from '../components/Spinner'
@@ -42,7 +44,14 @@ export default function AnalyzePapersPage() {
   useEffect(() => {
     fetch('/api/datasets')
       .then((res) => res.json())
-      .then((data) => setDatasets(data.datasets ?? []))
+      .then((data) => {
+        const list = data.datasets ?? []
+        setDatasets(list)
+        // A ?dataset= link to a dataset that was deleted (or never existed)
+        // must not stay selected, or Run would be enabled with no badge.
+        const ids = new Set(list.map((d) => d.id))
+        setSelected((prev) => new Set([...prev].filter((id) => ids.has(id))))
+      })
       .catch((err) => setError(err.message))
     fetch('/api/prompts')
       .then((res) => res.json())
@@ -62,6 +71,18 @@ export default function AnalyzePapersPage() {
       return next
     })
   }
+
+  const chosen = (datasets ?? []).filter((d) => selected.has(d.id))
+  // Titles aren't unique, so the created time (then the topic) tells two similarly titled datasets apart.
+  const datasetOptions = (datasets ?? [])
+    .filter((d) => !selected.has(d.id))
+    .map((d) => ({
+      value: d.id,
+      label: d.name,
+      suffix: `(${d.paper_count})`,
+      detail: `${formatDateTime(d.created_at)} · ${d.verbose_query}`,
+      keywords: d.verbose_query,
+    }))
 
   const configured = hasConfiguredProvider(providers)
   const choice = usableAiChoice(aiChoice, providers) || defaultAiChoice(providers)
@@ -116,28 +137,48 @@ export default function AnalyzePapersPage() {
         <form onSubmit={runAnalysis} className="flex flex-col gap-4">
           <div>
             <span className="block text-sm font-medium text-gray-700">Datasets to analyze</span>
-            <div className="mt-1 flex flex-col gap-1 max-h-64 overflow-auto">
-              {(datasets ?? []).map((d) => (
-                <label key={d.id} className="flex items-start gap-2 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(d.id)}
-                    onChange={() => toggle(d.id)}
-                    className="mt-0.5 rounded"
-                  />
-                  <span>
-                    {d.name} <span className="text-gray-400">({d.paper_count})</span>
-                    {/* Titles aren't unique, so the created time (then the topic) tells two similarly titled datasets apart. */}
-                    <span className="block line-clamp-1 text-xs text-gray-400">
-                      {formatDateTime(d.created_at)} · {d.verbose_query}
-                    </span>
-                  </span>
-                </label>
+            <div className="mt-1 flex flex-wrap items-start gap-2">
+              <div className="w-full">
+                <Combobox
+                  options={datasetOptions}
+                  value={null}
+                  onChange={toggle}
+                  blurOnChoose
+                  placeholder={
+                    chosen.length
+                      ? `${chosen.length} dataset${chosen.length === 1 ? '' : 's'} selected`
+                      : datasets && datasets.length === 0
+                        ? 'No datasets yet'
+                        : 'Choose datasets or type to search'
+                  }
+                  emptyText={datasetOptions.length ? 'No datasets match.' : 'No more datasets.'}
+                />
+              </div>
+              {chosen.map((d) => (
+                <span
+                  key={d.id}
+                  className="inline-flex items-center gap-1 rounded-full bg-blue-600 py-1 pl-3 pr-1.5 text-sm text-white dark:bg-blue-950 dark:text-blue-300"
+                >
+                  {d.name} ({d.paper_count})
+                  <button
+                    type="button"
+                    onClick={() => toggle(d.id)}
+                    aria-label={`Remove ${d.name}`}
+                    className="rounded-full p-0.5 hover:bg-blue-700 dark:hover:bg-blue-900"
+                  >
+                    <X size={14} />
+                  </button>
+                </span>
               ))}
-              {datasets && datasets.length === 0 ? (
-                <p className="text-sm text-gray-500">No datasets yet - create one from Discover Papers.</p>
-              ) : null}
             </div>
+            {chosen.length ? (
+              <p className="mt-2 text-sm text-gray-500">
+                {chosen.reduce((sum, d) => sum + d.paper_count, 0).toLocaleString()} total papers{chosen.length > 1 ? ' (duplicates are skipped)' : ''}
+              </p>
+            ) : null}
+            {datasets && datasets.length === 0 ? (
+              <p className="mt-1 text-sm text-gray-500">No datasets yet - create one from Discover Papers.</p>
+            ) : null}
           </div>
 
           <div>
@@ -157,9 +198,6 @@ export default function AnalyzePapersPage() {
                 rows={3}
                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
               />
-              <p className="mt-1 text-xs text-gray-400">
-                A saved prompt is created from this, with a short title the AI writes.
-              </p>
             </div>
           ) : savedPrompt ? (
             <div className="rounded-md bg-gray-50 p-3">
@@ -194,10 +232,17 @@ export default function AnalyzePapersPage() {
 
           <button
             type="submit"
-            disabled={status === 'loading' || (configured && (!selected.size || !promptReady))}
-            className="self-start rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            disabled={!providers || status === 'loading' || (configured && (!selected.size || !promptReady))}
+            // White while it can't be run yet (key status still loading, no dataset
+            // or prompt), blue once it can. While a run is going it stays blue,
+            // just faded.
+            className={`self-start rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+              status === 'loading'
+                ? 'border-blue-600 bg-blue-600 text-white opacity-50'
+                : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-surface disabled:text-gray-400 disabled:hover:bg-surface'
+            }`}
           >
-            {!configured ? 'Configure API key' : status === 'loading' ? 'Analyzing…' : 'Run Analysis'}
+            {providers && !configured ? 'Configure API key' : status === 'loading' ? 'Analyzing…' : 'Run Analysis'}
           </button>
         </form>
       </Card>

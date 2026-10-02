@@ -120,7 +120,7 @@ export default function AnalyzePapersPage() {
                   />
                   <span>
                     {d.name} <span className="text-gray-400">({d.paper_count})</span>
-                    {/* Titles aren't unique, so the created time (then the topic) tells two similarly titled data sets apart. */}
+                    {/* Titles aren't unique, so the created time (then the topic) tells two similarly titled datasets apart. */}
                     <span className="block line-clamp-1 text-xs text-gray-400">
                       {formatDateTime(d.created_at)} · {d.verbose_query}
                     </span>

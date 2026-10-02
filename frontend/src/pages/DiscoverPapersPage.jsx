@@ -35,6 +35,7 @@ export default function DiscoverPapersPage() {
   const [remembered] = useState(loadDiscoverSettings)
   const [question, setQuestion] = useState('')
   const [sources, setSources] = useState(remembered.sources?.length ? remembered.sources : DEFAULT_SOURCES)
+  const [sourcesEdited, setSourcesEdited] = useState(false)
   const [fromYear, setFromYear] = useState('')
   const [toYear, setToYear] = useState('')
   const [aiChoice, setAiChoice] = useState(remembered.aiChoice)
@@ -57,12 +58,14 @@ export default function DiscoverPapersPage() {
 
   // The selected sources that can actually be used right now: a remembered one
   // whose key has since been removed (or which no longer exists) is dropped,
-  // and if that leaves none the default is used.
+  // and if that leaves none the default is used. Once the user has changed the
+  // checkboxes themselves, none selected stays none (Discover Papers is then
+  // disabled) instead of snapping back to the default.
   const usableSources = sources.filter((id) => {
     const source = PAPER_SOURCES.find((s) => s.id === id)
     return source && isSourceAvailable(source, providers)
   })
-  const activeSources = usableSources.length || !providers ? usableSources : DEFAULT_SOURCES
+  const activeSources = usableSources.length || !providers || sourcesEdited ? usableSources : DEFAULT_SOURCES
 
   const runDiscovery = async (e) => {
     e.preventDefault()
@@ -176,7 +179,7 @@ export default function DiscoverPapersPage() {
       <Card>
         <form onSubmit={runDiscovery} className="flex flex-col gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Research Paper Topic</label>
+            <label className="block text-sm font-medium text-gray-700">Research paper dataset topic</label>
             <AutoGrowTextarea
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
@@ -187,7 +190,7 @@ export default function DiscoverPapersPage() {
           </div>
 
           <div>
-            <span className="block text-sm font-medium text-gray-700">Dates</span>
+            <span className="block text-sm font-medium text-gray-700">Publication dates</span>
             <DateRangeField
               fromYear={fromYear}
               toYear={toYear}
@@ -198,7 +201,7 @@ export default function DiscoverPapersPage() {
           </div>
 
           <div>
-            <span className="block text-sm font-medium text-gray-700">Paper sources</span>
+            <span className="block select-none text-sm font-medium text-gray-700">Paper sources</span>
             <div className="mt-1 flex flex-col gap-1">
               {PAPER_SOURCES.filter((source) => !source.hiddenWithoutKey || providers?.[source.key]).map((source) => {
                 // A source that needs an API key can't be chosen until one is saved.
@@ -208,11 +211,12 @@ export default function DiscoverPapersPage() {
                     key={source.id}
                     checked={activeSources.includes(source.id)}
                     disabled={needsKey || status === 'loading'}
-                    onChange={(checked) =>
+                    onChange={(checked) => {
+                      setSourcesEdited(true)
                       setSources(
                         checked ? [...activeSources, source.id] : activeSources.filter((id) => id !== source.id)
                       )
-                    }
+                    }}
                   >
                     <source.icon size={14} className="shrink-0" />
                     <span>
@@ -238,7 +242,7 @@ export default function DiscoverPapersPage() {
           </div>
 
           <div>
-            <span className="block text-sm font-medium text-gray-700">AI model (for query expansion)</span>
+            <span className="block text-sm font-medium text-gray-700">AI model</span>
             <div className="mt-1 max-w-xs">
               {configured ? (
                 <AiModelSelect providers={providers} value={choice} onChange={setAiChoice} />
@@ -265,7 +269,13 @@ export default function DiscoverPapersPage() {
           <button
             type="submit"
             disabled={status === 'loading' || (configured && (!question.trim() || activeSources.length === 0))}
-            className="self-start rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            // White while it can't be run yet (no topic or source), blue once it can.
+            // While a search is running it stays blue, just faded.
+            className={`self-start rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+              status === 'loading'
+                ? 'border-blue-600 bg-blue-600 text-white opacity-50'
+                : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-white disabled:text-gray-400 disabled:hover:bg-white'
+            }`}
           >
             {!configured
               ? 'Configure API key'

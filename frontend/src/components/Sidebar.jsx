@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 
 const NAV_ITEMS = [
   { to: '/discover', label: 'Discover Papers' },
-  { to: '/datasets', label: 'Paper Data Sets' },
+  { to: '/datasets', label: 'Paper Datasets' },
   { to: '/analyze', label: 'Analyze Papers' },
   { to: '/prompts', label: 'Scoring Prompts' },
   { to: '/results', label: 'Analysis Results' },

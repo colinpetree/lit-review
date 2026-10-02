@@ -197,7 +197,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
           <button
             type="button"
             onClick={() => onChange(EMPTY_PAPER_FILTER)}
-            className="text-blue-600 hover:underline"
+            className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
           >
             Clear filters
           </button>

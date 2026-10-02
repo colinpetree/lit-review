@@ -174,7 +174,7 @@ const PAPER_DB_KEY_PROVIDERS = [
     keyPlaceholder: 'Paste your Semantic Scholar API key...',
   },
   // Elsevier and Springer Nature don't let OpenAlex redistribute their
-  // abstracts, so the "Find missing abstracts" button on a data set uses their
+  // abstracts, so the "Find missing abstracts" button on a dataset uses their
   // own free APIs for those papers. Springer Nature publishes only a PNG
   // favicon, so its icon is a full-color image.
   {

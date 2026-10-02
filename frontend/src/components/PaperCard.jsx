@@ -73,7 +73,14 @@ function EditForm({ result, onSave, onCancel }) {
           </div>
           <div className="w-24">
             <label className={label}>Year</label>
-            <input type="number" value={form.year} onChange={set('year')} className={field} />
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={4}
+              value={form.year}
+              onChange={(e) => setForm((f) => ({ ...f, year: e.target.value.replace(/\D/g, '') }))}
+              className={field}
+            />
           </div>
         </div>
         <div>
@@ -110,7 +117,7 @@ function EditForm({ result, onSave, onCancel }) {
 
 // onUpdate enables the Edit action. onMarkExample (run results only) enables
 // "Mark as example" for a scored paper that isn't already one. onToggleExclude
-// (data set page only) enables the Exclude/Include toggle; an excluded paper
+// (dataset page only) enables the Exclude/Include toggle; an excluded paper
 // (result.excluded) is shown grayed out. onToggleRead enables Mark as read/unread
 // (global to the paper). onSetRelevance (run results only) enables the
 // Relevant/Neutral/Not Relevant choice for a scored paper.
@@ -243,7 +250,16 @@ export default function PaperCard({
       </p>
 
       {result.rationale ? (
-        <p className={`mt-2 text-sm text-gray-700 italic ${dim}`}>{result.rationale}</p>
+        <div
+          className={`mt-2 rounded-md px-3 py-2 ${result.relevance === 'relevant' ? 'bg-green-100' : 'bg-gray-100'} ${dim}`}
+        >
+          <p
+            className={`text-xs font-medium ${result.relevance === 'relevant' ? 'text-green-700' : 'text-gray-500'}`}
+          >
+            AI reasoning
+          </p>
+          <p className="mt-1 text-sm text-gray-700">{result.rationale}</p>
+        </div>
       ) : null}
 
       {/* The relevance and read badges sit bottom right, level with the
@@ -254,13 +270,10 @@ export default function PaperCard({
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="text-sm text-blue-600 hover:underline"
+              className="text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
             >
               {expanded ? 'Hide abstract' : 'Show abstract'}
             </button>
-            {expanded ? (
-              <p className="mt-2 text-sm text-gray-700">{result.abstract}</p>
-            ) : null}
           </div>
         ) : (
           <p className={`text-sm text-gray-400 italic ${dim}`}>No abstract available</p>
@@ -283,6 +296,12 @@ export default function PaperCard({
           ) : null}
         </div>
       </div>
+
+      {/* Below the toggle row, not inside it, so the text runs the full card
+          width instead of stopping at the badges. */}
+      {result.abstract && expanded ? (
+        <p className={`mt-2 text-sm text-gray-700 ${dim}`}>{result.abstract}</p>
+      ) : null}
 
       {markingExample ? (
         <ConfirmModal

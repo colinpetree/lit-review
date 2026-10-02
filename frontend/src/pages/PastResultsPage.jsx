@@ -58,7 +58,7 @@ export default function PastResultsPage() {
           onChange={setFilter}
           sort={sort}
           onSortChange={setSort}
-          placeholder="Filter results by prompt or data set"
+          placeholder="Filter results by prompt or dataset"
           noun="results"
           shown={visible.length}
           total={runs.length}

@@ -6,7 +6,7 @@ import { Check } from 'lucide-react'
 export default function Checkbox({ checked, onChange, disabled = false, children, className = '' }) {
   return (
     <label
-      className={`flex items-center gap-2.5 text-sm ${
+      className={`flex select-none items-center gap-2.5 text-sm ${
         disabled ? 'cursor-default text-gray-400' : 'cursor-pointer text-gray-700'
       } ${className}`}
     >

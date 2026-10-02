@@ -5,82 +5,33 @@ import Spinner from '../components/Spinner'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
 import { DEFAULT_PAPER_SORT, EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive, sortPapers } from '../lib/paperFilter'
-import EditableCardHeader from '../components/EditableCardHeader'
+import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
-import useSavedState from '../lib/useSavedState'
-import useUnsavedChangesWarning from '../lib/useUnsavedChangesWarning'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { fetchJson, patchJson } from '../lib/api'
 import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
 
-// The data set's short title (editable) and the topic it was retrieved with
-// (fixed), in the same preview/Edit/Save card style as the Settings page.
-function DatasetDetailsCard({ dataset, onSaved }) {
-  const [name, setName] = useState(dataset.name)
-  const { editing, setEditing, saving, saved, error, setError, commit } = useSavedState()
-
-  const isDirty = Boolean(name.trim()) && name.trim() !== dataset.name
-  useUnsavedChangesWarning(editing && isDirty)
-
-  function startEditing() {
-    setName(dataset.name)
-    setEditing(true)
-  }
-
-  function cancel() {
-    setEditing(false)
-    setError('')
-  }
-
-  function save() {
-    commit(async () => {
-      const updated = await patchJson(`/api/datasets/${dataset.id}`, { name: name.trim() })
-      onSaved(updated)
-    })
-  }
-
+// The dataset's title (renamed from its dots menu, like an analysis run's) and
+// the details it was retrieved with (all fixed).
+function DatasetDetailsCard({ dataset, onRenamed }) {
   return (
     <Card className="flex flex-col gap-5">
-      <EditableCardHeader
-        title="Data set details"
-        editing={editing}
-        saving={saving}
-        saved={saved}
-        isDirty={isDirty}
-        onEdit={startEditing}
-        onCancel={cancel}
-        onSave={save}
-      />
-
-      <div className="flex flex-col gap-1.5">
-        {editing ? (
-          <>
-            <label className="text-sm font-medium text-gray-700">Data set title</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={saving}
-              maxLength={120}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
-            />
-          </>
-        ) : (
-          <>
-            <p className="text-sm font-medium text-gray-700">Data set title</p>
-            <p className="text-sm text-gray-900">{dataset.name}</p>
-          </>
-        )}
+      <div className="flex items-start justify-between gap-4">
+        <h1 className="text-2xl font-semibold text-gray-900">{dataset.name}</h1>
+        <div className="shrink-0">
+          <DatasetMenu dataset={dataset} onRenamed={onRenamed} />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <p className="text-sm font-medium text-gray-700">Research Paper Topic</p>
+        <p className="text-sm font-medium text-gray-500">Dataset topic</p>
         <p className="whitespace-pre-wrap text-sm text-gray-900">{dataset.verbose_query}</p>
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <p className="text-sm font-medium text-gray-700">Paper sources</p>
+        <p className="text-sm font-medium text-gray-500">Paper sources</p>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-900">
           {dataset.sources.map((id) => {
             const Icon = sourceIcon(id)
@@ -96,7 +47,7 @@ function DatasetDetailsCard({ dataset, onSaved }) {
 
       {dataset.expansion ? (
         <div className="flex flex-col gap-1.5">
-          <p className="text-sm font-medium text-gray-700">AI model (query expansion)</p>
+          <p className="text-sm font-medium text-gray-500">AI model</p>
           <ModelBadge
             aiApi={dataset.expansion.ai_api}
             aiModel={dataset.expansion.ai_model}
@@ -107,11 +58,9 @@ function DatasetDetailsCard({ dataset, onSaved }) {
       ) : null}
 
       <div className="flex flex-col gap-1.5">
-        <p className="text-sm font-medium text-gray-700">Created</p>
+        <p className="text-sm font-medium text-gray-500">Created</p>
         <p className="text-sm text-gray-900">{formatDateTime(dataset.created_at)}</p>
       </div>
-
-      {error && <p className="text-xs text-red-500">{error}</p>}
     </Card>
   )
 }
@@ -138,7 +87,7 @@ export default function DatasetDetailPage() {
   const [toggleError, setToggleError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
   const [sort, setSort] = useState(DEFAULT_PAPER_SORT)
-  // null until an abstract lookup has run on this data set.
+  // null until an abstract lookup has run on this dataset.
   const [lookup, setLookup] = useState(null)
   const autoLookupRef = useRef(null)
   const loadedId = dataset?.id
@@ -147,10 +96,10 @@ export default function DatasetDetailPage() {
   // it keeps going if the user leaves this page; the subscription below fills
   // papers in as results come back. Papers a lookup already completed for are
   // left out by the server, so this only does new work. Used by both the
-  // automatic run on opening a data set and the button.
+  // automatic run on opening a dataset and the button.
   const runLookup = useCallback((datasetId) => startLookup(datasetId), [])
 
-  // Follows this data set's lookup, including one started before the user left
+  // Follows this dataset's lookup, including one started before the user left
   // and came back, which is replayed from the lookup's accumulated results.
   useEffect(() => {
     if (loadedId == null) return
@@ -160,7 +109,7 @@ export default function DatasetDetailPage() {
       const filledById = new Map(state.filledPapers.map((p) => [p.id, p]))
       const checkedIds = new Set(state.checkedIds)
       if (filledById.size || checkedIds.size) {
-        // Only touch the data set this lookup belongs to; the page may already
+        // Only touch the dataset this lookup belongs to; the page may already
         // be loading a different one.
         setDataset((prev) =>
           prev?.id !== loadedId
@@ -202,7 +151,7 @@ export default function DatasetDetailPage() {
     }
   }, [id])
 
-  // Start looking up missing abstracts once, when a data set first loads (a
+  // Start looking up missing abstracts once, when a dataset first loads (a
   // lookup already running for it is left alone).
   useEffect(() => {
     if (!dataset || autoLookupRef.current === dataset.id) return
@@ -212,14 +161,14 @@ export default function DatasetDetailPage() {
 
   if (error) {
     return (
-      <PageShell title="Paper Data Set">
+      <PageShell title="Paper Dataset">
         <p className="text-sm text-red-600">{error}</p>
       </PageShell>
     )
   }
   if (!dataset) {
     return (
-      <PageShell title="Paper Data Set">
+      <PageShell title="Paper Dataset">
         <p className="text-sm text-gray-500">Loading…</p>
       </PageShell>
     )
@@ -278,12 +227,12 @@ export default function DatasetDetailPage() {
 
   return (
     <PageShell>
-      <BackLink to="/datasets">Back to Paper Data Sets</BackLink>
+      <BackLink to="/datasets">Back to Paper Datasets</BackLink>
 
       <div className="relative mt-4">
         <DatasetDetailsCard
           dataset={dataset}
-          onSaved={(updated) => setDataset((prev) => ({ ...prev, name: updated.name }))}
+          onRenamed={(name) => setDataset((prev) => ({ ...prev, name }))}
         />
 
         <div className="mt-6 flex items-center justify-between gap-4">
@@ -376,7 +325,7 @@ export default function DatasetDetailPage() {
                 <button
                   type="button"
                   onClick={() => setFilter((f) => ({ ...f, missingAbstractOnly: true }))}
-                  className="mt-3 text-sm text-blue-600 hover:underline"
+                  className="mt-3 text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
                 >
                   Filter for missing abstracts
                 </button>

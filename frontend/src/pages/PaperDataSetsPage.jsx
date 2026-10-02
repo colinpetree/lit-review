@@ -40,8 +40,8 @@ export default function PaperDataSetsPage() {
 
   return (
     <PageShell
-      title="Paper Data Sets"
-      description="Groups of paper abstracts that serve as data sets for the AI model to rank and score each abstract."
+      title="Paper Datasets"
+      description="Groups of paper abstracts that serve as datasets for an AI model to score and rank each paper according to your research criteria."
     >
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       {datasets && datasets.length === 0 ? (
@@ -55,8 +55,8 @@ export default function PaperDataSetsPage() {
           onChange={setFilter}
           sort={sort}
           onSortChange={setSort}
-          placeholder="Filter data sets by title or topic"
-          noun="data sets"
+          placeholder="Filter datasets by title or topic"
+          noun="datasets"
           shown={visible.length}
           total={datasets.length}
           items={datasets}
@@ -64,7 +64,7 @@ export default function PaperDataSetsPage() {
         />
       ) : null}
       {datasets && datasets.length > 0 && visible.length === 0 ? (
-        <p className="text-sm text-gray-500">No data sets match these filters.</p>
+        <p className="text-sm text-gray-500">No datasets match these filters.</p>
       ) : null}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {visible.map((d) => {
@@ -87,8 +87,8 @@ export default function PaperDataSetsPage() {
               </Link>
               <DeleteMenu
                 className="absolute right-5 top-[22px]"
-                title="Delete this data set?"
-                message="This removes the data set from your list. Past result runs that used it and the papers themselves are not deleted."
+                title="Delete this dataset?"
+                message="This removes the dataset from your list. Past result runs that used it and the papers themselves are not deleted."
                 onConfirm={() => deleteDataset(d.id)}
               />
             </div>

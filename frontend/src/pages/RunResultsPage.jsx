@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { PageShell, BackLink } from '../components/ui'
+import { PageShell, BackLink, Card } from '../components/ui'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
 import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
@@ -148,84 +148,97 @@ export default function RunResultsPage() {
     <PageShell>
       <BackLink to="/results">Back to Analysis Results</BackLink>
 
-      <div className="mt-4 flex items-start justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-gray-900">
-          {run.name || run.prompt?.name || run.grading_prompt}
-        </h1>
-        <div className="shrink-0">
-          <RunMenu
-            run={run}
-            onRenamed={(name) => {
-              renamedRef.current = name
-              setRun((prev) => ({ ...prev, name }))
-            }}
-          />
+      <Card className="mt-4 flex flex-col gap-5">
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-2xl font-semibold text-gray-900">
+            {run.name || run.prompt?.name || run.grading_prompt}
+          </h1>
+          <div className="shrink-0">
+            <RunMenu
+              run={run}
+              onRenamed={(name) => {
+                renamedRef.current = name
+                setRun((prev) => ({ ...prev, name }))
+              }}
+            />
+          </div>
         </div>
-      </div>
 
-      {run.prompt ? (
-        <p className="mt-3 flex gap-1 text-sm text-gray-500">
-          <span className="shrink-0">Prompt:</span>
-          <span className="min-w-0">
-            {run.prompt.deleted ? (
-              run.prompt.name
-            ) : (
-              <Link
-                to={`/prompts/${run.prompt.id}`}
-                className="text-blue-600 transition-colors hover:text-blue-800"
-              >
-                {run.prompt.name}
-              </Link>
-            )}
-          </span>
-        </p>
-      ) : null}
-      {/* A flex row, so wrapped lines line up under the text, not the label. */}
-      <p className="mt-1 flex gap-1 text-sm text-gray-500">
-        <span className="shrink-0">Criteria:</span>
-        <span className="min-w-0 whitespace-pre-line">{run.grading_prompt}</span>
-      </p>
-      <p className="mt-1 flex gap-1 text-sm text-gray-500">
-        <span className="shrink-0">Datasets:</span>
-        <span className="min-w-0">
-          {datasetLabels(run.datasets).map((label, i) => {
-            const dataset = run.datasets[i]
-            return (
-              <span key={dataset.id}>
-                {i > 0 ? ', ' : ''}
-                {dataset.deleted ? (
-                  label
-                ) : (
-                  <Link
-                    to={`/datasets/${dataset.id}`}
-                    className="text-blue-600 transition-colors hover:text-blue-800"
-                  >
-                    {label}
-                  </Link>
-                )}
-              </span>
-            )
-          })}
-          {` · ${run.results.length} paper${run.results.length === 1 ? '' : 's'}`}
-        </span>
-      </p>
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-gray-500">
-        <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-gray-500" />
-        <span>
-          {runDate ? `· ${runDate}` : ''}
-        </span>
-      </div>
+        {run.prompt ? (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm font-medium text-gray-500">Prompt</p>
+            <p className="text-sm text-gray-900">
+              {run.prompt.deleted ? (
+                run.prompt.name
+              ) : (
+                <Link
+                  to={`/prompts/${run.prompt.id}`}
+                  className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
+                >
+                  {run.prompt.name}
+                </Link>
+              )}
+            </p>
+          </div>
+        ) : null}
 
-      {run.remaining > 0 ? (
-        <button
-          type="button"
-          onClick={resumeScoring}
-          disabled={resuming}
-          className="mt-3 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-        >
-          {resuming ? `Scoring… ${run.remaining} remaining` : `Resume scoring (${run.remaining} unscored)`}
-        </button>
-      ) : null}
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-gray-500">Criteria</p>
+          <p className="whitespace-pre-line text-sm text-gray-900">{run.grading_prompt}</p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-gray-500">Datasets</p>
+          <p className="text-sm text-gray-900">
+            {datasetLabels(run.datasets).map((label, i) => {
+              const dataset = run.datasets[i]
+              return (
+                <span key={dataset.id}>
+                  {i > 0 ? ', ' : ''}
+                  {dataset.deleted ? (
+                    label
+                  ) : (
+                    <Link
+                      to={`/datasets/${dataset.id}`}
+                      className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
+                    >
+                      {label}
+                    </Link>
+                  )}
+                </span>
+              )
+            })}
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-gray-500">Papers</p>
+          <p className="text-sm text-gray-900">{run.results.length}</p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-gray-500">AI model</p>
+          <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-sm text-gray-900" />
+        </div>
+
+        {runDate ? (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm font-medium text-gray-500">{run.completed_at ? 'Completed' : 'Created'}</p>
+            <p className="text-sm text-gray-900">{runDate}</p>
+          </div>
+        ) : null}
+
+        {run.remaining > 0 ? (
+          <button
+            type="button"
+            onClick={resumeScoring}
+            disabled={resuming}
+            className="self-start rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {resuming ? `Scoring… ${run.remaining} remaining` : `Resume scoring (${run.remaining} unscored)`}
+          </button>
+        ) : null}
+      </Card>
 
       <PaperFilterBar
         filter={filter}

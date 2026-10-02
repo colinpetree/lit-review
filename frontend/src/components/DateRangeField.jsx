@@ -46,7 +46,7 @@ export default function DateRangeField({ fromYear, toYear, onFromChange, onToCha
       {open ? (
         <div
           role="dialog"
-          aria-label="Dates"
+          aria-label="Publication dates"
           className="absolute left-0 top-full z-20 mt-1 flex w-full flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-lg"
         >
           <div className="flex gap-3">
@@ -76,7 +76,7 @@ export default function DateRangeField({ fromYear, toYear, onFromChange, onToCha
             disabled={!fromYear && !toYear}
             className="self-start text-sm text-gray-500 underline hover:text-gray-700 disabled:opacity-40 disabled:no-underline"
           >
-            Clear Dates
+            Clear dates
           </button>
         </div>
       ) : null}

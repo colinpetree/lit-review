@@ -65,7 +65,7 @@ function PromptDetailsCard({ prompt, onSaved, onDelete }) {
       {editing ? (
         <>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-gray-700">Prompt title</label>
+            <label className="text-sm font-medium text-gray-500">Prompt title</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -75,7 +75,7 @@ function PromptDetailsCard({ prompt, onSaved, onDelete }) {
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-gray-700">Research paper criteria</label>
+            <label className="text-sm font-medium text-gray-500">Research paper criteria</label>
             <AutoGrowTextarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -98,11 +98,11 @@ function PromptDetailsCard({ prompt, onSaved, onDelete }) {
       ) : (
         <>
           <div className="flex flex-col gap-1.5">
-            <p className="text-sm font-medium text-gray-700">Prompt title</p>
+            <p className="text-sm font-medium text-gray-500">Prompt title</p>
             <p className="text-sm text-gray-900">{prompt.name}</p>
           </div>
           <div className="flex flex-col gap-1.5">
-            <p className="text-sm font-medium text-gray-700">Research paper criteria</p>
+            <p className="text-sm font-medium text-gray-500">Research paper criteria</p>
             <p className="whitespace-pre-wrap text-sm text-gray-900">{prompt.description}</p>
           </div>
         </>

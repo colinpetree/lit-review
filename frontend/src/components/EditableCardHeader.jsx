@@ -29,7 +29,7 @@ export default function EditableCardHeader({
             href={linkUrl}
             target="_blank"
             rel="noreferrer"
-            className="mt-1 inline-block text-xs text-blue-600 transition-colors hover:text-blue-800"
+            className="mt-1 inline-block text-xs text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
           >
             {linkLabel}
           </a>

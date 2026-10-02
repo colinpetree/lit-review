@@ -12,9 +12,71 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens: space-separated RGB channels so tailwind.config.js can add
+   opacity (`bg-gray-200/60`). :root is the light theme (Tailwind's own gray and
+   stone values); .dark overrides them. The theme logic is in lib/theme.js. */
+:root {
+  color-scheme: light;
+  --page: 255 255 255;
+  --sidebar: 249 248 247;
+  --surface: 255 255 255;
+  --gray-50: 249 250 251;
+  --gray-100: 243 244 246;
+  --gray-200: 229 231 235;
+  --gray-300: 209 213 219;
+  --gray-400: 156 163 175;
+  --gray-500: 107 114 128;
+  --gray-600: 75 85 99;
+  --gray-700: 55 65 81;
+  --gray-800: 31 41 55;
+  --gray-900: 17 24 39;
+  --stone-200: 231 229 228;
+  --stone-500: 120 113 108;
+  --stone-700: 68 64 60;
+}
+
+.dark {
+  color-scheme: dark;
+  --page: 25 25 25;
+  --sidebar: 32 32 32;
+  --surface: 32 32 32;
+  --gray-50: 40 40 40;
+  --gray-100: 46 46 46;
+  --gray-200: 58 58 58;
+  --gray-300: 74 74 74;
+  --gray-400: 140 140 140;
+  --gray-500: 160 160 160;
+  --gray-600: 180 180 180;
+  --gray-700: 205 205 205;
+  --gray-800: 225 225 225;
+  --gray-900: 240 240 240;
+  --stone-200: 52 52 52;
+  --stone-500: 150 150 150;
+  --stone-700: 225 225 225;
+}
+
+html {
+  background-color: rgb(var(--page));
+}
+
 /* Unclassed text is gray-800 too, so nothing in the app is darker. */
 body {
-  color: #1f2937;
+  color: rgb(var(--gray-800));
+}
+
+/* Fields carry no background class of their own; without this the browser
+   paints its default (white in light, its own gray in dark). */
+input,
+textarea,
+select {
+  background-color: rgb(var(--surface));
+  color: inherit;
+}
+
+/* Keep saved-key autofill from painting a bright background in dark mode. */
+input:-webkit-autofill {
+  -webkit-text-fill-color: rgb(var(--gray-800));
+  box-shadow: 0 0 0 1000px rgb(var(--surface)) inset;
 }
 
 /* Source Sans 3's line box is taller above the baseline than below, so text in an
@@ -38,7 +100,7 @@ body {
   background: transparent;
 }
 .narrow-scrollbar::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: rgb(var(--gray-300));
   border-radius: 2px;
   cursor: pointer;
 }
@@ -52,7 +114,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: #6b7280;
+  border-color: rgb(var(--gray-500));
 }
 
 /* No drag handle on any textarea; fields that should grow use AutoGrowTextarea. */

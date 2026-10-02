@@ -76,7 +76,7 @@ export default function RunResultsPage() {
   if (error) {
     return (
       <PageShell title="Run Results">
-        <p className="text-sm text-red-600">{error}</p>
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       </PageShell>
     )
   }
@@ -173,7 +173,7 @@ export default function RunResultsPage() {
               ) : (
                 <Link
                   to={`/prompts/${run.prompt.id}`}
-                  className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
+                  className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
                 >
                   {run.prompt.name}
                 </Link>
@@ -200,7 +200,7 @@ export default function RunResultsPage() {
                   ) : (
                     <Link
                       to={`/datasets/${dataset.id}`}
-                      className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
+                      className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
                     >
                       {label}
                     </Link>
@@ -248,7 +248,7 @@ export default function RunResultsPage() {
         showRelevance
       />
 
-      {actionError ? <p className="mt-3 text-sm text-red-600">{actionError}</p> : null}
+      {actionError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{actionError}</p> : null}
 
       {isPaperFilterActive(filter) && visibleResults.length === 0 ? (
         <p className="mt-4 text-sm text-gray-500">No papers match the current filters.</p>

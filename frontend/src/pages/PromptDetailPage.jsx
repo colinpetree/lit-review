@@ -89,7 +89,7 @@ function PromptDetailsCard({ prompt, onSaved, onDelete }) {
             type="button"
             onClick={() => setConfirmingDelete(true)}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 self-end rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 self-end rounded-md border border-red-200 dark:border-red-900 px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-50"
           >
             <Trash2 size={14} />
             Delete prompt
@@ -108,7 +108,7 @@ function PromptDetailsCard({ prompt, onSaved, onDelete }) {
         </>
       )}
 
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
 
       {confirmingDelete ? (
         <ConfirmModal
@@ -147,7 +147,7 @@ export default function PromptDetailPage() {
   if (error) {
     return (
       <PageShell title="Scoring Prompt">
-        <p className="text-sm text-red-600">{error}</p>
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       </PageShell>
     )
   }
@@ -201,7 +201,7 @@ export default function PromptDetailPage() {
                   type="button"
                   aria-label="Remove example"
                   onClick={() => setRemovingExample(ex)}
-                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-600"
+                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-600 dark:hover:text-red-400"
                 >
                   <X size={16} />
                 </button>

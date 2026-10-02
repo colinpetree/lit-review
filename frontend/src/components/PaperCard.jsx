@@ -8,7 +8,7 @@ import AutoGrowTextarea from './AutoGrowTextarea'
 export function ScoreBadge({ score }) {
   if (score === null || score === undefined) return null
   const color =
-    score >= 65 ? 'bg-green-100 text-green-800' : score >= 40 ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600'
+    score >= 65 ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300' : score >= 40 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300' : 'bg-gray-100 text-gray-600'
   return (
     <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>
       {score}/100
@@ -92,7 +92,7 @@ function EditForm({ result, onSave, onCancel }) {
           <input value={form.url} onChange={set('url')} className={field} />
         </div>
 
-        {error ? <p className="text-xs text-red-600">{error}</p> : null}
+        {error ? <p className="text-xs text-red-600 dark:text-red-400">{error}</p> : null}
 
         <div className="flex gap-2">
           <button
@@ -197,7 +197,7 @@ export default function PaperCard({
         faded
           ? 'border-gray-100 bg-gray-100'
           : result.relevance === 'relevant'
-            ? 'border-green-300 bg-green-50/40 hover:border-green-400'
+            ? 'border-green-300 bg-green-50/40 hover:border-green-400 dark:border-green-800 dark:bg-green-900/20 dark:hover:border-green-700'
             : 'border-gray-200 hover:border-gray-300'
       }`}
     >
@@ -218,7 +218,7 @@ export default function PaperCard({
         </h3>
         <div className="flex shrink-0 items-center gap-2">
           {result.is_example ? (
-            <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
+            <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
               Example
             </span>
           ) : null}
@@ -251,10 +251,10 @@ export default function PaperCard({
 
       {result.rationale ? (
         <div
-          className={`mt-2 rounded-md px-3 py-2 ${result.relevance === 'relevant' ? 'bg-green-100' : 'bg-gray-100'} ${dim}`}
+          className={`mt-2 rounded-md px-3 py-2 ${result.relevance === 'relevant' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-gray-100'} ${dim}`}
         >
           <p
-            className={`text-xs font-medium ${result.relevance === 'relevant' ? 'text-green-700' : 'text-gray-500'}`}
+            className={`text-xs font-medium ${result.relevance === 'relevant' ? 'text-green-700 dark:text-green-400' : 'text-gray-500'}`}
           >
             AI reasoning
           </p>
@@ -270,7 +270,7 @@ export default function PaperCard({
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
+              className="text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
             >
               {expanded ? 'Hide abstract' : 'Show abstract'}
             </button>
@@ -280,7 +280,7 @@ export default function PaperCard({
         )}
         <div className="flex shrink-0 items-center gap-2">
           {result.relevance === 'relevant' ? (
-            <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+            <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
               Relevant
             </span>
           ) : null}
@@ -290,7 +290,7 @@ export default function PaperCard({
             </span>
           ) : null}
           {result.read ? (
-            <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800">
+            <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800 dark:bg-purple-900/40 dark:text-purple-300">
               Read
             </span>
           ) : null}

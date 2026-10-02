@@ -9,7 +9,7 @@ const linkClass = ({ isActive }) =>
 
 export default function Sidebar() {
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-stone-200 bg-[#f9f8f7]">
+    <aside className="flex w-56 shrink-0 flex-col border-r border-stone-200 bg-sidebar">
       <div className="border-b border-stone-200 px-3 py-4">
         <span className="flex items-center gap-2.5 px-3 text-sm font-semibold text-stone-700">
           <GraduationCap size={18} />

@@ -4,7 +4,7 @@ import { Check, ChevronRight, MoreHorizontal } from 'lucide-react'
 const FLYOUT_WIDTH = 176 // matches the flyout's w-44
 
 const itemClass = (danger) =>
-  `flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 ${danger ? 'text-red-600' : 'text-gray-700'}`
+  `flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 ${danger ? 'text-red-600 dark:text-red-400' : 'text-gray-700'}`
 
 // An item that opens a flyout of choices on hover (or click, for touch and
 // keyboard). The flyout opens to the right, flipping to the left when it
@@ -37,7 +37,7 @@ function SubmenuItem({ label, icon: Icon, submenu, onPick }) {
       {open ? (
         <div
           role="menu"
-          className={`absolute top-0 z-20 -mt-1 w-44 rounded-md border border-gray-200 bg-white py-1 shadow-lg ${
+          className={`absolute top-0 z-20 -mt-1 w-44 rounded-md border border-gray-200 bg-surface py-1 shadow-lg ${
             flip ? 'right-full' : 'left-full'
           }`}
         >
@@ -66,7 +66,7 @@ function MenuItem({ item, onPick }) {
     >
       {Icon ? <Icon size={14} /> : null}
       {label}
-      {checked ? <Check size={14} className="ml-auto text-blue-600" /> : null}
+      {checked ? <Check size={14} className="ml-auto text-blue-600 dark:text-blue-400" /> : null}
     </button>
   )
 }
@@ -111,7 +111,7 @@ export default function MoreMenu({ items, className = 'relative' }) {
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 z-10 mt-1 w-44 rounded-md border border-gray-200 bg-white py-1 shadow-lg"
+          className="absolute right-0 z-10 mt-1 w-44 rounded-md border border-gray-200 bg-surface py-1 shadow-lg"
         >
           {items.map((item) => (
             <MenuItem key={item.label} item={item} onPick={() => setOpen(false)} />

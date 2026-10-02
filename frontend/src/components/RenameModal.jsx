@@ -42,7 +42,7 @@ export default function RenameModal({ title, initialName, maxLength, onSave, onC
           disabled={busy}
           className="mt-4 w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800"
         />
-        {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
+        {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"

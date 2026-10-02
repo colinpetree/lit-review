@@ -162,7 +162,7 @@ export default function DatasetDetailPage() {
   if (error) {
     return (
       <PageShell title="Paper Dataset">
-        <p className="text-sm text-red-600">{error}</p>
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       </PageShell>
     )
   }
@@ -257,7 +257,7 @@ export default function DatasetDetailPage() {
             window it takes its place in the page, above the paper list. */}
         {showLookupPanel ? (
           <aside className="mt-6 min-[1560px]:absolute min-[1560px]:inset-y-0 min-[1560px]:left-full min-[1560px]:mt-0 min-[1560px]:ml-6 min-[1560px]:w-64">
-            <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm min-[1560px]:sticky min-[1560px]:top-6">
+            <div className="rounded-lg border border-gray-200 bg-surface p-4 shadow-sm min-[1560px]:sticky min-[1560px]:top-6">
               <h2 className="mb-3 text-lg font-semibold text-gray-800">Missing Abstracts</h2>
               {lookup?.running ? (
                 <>
@@ -299,11 +299,11 @@ export default function DatasetDetailPage() {
                 </p>
               ) : null}
               {Object.entries(lookup?.sourceErrors ?? {}).map(([source, message]) => (
-                <p key={source} className="mt-2 text-xs text-amber-700">
+                <p key={source} className="mt-2 text-xs text-amber-700 dark:text-amber-400">
                   {message}
                 </p>
               ))}
-              {lookup?.error ? <p className="mt-2 text-sm text-red-600">{lookup.error}</p> : null}
+              {lookup?.error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{lookup.error}</p> : null}
 
               <p className="mt-3 text-xs text-gray-400">
                 {!providers ? (
@@ -325,7 +325,7 @@ export default function DatasetDetailPage() {
                 <button
                   type="button"
                   onClick={() => setFilter((f) => ({ ...f, missingAbstractOnly: true }))}
-                  className="mt-3 text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
+                  className="mt-3 text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
                 >
                   Filter for missing abstracts
                 </button>
@@ -334,7 +334,7 @@ export default function DatasetDetailPage() {
           </aside>
         ) : null}
 
-        {toggleError ? <p className="mt-3 text-sm text-red-600">{toggleError}</p> : null}
+        {toggleError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{toggleError}</p> : null}
 
         <PaperFilterBar
           filter={filter}

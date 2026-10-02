@@ -173,6 +173,15 @@ React 19 + Vite + Tailwind v3 (PostCSS, `tailwind.config.js`, same as an earlier
 prompts (+ `:id`), results (+ `:id`), settings. Shared UI: `MoreMenu` (more-horizontal
 popover), `Modal`/`ConfirmModal`, `DeleteMenu`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
 
+Theme (Light/Dark/System, set at the top of Settings) is stored per browser in localStorage
+(`lib/theme.js`) and applied as a `dark` class on `<html>`; an inline script in `index.html`
+applies it before first paint. Neutrals are CSS variables in `index.css` (`:root` and `.dark`)
+wired into `tailwind.config.js` as `page`, `sidebar`, `surface` and the `gray`/`stone` scales, so
+they flip automatically: use `bg-surface` for cards/popovers/modals, never `bg-white`. Chromatic
+colors are NOT remapped (a shade is both text and solid fill), so colored text and tints need an
+explicit `dark:` variant (for example `text-blue-600 dark:text-blue-400`); solid `bg-blue-600`
+buttons stay the same in both themes.
+
 Fonts match the earlier project: Source Sans 3 and Source Code Pro, self-hosted
 via `@fontsource` (latin subset, imported at the top of `src/index.css`) and mapped to
 `--font-sans`/`--font-mono` in the `@theme` block. No serif is installed because nothing

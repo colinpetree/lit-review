@@ -70,7 +70,7 @@ export default function ScoringPromptsPage() {
         <Plus size={16} />
         New prompt
       </button>
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {prompts && prompts.length === 0 ? (
         <p className="text-sm text-gray-500">
           No prompts yet - create one here, or run an analysis from Analyze Papers.

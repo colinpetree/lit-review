@@ -33,7 +33,7 @@ export function BackLink({ to, children }) {
 
 export function Card({ className = '', children }) {
   return (
-    <div className={`bg-white rounded-lg border border-gray-200 shadow-sm p-6 ${className}`}>
+    <div className={`bg-surface rounded-lg border border-gray-200 shadow-sm p-6 ${className}`}>
       {children}
     </div>
   )

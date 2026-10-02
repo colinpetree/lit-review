@@ -1,7 +1,7 @@
 export default function Spinner({ className = 'h-4 w-4' }) {
   return (
     <svg
-      className={`animate-spin text-blue-600 ${className}`}
+      className={`animate-spin text-blue-600 dark:text-blue-400 ${className}`}
       viewBox="0 0 24 24"
       fill="none"
       aria-hidden="true"

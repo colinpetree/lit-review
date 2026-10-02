@@ -256,7 +256,7 @@ export default function DiscoverPapersPage() {
 
           {status === 'loading' ? <StageIndicator label={STAGE_LABELS[stage]} /> : null}
 
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
           {pendingRetrieval ? (
             <button
               type="button"
@@ -276,7 +276,7 @@ export default function DiscoverPapersPage() {
             className={`self-start rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
               status === 'loading'
                 ? 'border-blue-600 bg-blue-600 text-white opacity-50'
-                : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-white disabled:text-gray-400 disabled:hover:bg-white'
+                : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-surface disabled:text-gray-400 disabled:hover:bg-surface'
             }`}
           >
             {!configured

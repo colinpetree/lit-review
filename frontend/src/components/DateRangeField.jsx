@@ -38,7 +38,7 @@ export default function DateRangeField({ fromYear, toYear, onFromChange, onToCha
         aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="w-full rounded-md border border-gray-300 bg-white py-2 pl-3 pr-9 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        className="w-full rounded-md border border-gray-300 bg-surface py-2 pl-3 pr-9 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
       >
         {rangeText(fromYear, toYear)}
       </button>
@@ -47,7 +47,7 @@ export default function DateRangeField({ fromYear, toYear, onFromChange, onToCha
         <div
           role="dialog"
           aria-label="Publication dates"
-          className="absolute left-0 top-full z-20 mt-1 flex w-full flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-lg"
+          className="absolute left-0 top-full z-20 mt-1 flex w-full flex-col gap-3 rounded-xl border border-gray-200 bg-surface p-3 shadow-lg"
         >
           <div className="flex gap-3">
             {[

@@ -30,7 +30,7 @@ export default function ConfirmModal({
   return (
     <Modal title={title} onClose={onClose} busy={busy}>
       <p className="mt-2 text-sm text-gray-600">{message}</p>
-      {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       <div className="mt-6 flex justify-end gap-2">
         <button
           type="button"

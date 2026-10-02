@@ -18,7 +18,7 @@ const DAY_PICKER_CLASSES = {
   day_button: [
     'h-8 w-8 text-sm rounded transition-colors flex items-center justify-center cursor-pointer',
     'text-gray-700 hover:bg-gray-100',
-    'data-[selected]:bg-gray-800 data-[selected]:text-white data-[selected]:hover:bg-gray-700',
+    'data-[selected]:bg-gray-800 data-[selected]:text-white data-[selected]:hover:bg-gray-700 dark:data-[selected]:bg-gray-200 dark:data-[selected]:text-gray-900 dark:data-[selected]:hover:bg-gray-300',
     'data-[today]:font-semibold data-[today]:text-gray-800',
     'data-[outside]:text-gray-300 data-[outside]:hover:bg-transparent',
     'data-[disabled]:text-gray-200 data-[disabled]:hover:bg-transparent',
@@ -89,7 +89,7 @@ export default function DatePicker({ value, onChange, onBlur, placeholder = 'YYY
       </button>
 
       {open && (
-        <div className={`absolute top-full ${align === 'right' ? 'right-0' : 'left-0'} z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-[17rem]`}>
+        <div className={`absolute top-full ${align === 'right' ? 'right-0' : 'left-0'} z-50 mt-1 bg-surface border border-gray-200 rounded-lg shadow-lg p-3 w-[17rem]`}>
           <DayPicker mode="single" selected={selectedDate} onSelect={handleDaySelect} classNames={DAY_PICKER_CLASSES} />
         </div>
       )}

@@ -95,7 +95,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
             aria-expanded={open}
             onClick={() => setOpen((o) => !o)}
             className={`relative flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm hover:bg-gray-100 ${
-              active ? 'border-blue-300 text-blue-700' : 'border-gray-300 text-gray-600'
+              active ? 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300' : 'border-gray-300 text-gray-600'
             }`}
           >
             <SlidersHorizontal size={14} />
@@ -105,7 +105,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
             ) : null}
           </button>
           {open ? (
-            <div className="absolute right-0 z-10 mt-1 w-72 rounded-md border border-gray-200 bg-white p-3 shadow-lg">
+            <div className="absolute right-0 z-10 mt-1 w-72 rounded-md border border-gray-200 bg-surface p-3 shadow-lg">
               <div className="text-sm text-gray-700">
                 <span className="mb-1 block">Read status</span>
                 <Combobox
@@ -197,7 +197,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
           <button
             type="button"
             onClick={() => onChange(EMPTY_PAPER_FILTER)}
-            className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
+            className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
           >
             Clear filters
           </button>

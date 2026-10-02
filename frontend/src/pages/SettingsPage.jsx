@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
+import { Monitor, Moon, Sun } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
+import { useTheme } from '../lib/theme'
+import Combobox from '../components/Combobox'
 import EditableCardHeader from '../components/EditableCardHeader'
 import useSavedState from '../lib/useSavedState'
 import {
@@ -95,14 +98,14 @@ function ProviderKeyCard({
                   setRemoving(true)
                   setInput('')
                 }}
-                className="text-xs text-red-600 hover:underline"
+                className="text-xs text-red-600 dark:text-red-400 hover:underline"
               >
                 Remove saved key
               </button>
             </div>
           )}
           {removing && (
-            <p className="text-xs text-red-600">
+            <p className="text-xs text-red-600 dark:text-red-400">
               Key will be removed when you save.{' '}
               <button type="button" onClick={() => setRemoving(false)} className="underline">
                 Undo
@@ -117,7 +120,7 @@ function ProviderKeyCard({
         </div>
       )}
 
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
     </Card>
   )
 }
@@ -206,7 +209,14 @@ function SettingsSection({ title, children }) {
   )
 }
 
+const THEME_OPTIONS = [
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'system', label: 'System', icon: Monitor },
+]
+
 export default function SettingsPage() {
+  const [theme, setTheme] = useTheme()
   const [keyStatus, setKeyStatus] = useState(null)
 
   const refreshKeys = () => {
@@ -245,6 +255,12 @@ export default function SettingsPage() {
       description="Install API Keys for paper databases and AI platforms. Minimum is OpenAlex and one AI provider. More paper databases gives you more papers in your datasets and cross-check each other to fill in missing abstracts. More AI providers just gives you more AI model options to choose from."
     >
       <div className="flex flex-col gap-8">
+        <SettingsSection title="Theme">
+          <div className="max-w-xs">
+            <Combobox options={THEME_OPTIONS} value={theme} onChange={setTheme} placeholder="Theme" />
+          </div>
+        </SettingsSection>
+
         <SettingsSection title="Paper Databases">
           {PAPER_DB_KEY_PROVIDERS.map((provider) => (
             <ProviderKeyCard

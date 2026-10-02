@@ -29,7 +29,7 @@ export default function EditableCardHeader({
             href={linkUrl}
             target="_blank"
             rel="noreferrer"
-            className="mt-1 inline-block text-xs text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline"
+            className="mt-1 inline-block text-xs text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
           >
             {linkLabel}
           </a>
@@ -40,7 +40,7 @@ export default function EditableCardHeader({
           <button
             onClick={() => !saved && onEdit()}
             disabled={saved}
-            className="rounded-md bg-white px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-default text-gray-400 enabled:text-gray-700 enabled:hover:bg-gray-50"
+            className="rounded-md bg-surface px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-default text-gray-400 enabled:text-gray-700 enabled:hover:bg-gray-50"
           >
             {saved ? 'Saved' : 'Edit'}
           </button>
@@ -60,7 +60,7 @@ export default function EditableCardHeader({
               disabled={!isDirty || saving}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 saving
-                  ? 'bg-white text-gray-500 cursor-default'
+                  ? 'bg-surface text-gray-500 cursor-default'
                   : isDirty
                     ? 'bg-[#30cf43] text-white hover:brightness-95'
                     : 'bg-gray-100 text-gray-400 cursor-default'

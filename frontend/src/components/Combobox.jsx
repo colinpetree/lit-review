@@ -138,7 +138,7 @@ export default function Combobox({
           ref={listRef}
           role="listbox"
           onMouseDown={(e) => e.preventDefault()}
-          className={`absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg ${
+          className={`absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-surface py-1 shadow-lg ${
             narrowScrollbar ? 'narrow-scrollbar' : ''
           }`}
         >
@@ -151,7 +151,7 @@ export default function Combobox({
                 aria-selected={option.value === value}
                 onMouseDown={(e) => e.preventDefault()}
                 className={`text-sm ${
-                  option.emphasis ? 'font-medium text-blue-600' : subtle ? 'text-gray-600' : 'text-gray-700'
+                  option.emphasis ? 'font-medium text-blue-600 dark:text-blue-400' : subtle ? 'text-gray-600' : 'text-gray-700'
                 }`}
               >
                 {/* The group heading sits outside the clickable, highlighted row, so

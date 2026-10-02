@@ -32,7 +32,7 @@ export default function Modal({ title, onClose, busy = false, closeOnBackdrop = 
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+        className="relative w-full max-w-md rounded-lg bg-surface p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <button

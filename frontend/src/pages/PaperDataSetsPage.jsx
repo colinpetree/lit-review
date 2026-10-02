@@ -45,7 +45,7 @@ export default function PaperDataSetsPage() {
       icon={navIcon('/datasets')}
       description="Groups of paper abstracts that serve as datasets for an AI model to score and rank each paper according to your research criteria."
     >
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {datasets && datasets.length === 0 ? (
         <p className="text-sm text-gray-500">
           No datasets yet - run a search from Discover Papers to create one.

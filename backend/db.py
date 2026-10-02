@@ -9,6 +9,7 @@ threaded.
 """
 
 import json
+import os
 import sqlite3
 import threading
 from contextlib import closing
@@ -19,7 +20,9 @@ import platformdirs
 
 from credentials import APP_NAME
 
-DB_PATH = Path(platformdirs.user_data_dir(APP_NAME)) / "lit_review.db"
+# LIT_REVIEW_DATA_DIR is for development and tests only, so they never touch the
+# real database.
+DB_PATH = Path(os.environ.get("LIT_REVIEW_DATA_DIR") or platformdirs.user_data_dir(APP_NAME)) / "lit_review.db"
 
 _LOCK = threading.Lock()
 

@@ -49,6 +49,9 @@ export function filterPapers(papers, filter) {
     if (filter.readState === 'unread' && paper.read) return false
     // Papers without a result yet have no relevance, which counts as neutral.
     if (filter.relevance !== 'all' && (paper.relevance || 'neutral') !== filter.relevance) return false
+    // A paper with no year is out of any year range (null would otherwise
+    // compare as 0 and pass an upper bound).
+    if ((yearFrom !== null || yearTo !== null) && (paper.year === null || paper.year === undefined)) return false
     if (yearFrom !== null && !(paper.year >= yearFrom)) return false
     if (yearTo !== null && !(paper.year <= yearTo)) return false
     if (minCitations !== null && !((paper.citation_count ?? 0) >= minCitations)) return false

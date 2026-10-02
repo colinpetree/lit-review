@@ -37,7 +37,23 @@ npm run build     # outputs to backend/static, which Flask serves
 npm run lint      # oxlint
 ```
 
-No test suite exists in either backend or frontend.
+**Tests** (pytest for the backend, Vitest for the frontend `src/lib` modules; components are checked by hand):
+```
+cd backend; .venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest -q                          # all backend tests
+.venv\Scripts\python -m pytest tests/test_dates.py -k month  # one file / one test
+cd frontend; npm test                                      # all frontend tests (fnm preamble below)
+npx vitest run src/lib/paperFilter.test.js                 # one frontend file
+```
+`backend/tests/conftest.py` has two autouse fixtures that every test gets: the database and
+credential store are redirected to a temp dir, and any attempt to reach a non-loopback host
+(connect, UDP send or DNS lookup, so it covers the AI provider SDKs and `requests`) raises
+`RuntimeError`, so a test cannot touch real data or spend money. Use the `client`
+fixture (it sends the app's real Host) and `fake_llm` (replaces the provider call) rather than
+patching around them. Tests marked `xfail(strict=True)` document a known bug; remove the marker when
+the bug is fixed. `LIT_REVIEW_DATA_DIR` and `LIT_REVIEW_CONFIG_DIR` env vars move the database and
+the saved keys elsewhere; they are for development and tests only, so use them (never the real
+profile) when trying risky changes by hand.
 
 ### Node/npm in Claude tool shells
 

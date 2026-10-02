@@ -19,7 +19,9 @@ from cryptography.fernet import Fernet
 from filelock import FileLock
 
 APP_NAME = "lit-review"
-CONFIG_DIR = Path(platformdirs.user_config_dir(APP_NAME))
+# LIT_REVIEW_CONFIG_DIR is for development and tests only, so they never touch
+# the real saved keys.
+CONFIG_DIR = Path(os.environ.get("LIT_REVIEW_CONFIG_DIR") or platformdirs.user_config_dir(APP_NAME))
 KEY_FILE = CONFIG_DIR / "credentials.key"
 STORE_FILE = CONFIG_DIR / "credentials.enc"
 LOCK_FILE = CONFIG_DIR / "credentials.lock"

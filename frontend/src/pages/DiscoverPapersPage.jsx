@@ -270,16 +270,17 @@ export default function DiscoverPapersPage() {
 
           <button
             type="submit"
-            disabled={status === 'loading' || (configured && (!question.trim() || activeSources.length === 0))}
-            // White while it can't be run yet (no topic or source), blue once it can.
-            // While a search is running it stays blue, just faded.
+            disabled={!providers || status === 'loading' || (configured && (!question.trim() || activeSources.length === 0))}
+            // White while it can't be run yet (key status still loading, no topic
+            // or source), blue once it can. While a search is running it stays
+            // blue, just faded.
             className={`self-start rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
               status === 'loading'
                 ? 'border-blue-600 bg-blue-600 text-white opacity-50'
                 : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-surface disabled:text-gray-400 disabled:hover:bg-surface'
             }`}
           >
-            {!configured
+            {providers && !configured
               ? 'Configure API key'
               : status === 'loading'
                 ? 'Working…'

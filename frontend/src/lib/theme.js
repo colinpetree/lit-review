@@ -30,19 +30,14 @@ export function setTheme(theme) {
   applyTheme(theme)
 }
 
-// Current choice plus a setter. Follows OS changes while on System, and other
-// tabs changing the choice.
-export function useTheme() {
-  const [theme, setThemeState] = useState(getTheme)
-
+// Keeps the page in step with the OS (while on System) and with other tabs
+// changing the choice. Mount once at the app root so it works on every page.
+export function useThemeSync() {
   useEffect(() => {
     const mq = query()
-    const onOsChange = () => applyTheme(theme)
+    const onOsChange = () => applyTheme()
     const onStorage = (e) => {
-      if (e.key !== KEY) return
-      const next = getTheme()
-      setThemeState(next)
-      applyTheme(next)
+      if (e.key === KEY) applyTheme()
     }
     mq.addEventListener('change', onOsChange)
     window.addEventListener('storage', onStorage)
@@ -50,7 +45,21 @@ export function useTheme() {
       mq.removeEventListener('change', onOsChange)
       window.removeEventListener('storage', onStorage)
     }
-  }, [theme])
+  }, [])
+}
+
+// Current choice plus a setter, for the Settings picker. The page itself is
+// kept in sync by useThemeSync.
+export function useTheme() {
+  const [theme, setThemeState] = useState(getTheme)
+
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === KEY) setThemeState(getTheme())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const choose = (next) => {
     setThemeState(next)

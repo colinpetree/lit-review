@@ -1,3 +1,4 @@
+import mimetypes
 import webbrowser
 from pathlib import Path
 from threading import Timer
@@ -46,6 +47,11 @@ MAX_DATASET_NAME_CHARS = 120
 
 STATIC_DIR = Path(__file__).parent / "static"
 PORT = 5175
+
+# Python's mimetypes (and the Windows registry it reads) may not know .webp, in
+# which case send_from_directory serves icon.webp as application/octet-stream
+# and stricter browsers refuse it as the favicon.
+mimetypes.add_type("image/webp", ".webp")
 
 # static_folder=None disables Flask's own auto-registered static route, so the
 # catch-all below is the only route serving files/index.html - no silent collision.

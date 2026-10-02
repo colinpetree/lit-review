@@ -169,14 +169,6 @@ const PAPER_DB_KEY_PROVIDERS = [
     keyUrl: 'https://openalex.org/settings/api',
     keyPlaceholder: 'Paste your OpenAlex API key...',
   },
-  {
-    id: 'semanticscholar',
-    label: 'Semantic Scholar',
-    icon: SemanticScholarIcon,
-    description: 'Optional. Adds Semantic Scholar as a search source on Discover Papers (it only appears once a key is saved) and makes abstract lookup more reliable. Abstract lookup still tries it without a key, but the shared limit is often used up. Free, but approved by hand and revoked after 60 days without use.',
-    keyUrl: 'https://www.semanticscholar.org/product/api#api-key-form',
-    keyPlaceholder: 'Paste your Semantic Scholar API key...',
-  },
   // Elsevier and Springer Nature don't let OpenAlex redistribute their
   // abstracts, so the "Find missing abstracts" button on a dataset uses their
   // own free APIs for those papers. Springer Nature publishes only a PNG
@@ -197,6 +189,14 @@ const PAPER_DB_KEY_PROVIDERS = [
     description: 'Optional. Used only to look up missing abstracts for Springer and Nature papers (DOIs starting 10.1007, 10.1038 and 10.1186), which other sources often can’t provide. Free plan, no institution needed. Stored locally and only sent to Springer Nature.',
     keyUrl: 'https://dev.springernature.com/',
     keyPlaceholder: 'Paste your Springer Nature API key...',
+  },
+  {
+    id: 'semanticscholar',
+    label: 'Semantic Scholar',
+    icon: SemanticScholarIcon,
+    description: 'Optional. Adds Semantic Scholar as a search source on Discover Papers (it only appears once a key is saved) and makes abstract lookup more reliable. Abstract lookup still tries it without a key, but the shared limit is often used up. Free, but approved by hand and revoked after 60 days without use.',
+    keyUrl: 'https://www.semanticscholar.org/product/api#api-key-form',
+    keyPlaceholder: 'Paste your Semantic Scholar API key...',
   },
 ]
 

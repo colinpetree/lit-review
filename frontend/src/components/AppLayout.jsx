@@ -1,7 +1,9 @@
 import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import { useThemeSync } from '../lib/theme'
 
 export default function AppLayout() {
+  useThemeSync()
   return (
     <div className="flex h-screen bg-page">
       <Sidebar />

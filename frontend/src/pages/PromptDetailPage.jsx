@@ -11,7 +11,7 @@ import useUnsavedChangesWarning from '../lib/useUnsavedChangesWarning'
 import { deleteJson, fetchJson, patchJson } from '../lib/api'
 import { formatDate } from '../lib/format'
 
-const inputClass = 'w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900'
+const inputClass = 'w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800'
 
 // Name and research paper criteria, in the same preview/Edit/Save card style as the
 // Settings page. Delete lives at the bottom while editing.
@@ -99,11 +99,11 @@ function PromptDetailsCard({ prompt, onSaved, onDelete }) {
         <>
           <div className="flex flex-col gap-1.5">
             <p className="text-sm font-medium text-gray-500">Prompt title</p>
-            <p className="text-sm text-gray-900">{prompt.name}</p>
+            <p className="text-sm text-gray-800">{prompt.name}</p>
           </div>
           <div className="flex flex-col gap-1.5">
             <p className="text-sm font-medium text-gray-500">Research paper criteria</p>
-            <p className="whitespace-pre-wrap text-sm text-gray-900">{prompt.description}</p>
+            <p className="whitespace-pre-wrap text-sm text-gray-800">{prompt.description}</p>
           </div>
         </>
       )}
@@ -181,7 +181,7 @@ export default function PromptDetailPage() {
         />
       </div>
 
-      <h2 className="mt-8 text-lg font-semibold text-gray-900">Examples</h2>
+      <h2 className="mt-8 text-lg font-semibold text-gray-800">Examples</h2>
       <p className="mt-1 text-sm text-gray-500">
         Add examples from a run&apos;s results with Mark as example. Only the {prompt.example_limit} most recent
         are used when scoring.
@@ -193,7 +193,7 @@ export default function PromptDetailPage() {
         {prompt.examples.map((ex) => (
           <li key={ex.id} className="rounded-lg border border-gray-200 p-4">
             <div className="flex items-start justify-between gap-4">
-              <h3 className="font-medium text-gray-900">{ex.title}</h3>
+              <h3 className="font-medium text-gray-800">{ex.title}</h3>
               <div className="flex shrink-0 items-center gap-2">
                 <ScoreBadge score={ex.score} />
                 <span className="text-sm text-gray-500">{ex.year ?? '—'}</span>

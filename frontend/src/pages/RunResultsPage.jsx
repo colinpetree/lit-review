@@ -150,7 +150,7 @@ export default function RunResultsPage() {
 
       <Card className="mt-4 flex flex-col gap-5">
         <div className="flex items-start justify-between gap-4">
-          <h1 className="text-2xl font-semibold text-gray-900">
+          <h1 className="text-2xl font-semibold text-gray-800">
             {run.name || run.prompt?.name || run.grading_prompt}
           </h1>
           <div className="shrink-0">
@@ -167,7 +167,7 @@ export default function RunResultsPage() {
         {run.prompt ? (
           <div className="flex flex-col gap-1.5">
             <p className="text-sm font-medium text-gray-500">Prompt</p>
-            <p className="text-sm text-gray-900">
+            <p className="text-sm text-gray-800">
               {run.prompt.deleted ? (
                 run.prompt.name
               ) : (
@@ -184,12 +184,12 @@ export default function RunResultsPage() {
 
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-500">Criteria</p>
-          <p className="whitespace-pre-line text-sm text-gray-900">{run.grading_prompt}</p>
+          <p className="whitespace-pre-line text-sm text-gray-800">{run.grading_prompt}</p>
         </div>
 
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-500">Datasets</p>
-          <p className="text-sm text-gray-900">
+          <p className="text-sm text-gray-800">
             {datasetLabels(run.datasets).map((label, i) => {
               const dataset = run.datasets[i]
               return (
@@ -213,18 +213,18 @@ export default function RunResultsPage() {
 
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-500">Papers</p>
-          <p className="text-sm text-gray-900">{run.results.length}</p>
+          <p className="text-sm text-gray-800">{run.results.length}</p>
         </div>
 
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-500">AI model</p>
-          <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-sm text-gray-900" />
+          <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-sm text-gray-800" />
         </div>
 
         {runDate ? (
           <div className="flex flex-col gap-1.5">
             <p className="text-sm font-medium text-gray-500">{run.completed_at ? 'Completed' : 'Created'}</p>
-            <p className="text-sm text-gray-900">{runDate}</p>
+            <p className="text-sm text-gray-800">{runDate}</p>
           </div>
         ) : null}
 

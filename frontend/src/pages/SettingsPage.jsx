@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { PageShell, Card } from '../components/ui'
+import { navIcon } from '../lib/navItems'
 import EditableCardHeader from '../components/EditableCardHeader'
 import useSavedState from '../lib/useSavedState'
 import {
@@ -83,7 +84,7 @@ function ProviderKeyCard({
             onChange={(e) => setInput(e.target.value)}
             disabled={removing}
             placeholder={hasKey ? MASKED_KEY : keyPlaceholder}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 w-full disabled:bg-gray-50 disabled:text-gray-400"
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 w-full disabled:bg-gray-50 disabled:text-gray-400"
           />
           {hasKey && !removing && (
             <div className="flex items-center justify-between">
@@ -112,7 +113,7 @@ function ProviderKeyCard({
       ) : (
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-700">{keyName}</p>
-          {hasKey ? <p className="truncate text-sm text-gray-900">{MASKED_KEY}</p> : <p className="text-sm text-gray-400">Not set</p>}
+          {hasKey ? <p className="truncate text-sm text-gray-800">{MASKED_KEY}</p> : <p className="text-sm text-gray-400">Not set</p>}
         </div>
       )}
 
@@ -240,6 +241,7 @@ export default function SettingsPage() {
   return (
     <PageShell
       title="Settings"
+      icon={navIcon('/settings')}
       description="Install API Keys for paper databases and AI platforms. Minimum is OpenAlex and one AI provider. More paper databases gives you more papers in your datasets and cross-check each other to fill in missing abstracts. More AI providers just gives you more AI model options to choose from."
     >
       <div className="flex flex-col gap-8">

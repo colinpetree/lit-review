@@ -74,7 +74,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
             value={filter.query}
             onChange={(e) => onChange({ ...filter, query: e.target.value })}
             placeholder="Filter papers by title, author, venue or abstract"
-            className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-8 text-sm text-gray-900"
+            className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-8 text-sm text-gray-800"
           />
           {filter.query ? (
             <button
@@ -155,7 +155,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
                     placeholder="From"
                     value={filter.yearFrom}
                     onChange={(e) => onChange({ ...filter, yearFrom: digitsOnly(e.target.value) })}
-                    className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-900"
+                    className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800"
                   />
                   <span className="text-gray-400">to</span>
                   <input
@@ -165,7 +165,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
                     placeholder="To"
                     value={filter.yearTo}
                     onChange={(e) => onChange({ ...filter, yearTo: digitsOnly(e.target.value) })}
-                    className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-900"
+                    className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800"
                   />
                 </div>
               </div>
@@ -177,7 +177,7 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
                   placeholder="0"
                   value={filter.minCitations}
                   onChange={(e) => onChange({ ...filter, minCitations: digitsOnly(e.target.value) })}
-                  className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-900"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800"
                 />
               </label>
             </div>

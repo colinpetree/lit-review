@@ -18,8 +18,8 @@ const DAY_PICKER_CLASSES = {
   day_button: [
     'h-8 w-8 text-sm rounded transition-colors flex items-center justify-center cursor-pointer',
     'text-gray-700 hover:bg-gray-100',
-    'data-[selected]:bg-gray-900 data-[selected]:text-white data-[selected]:hover:bg-gray-700',
-    'data-[today]:font-semibold data-[today]:text-gray-900',
+    'data-[selected]:bg-gray-800 data-[selected]:text-white data-[selected]:hover:bg-gray-700',
+    'data-[today]:font-semibold data-[today]:text-gray-800',
     'data-[outside]:text-gray-300 data-[outside]:hover:bg-transparent',
     'data-[disabled]:text-gray-200 data-[disabled]:hover:bg-transparent',
   ].join(' '),
@@ -78,7 +78,7 @@ export default function DatePicker({ value, onChange, onBlur, placeholder = 'YYY
         onClick={() => setOpen(true)}
         placeholder={placeholder}
         aria-label={ariaLabel}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 w-full pr-8 outline-none focus:border-gray-400"
+        className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 w-full pr-8 outline-none focus:border-gray-400"
       />
       <button
         type="button"

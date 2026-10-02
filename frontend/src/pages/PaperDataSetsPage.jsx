@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
+import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import DeleteMenu from '../components/DeleteMenu'
@@ -41,6 +42,7 @@ export default function PaperDataSetsPage() {
   return (
     <PageShell
       title="Paper Datasets"
+      icon={navIcon('/datasets')}
       description="Groups of paper abstracts that serve as datasets for an AI model to score and rank each paper according to your research criteria."
     >
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
@@ -73,7 +75,7 @@ export default function PaperDataSetsPage() {
             <div key={d.id} className="relative">
               <Link to={`/datasets/${d.id}`}>
                 <Card className="h-full hover:border-gray-300">
-                  <p className="font-medium text-gray-900 pr-8">{d.name}</p>
+                  <p className="font-medium text-gray-800 pr-8">{d.name}</p>
                   <p className="mt-1 line-clamp-2 text-sm text-gray-500">{d.verbose_query}</p>
                   <p className="mt-2 text-sm text-gray-400">
                     {d.paper_count} paper{d.paper_count === 1 ? '' : 's'}

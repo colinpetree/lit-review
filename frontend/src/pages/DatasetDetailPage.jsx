@@ -19,7 +19,7 @@ function DatasetDetailsCard({ dataset, onRenamed }) {
   return (
     <Card className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-gray-900">{dataset.name}</h1>
+        <h1 className="text-2xl font-semibold text-gray-800">{dataset.name}</h1>
         <div className="shrink-0">
           <DatasetMenu dataset={dataset} onRenamed={onRenamed} />
         </div>
@@ -27,12 +27,12 @@ function DatasetDetailsCard({ dataset, onRenamed }) {
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-500">Dataset topic</p>
-        <p className="whitespace-pre-wrap text-sm text-gray-900">{dataset.verbose_query}</p>
+        <p className="whitespace-pre-wrap text-sm text-gray-800">{dataset.verbose_query}</p>
       </div>
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-500">Paper sources</p>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-900">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-800">
           {dataset.sources.map((id) => {
             const Icon = sourceIcon(id)
             return (
@@ -52,14 +52,14 @@ function DatasetDetailsCard({ dataset, onRenamed }) {
             aiApi={dataset.expansion.ai_api}
             aiModel={dataset.expansion.ai_model}
             cost={dataset.expansion.cost}
-            className="text-sm text-gray-900"
+            className="text-sm text-gray-800"
           />
         </div>
       ) : null}
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-500">Created</p>
-        <p className="text-sm text-gray-900">{formatDateTime(dataset.created_at)}</p>
+        <p className="text-sm text-gray-800">{formatDateTime(dataset.created_at)}</p>
       </div>
     </Card>
   )
@@ -258,7 +258,7 @@ export default function DatasetDetailPage() {
         {showLookupPanel ? (
           <aside className="mt-6 min-[1560px]:absolute min-[1560px]:inset-y-0 min-[1560px]:left-full min-[1560px]:mt-0 min-[1560px]:ml-6 min-[1560px]:w-64">
             <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm min-[1560px]:sticky min-[1560px]:top-6">
-              <h2 className="mb-3 text-lg font-semibold text-gray-900">Missing Abstracts</h2>
+              <h2 className="mb-3 text-lg font-semibold text-gray-800">Missing Abstracts</h2>
               {lookup?.running ? (
                 <>
                   <div className="flex items-center gap-2 text-sm text-gray-700">

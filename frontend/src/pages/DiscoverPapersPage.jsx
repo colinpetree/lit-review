@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
+import { navIcon } from '../lib/navItems'
 import { StageIndicator } from '../components/Spinner'
 import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from '../components/AiModelSelect'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
@@ -174,6 +175,7 @@ export default function DiscoverPapersPage() {
   return (
     <PageShell
       title="Discover Papers"
+      icon={navIcon('/discover')}
       description="Write a sentence describing the topic you want to find research papers about. Choose the databases you want to search and the AI model to process your sentence with. This will create a group of papers associated with your search."
     >
       <Card>

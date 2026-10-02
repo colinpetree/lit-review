@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
+import { navIcon } from '../lib/navItems'
 import { StageIndicator } from '../components/Spinner'
 import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from '../components/AiModelSelect'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
@@ -103,6 +104,7 @@ export default function AnalyzePapersPage() {
   return (
     <PageShell
       title="Analyze Papers"
+      icon={navIcon('/analyze')}
       description="Describe specifically what you are looking for and the AI model will grade each paper abstract from a dataset against your criteria. Results are saved and papers are shown in order of relevance."
     >
       <Card>

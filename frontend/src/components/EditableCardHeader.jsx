@@ -19,7 +19,7 @@ export default function EditableCardHeader({
   return (
     <div className="flex items-start justify-between gap-4">
       <div>
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 [--icon-nudge:-1px]">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-800 [--icon-nudge:-1px]">
           {Icon ? <Icon size={18} className="shrink-0" /> : null}
           {title}
         </h2>

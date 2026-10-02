@@ -72,7 +72,7 @@ export default function ListFilterBar({
             value={filter.query}
             onChange={(e) => onChange({ ...filter, query: e.target.value })}
             placeholder={placeholder}
-            className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-8 text-sm text-gray-900"
+            className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-8 text-sm text-gray-800"
           />
           {filter.query ? (
             <button

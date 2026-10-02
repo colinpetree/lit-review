@@ -12,6 +12,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Unclassed text is gray-800 too, so nothing in the app is darker. */
+body {
+  color: #1f2937;
+}
+
 /* Source Sans 3's line box is taller above the baseline than below, so text in an
    items-center row sits slightly higher than a centered icon. Nudge any lucide icon
    or provider logo (ProviderIcons.jsx, which carry .provider-icon) that is a direct

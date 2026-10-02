@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
+import { navIcon } from '../lib/navItems'
 import MoreMenu from '../components/MoreMenu'
 import ConfirmModal from '../components/ConfirmModal'
 import PromptFormModal from '../components/PromptFormModal'
@@ -55,6 +56,7 @@ export default function ScoringPromptsPage() {
   return (
     <PageShell
       title="Scoring Prompts"
+      icon={navIcon('/prompts')}
       description="Refine and re-use paper scoring prompts from previous runs to get better results."
     >
       <button
@@ -94,7 +96,7 @@ export default function ScoringPromptsPage() {
           <div key={p.id} className="relative">
             <Link to={`/prompts/${p.id}`}>
               <Card className="hover:border-gray-300">
-                <p className="pr-8 font-medium text-gray-900">{p.name}</p>
+                <p className="pr-8 font-medium text-gray-800">{p.name}</p>
                 <p className="mt-1 line-clamp-2 text-sm text-gray-500">{p.description}</p>
                 <p className="mt-1 text-sm text-gray-400">
                   {p.example_count} example{p.example_count === 1 ? '' : 's'} · {formatDateTime(p.created_at)}

@@ -202,7 +202,7 @@ export default function PaperCard({
       }`}
     >
       <div className="flex items-start justify-between gap-4">
-        <h3 className={`font-medium text-gray-900 ${dim}`}>
+        <h3 className={`font-medium text-gray-800 ${dim}`}>
           {result.url ? (
             <a
               href={result.url}

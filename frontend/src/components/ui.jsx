@@ -1,13 +1,16 @@
 import { Link } from 'react-router-dom'
 import { ChevronLeft } from 'lucide-react'
 
-export function PageShell({ title, description, actions, children }) {
+export function PageShell({ title, icon: Icon, description, actions, children }) {
   return (
     <div className="max-w-3xl mx-auto px-4 py-10">
       {title || actions ? (
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
+            <h1 className="flex items-center gap-3 text-2xl font-semibold text-gray-800">
+              {Icon ? <Icon size={24} /> : null}
+              {title}
+            </h1>
             {description ? <p className="mt-2 text-sm text-gray-600">{description}</p> : null}
           </div>
           {actions ? <div className="shrink-0">{actions}</div> : null}

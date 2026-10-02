@@ -44,7 +44,7 @@ export default function Modal({ title, onClose, busy = false, closeOnBackdrop = 
         >
           <X size={18} />
         </button>
-        <h2 className="pr-8 text-lg font-semibold text-gray-900">{title}</h2>
+        <h2 className="pr-8 text-lg font-semibold text-gray-800">{title}</h2>
         {children}
       </div>
     </div>

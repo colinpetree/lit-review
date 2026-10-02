@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
+import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import RunMenu from '../components/RunMenu'
@@ -44,6 +45,7 @@ export default function PastResultsPage() {
   return (
     <PageShell
       title="Analysis Results"
+      icon={navIcon('/results')}
       description="Saved results from previous runs where the AI judge scored papers based on your research criteria."
     >
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
@@ -74,7 +76,7 @@ export default function PastResultsPage() {
           <div key={run.id} className="relative">
             <Link to={`/results/${run.id}`}>
               <Card className="hover:border-gray-300">
-                <p className="pr-8 font-medium text-gray-900">{run.name || run.prompt_name || run.grading_prompt}</p>
+                <p className="pr-8 font-medium text-gray-800">{run.name || run.prompt_name || run.grading_prompt}</p>
                 <p className="mt-1 text-sm text-gray-500">
                   {datasetLabels(run.datasets).join(', ')}
                   {` · ${run.paper_count} paper${run.paper_count === 1 ? '' : 's'}`}

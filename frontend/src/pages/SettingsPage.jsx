@@ -10,7 +10,6 @@ import {
   AnthropicIcon,
   ElsevierIcon,
   GeminiIcon,
-  GroqIcon,
   OpenAIIcon,
   OpenAlexIcon,
   SemanticScholarIcon,
@@ -149,14 +148,6 @@ const AI_PROVIDERS = [
     description: 'Gemini models, for the same query and scoring work as the other AI integrations. Has a free tier. Stored locally in an encrypted file on this machine and only sent to Google.',
     keyUrl: 'https://aistudio.google.com/apikey',
     keyPlaceholder: 'AIza...',
-  },
-  {
-    id: 'groq',
-    label: 'Groq',
-    icon: GroqIcon,
-    description: 'Fast, low-cost open models (GPT-OSS), for the same query and scoring work as the other AI integrations. Stored locally in an encrypted file on this machine and only sent to Groq.',
-    keyUrl: 'https://console.groq.com/keys',
-    keyPlaceholder: 'gsk_...',
   },
 ]
 

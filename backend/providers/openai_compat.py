@@ -1,5 +1,5 @@
-"""Providers that speak the OpenAI Chat Completions API: OpenAI itself and
-Groq (same `openai` SDK pointed at Groq's base URL)."""
+"""Providers that speak the OpenAI Chat Completions API (the `openai` SDK).
+`base_url` and `strict_schema_models` let another compatible host reuse it."""
 
 import json
 

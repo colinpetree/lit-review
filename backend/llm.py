@@ -20,7 +20,6 @@ PROVIDERS = {
     "anthropic": "providers.anthropic",
     "openai": "providers.openai",
     "gemini": "providers.gemini",
-    "groq": "providers.groq",
 }
 
 # provider id -> {model id: {input/output USD per million tokens (approximate,
@@ -42,10 +41,6 @@ MODELS = {
         "gemini-3.5-flash": {"input": 1.50, "output": 9.00, "max_output_tokens": 16000},
         # Priced at the rate for prompts up to 200k tokens; a scoring chunk is far below that.
         "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00, "max_output_tokens": 16000},
-    },
-    "groq": {
-        "openai/gpt-oss-20b": {"input": 0.075, "output": 0.30, "max_output_tokens": 16000},
-        "openai/gpt-oss-120b": {"input": 0.15, "output": 0.60, "max_output_tokens": 16000},
     },
 }
 
@@ -113,8 +108,7 @@ def _provider_module(ai_api):
 
 def _whole_number(value):
     """value as an int if it is a whole number (85, 85.0 or "85"), else None.
-    Strict schemas guarantee an integer; plain JSON mode (some Groq models)
-    can return the others."""
+    Strict schemas guarantee an integer, but other forms are tolerated."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -274,6 +268,8 @@ def score_batch(grading_prompt, candidates, ai_api, model, examples=None, want_t
     A paper the model skips is retried once on its own. If it is skipped
     again it gets score None with an explanatory rationale, so the run can
     finish instead of re-selecting the same unscored paper forever."""
+    if ai_api not in MODELS or model not in MODELS[ai_api]:
+        raise LLMError(f"The model '{model}' ({ai_api}) is no longer supported.")
     scores, usage, title = _score_call(
         grading_prompt, candidates, ai_api, model, examples, want_title
     )
@@ -358,9 +354,8 @@ def _score_call(grading_prompt, candidates, ai_api, model, examples=None, want_t
         raise LLMError("The AI returned scores in an unexpected format.")
     scores = {}
     for row in rows:
-        # Strict schemas guarantee these fields; plain JSON mode (some Groq
-        # models) does not, so a malformed row is skipped and the paper is
-        # retried by score_batch instead of crashing the chunk.
+        # A malformed row is skipped and the paper is retried by score_batch
+        # instead of crashing the chunk.
         if not isinstance(row, dict):
             continue
         score = _whole_number(row.get("score"))

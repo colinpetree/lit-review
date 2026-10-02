@@ -37,8 +37,8 @@ export default function AiModelSelect({ providers, value, onChange }) {
           hint: '$'.repeat(i + 1),
           hintTitle: `Price tier ${i + 1} of ${all.length} for ${PROVIDER_LABELS[provider]}`,
           group: PROVIDER_LABELS[provider] || provider,
-          // So typing a provider ("google", "groq", "anthropic") or a model id
-          // ("gpt-oss-20b", "claude-haiku") finds it, not just the display name.
+          // So typing a provider ("google", "anthropic") or a model id
+          // ("gpt-6", "claude-haiku") finds it, not just the display name.
           keywords: `${provider} ${m.id.split('/').pop()}`,
           icon: providerIcon(provider),
         }))

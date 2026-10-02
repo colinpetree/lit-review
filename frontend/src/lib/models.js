@@ -2,13 +2,12 @@
 // sync by hand since there's no shared schema between the two. Adding a
 // provider or model here also means adding it to the backend, and a key card
 // for the provider in SettingsPage.jsx.
-import { AnthropicIcon, GeminiIcon, GroqIcon, OpenAIIcon } from '../components/ProviderIcons'
+import { AnthropicIcon, GeminiIcon, OpenAIIcon } from '../components/ProviderIcons'
 
 export const PROVIDER_LABELS = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
   gemini: 'Google Gemini',
-  groq: 'Groq',
 }
 
 // Each provider's models are listed cheapest first: the model picker shows the
@@ -29,17 +28,12 @@ export const MODELS_BY_PROVIDER = {
     { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
     { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' },
   ],
-  groq: [
-    { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B' },
-    { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
-  ],
 }
 
 export const PROVIDER_ICONS = {
   anthropic: AnthropicIcon,
   openai: OpenAIIcon,
   gemini: GeminiIcon,
-  groq: GroqIcon,
 }
 
 export function providerIcon(aiApi) {

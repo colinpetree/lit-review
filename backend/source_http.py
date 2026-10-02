@@ -8,6 +8,7 @@ the user. Callers either stop using that source for the rest of the run
 """
 
 import re
+import threading
 import time
 
 import requests
@@ -60,6 +61,32 @@ def json_of(response, source_label):
         return response.json()
     except ValueError as exc:
         raise SourceError(f"{source_label} returned an unreadable response.") from exc
+
+
+# NCBI allows 3 requests per second without an API key.
+_NCBI_MIN_INTERVAL = 0.4
+_last_ncbi_call = 0.0
+_NCBI_LOCK = threading.Lock()
+
+
+def ncbi_get(url, params):
+    """GET an NCBI E-utilities URL, spaced out to the keyless rate limit and
+    retried once on a 429. Returns the response (the caller handles other
+    statuses); raises SourceError if it stays rate limited."""
+    global _last_ncbi_call
+    params = {"tool": "lit-review", **params}
+    for attempt in range(2):
+        with _NCBI_LOCK:
+            wait = _NCBI_MIN_INTERVAL - (time.monotonic() - _last_ncbi_call)
+            if wait > 0:
+                time.sleep(wait)
+            _last_ncbi_call = time.monotonic()
+        response = get("PubMed", url, params=params)
+        if response.status_code != 429:
+            return response
+        if attempt == 0:
+            time.sleep(2)
+    raise SourceError("PubMed's rate limit was reached. Try again in a moment.")
 
 
 SEMANTIC_SCHOLAR_KEY_REJECTED = (

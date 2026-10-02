@@ -5,13 +5,16 @@ import { navIcon } from '../lib/navItems'
 import { useTheme } from '../lib/theme'
 import Combobox from '../components/Combobox'
 import EditableCardHeader from '../components/EditableCardHeader'
+import Toggle from '../components/Toggle'
 import useSavedState from '../lib/useSavedState'
+import { usePubMedEnabled } from '../lib/pubmedSetting'
 import {
   AnthropicIcon,
   ElsevierIcon,
   GeminiIcon,
   OpenAIIcon,
   OpenAlexIcon,
+  PubMedIcon,
   SemanticScholarIcon,
   SpringerNatureIcon,
 } from '../components/ProviderIcons'
@@ -116,6 +119,58 @@ function ProviderKeyCard({
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-700">{keyName}</p>
           {hasKey ? <p className="truncate text-sm text-gray-800">{MASKED_KEY}</p> : <p className="text-sm text-gray-400">Not set</p>}
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
+    </Card>
+  )
+}
+
+// PubMed needs no key, so its card is an on/off switch for offering it on
+// Discover Papers (on by default), with the same Edit/Save flow as the key cards.
+function PubMedCard() {
+  const [enabled, setEnabled] = usePubMedEnabled()
+  const [draft, setDraft] = useState(enabled)
+  const { editing, setEditing, saving, saved, error, setError, commit } = useSavedState()
+
+  function startEditing() {
+    setDraft(enabled)
+    setEditing(true)
+  }
+
+  function cancel() {
+    setEditing(false)
+    setError('')
+  }
+
+  return (
+    <Card className="flex flex-col gap-5">
+      <EditableCardHeader
+        title="PubMed"
+        icon={PubMedIcon}
+        description="Biomedical, medical and health literature from the US National Library of Medicine. Free, and no key is needed. Turn it off if you don’t work in medicine or health and don’t want it listed as a source on Discover Papers."
+        editing={editing}
+        saving={saving}
+        saved={saved}
+        isDirty={draft !== enabled}
+        onEdit={startEditing}
+        onCancel={cancel}
+        onSave={() => commit(async () => setEnabled(draft))}
+      />
+
+      {editing ? (
+        <Toggle label="Offer PubMed as a paper source" checked={draft} onChange={setDraft} />
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-gray-700">Status</p>
+          <p className="text-sm">
+            {enabled ? (
+              <span className="font-medium text-[#30cf43]">Enabled</span>
+            ) : (
+              <span className="text-gray-400">Disabled</span>
+            )}
+          </p>
         </div>
       )}
 
@@ -253,6 +308,7 @@ export default function SettingsPage() {
         </SettingsSection>
 
         <SettingsSection title="Paper Databases">
+          <PubMedCard />
           {PAPER_DB_KEY_PROVIDERS.map((provider) => (
             <ProviderKeyCard
               key={provider.id}

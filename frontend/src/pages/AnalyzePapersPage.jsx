@@ -3,13 +3,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import { StageIndicator } from '../components/Spinner'
-import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from '../components/AiModelSelect'
+import AiModelSelect, { hasConfiguredProvider, defaultAiChoice, usableAiChoice } from '../components/AiModelSelect'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import PromptCombobox, { NEW_PROMPT } from '../components/PromptCombobox'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import { postJson } from '../lib/api'
 import { driveAnalysisRun } from '../lib/driveAnalysisRun'
 import { formatDateTime } from '../lib/format'
+import { loadAnalyzeAiChoice, saveAnalyzeAiChoice } from '../lib/analyzeSettings'
 
 export default function AnalyzePapersPage() {
   const navigate = useNavigate()
@@ -23,10 +24,12 @@ export default function AnalyzePapersPage() {
   // they're actually looking for, which can (and often should) differ from
   // whatever question retrieved the dataset in the first place.
   const [gradingPrompt, setGradingPrompt] = useState('')
-  // NEW_PROMPT (write research paper criteria below) or a saved prompt's id.
+  // NEW_PROMPT (write the ideal research paper contents below) or a saved prompt's id.
   const [promptChoice, setPromptChoice] = useState(NEW_PROMPT)
   const [prompts, setPrompts] = useState([])
-  const [aiChoice, setAiChoice] = useState(null)
+  // Starts from the model of the last run (saved when a run starts); one that is
+  // no longer listed or configured falls back to the default.
+  const [aiChoice, setAiChoice] = useState(loadAnalyzeAiChoice)
   const [status, setStatus] = useState('idle') // idle | loading | error
   const [error, setError] = useState(null)
   const [progress, setProgress] = useState(null)
@@ -61,7 +64,7 @@ export default function AnalyzePapersPage() {
   }
 
   const configured = hasConfiguredProvider(providers)
-  const choice = aiChoice || defaultAiChoice(providers)
+  const choice = usableAiChoice(aiChoice, providers) || defaultAiChoice(providers)
 
   const runAnalysis = async (e) => {
     e.preventDefault()
@@ -70,6 +73,8 @@ export default function AnalyzePapersPage() {
       return
     }
     if (!selected.size || !promptReady) return
+
+    saveAnalyzeAiChoice(choice)
 
     activeRequestRef.current?.abort()
     const controller = new AbortController()
@@ -144,11 +149,11 @@ export default function AnalyzePapersPage() {
 
           {isNewPrompt ? (
             <div>
-              <label className="block text-sm font-medium text-gray-700">Research paper criteria</label>
+              <label className="block text-sm font-medium text-gray-700">Ideal research paper contents</label>
               <AutoGrowTextarea
                 value={gradingPrompt}
                 onChange={(e) => setGradingPrompt(e.target.value)}
-                placeholder="Precisely what are you looking for in this literature review?"
+                placeholder="Precisely what should a paper show to be relevant?"
                 rows={3}
                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
               />

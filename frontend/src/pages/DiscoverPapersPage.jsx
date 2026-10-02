@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import { StageIndicator } from '../components/Spinner'
@@ -8,14 +8,16 @@ import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import Checkbox from '../components/Checkbox'
 import DateRangeField from '../components/DateRangeField'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
+import { getPubMedEnabled } from '../lib/pubmedSetting'
 import { postJson } from '../lib/api'
 import { DEFAULT_SOURCES, PAPER_SOURCES } from '../lib/paperSources'
-import { PubMedIcon } from '../components/ProviderIcons'
 import { MODELS_BY_PROVIDER } from '../lib/models'
 import { loadDiscoverSettings, saveDiscoverSettings } from '../lib/discoverSettings'
 
-// A source can be used when it needs no API key, or its key is saved.
-const isSourceAvailable = (source, providers) => !source.key || Boolean(providers?.[source.key])
+// A source is offered (and used) only when it is enabled: it needs no API key or
+// its key is saved, and PubMed has not been switched off in Settings.
+const isSourceAvailable = (source, providers, pubmedEnabled) =>
+  (source.id !== 'pubmed' || pubmedEnabled) && (!source.key || Boolean(providers?.[source.key]))
 
 // Discover Papers only retrieves papers into a dataset - it never scores or
 // analyzes them. Relevance scoring is a separate, deliberate step the user
@@ -30,6 +32,8 @@ const STAGE_LABELS = {
 export default function DiscoverPapersPage() {
   const navigate = useNavigate()
   const providers = useConfiguredProviders()
+  // Read on each visit: the setting can only change on the Settings page.
+  const [pubmedEnabled] = useState(getPubMedEnabled)
   // The sources and model start from the last run's (saved when a run starts),
   // so they stay that way until a run is made with different ones. Edits that
   // were never run are not kept. The topic and the year range always start blank.
@@ -64,7 +68,7 @@ export default function DiscoverPapersPage() {
   // disabled) instead of snapping back to the default.
   const usableSources = sources.filter((id) => {
     const source = PAPER_SOURCES.find((s) => s.id === id)
-    return source && isSourceAvailable(source, providers)
+    return source && isSourceAvailable(source, providers, pubmedEnabled)
   })
   const activeSources = usableSources.length || !providers || sourcesEdited ? usableSources : DEFAULT_SOURCES
 
@@ -205,41 +209,22 @@ export default function DiscoverPapersPage() {
           <div>
             <span className="block select-none text-sm font-medium text-gray-700">Paper sources</span>
             <div className="mt-1 flex flex-col gap-1">
-              {PAPER_SOURCES.filter((source) => !source.hiddenWithoutKey || providers?.[source.key]).map((source) => {
-                // A source that needs an API key can't be chosen until one is saved.
-                const needsKey = source.key && !providers?.[source.key]
-                return (
-                  <Checkbox
-                    key={source.id}
-                    checked={activeSources.includes(source.id)}
-                    disabled={needsKey || status === 'loading'}
-                    onChange={(checked) => {
-                      setSourcesEdited(true)
-                      setSources(
-                        checked ? [...activeSources, source.id] : activeSources.filter((id) => id !== source.id)
-                      )
-                    }}
-                  >
-                    <source.icon size={14} className="shrink-0" />
-                    <span>
-                      {source.label}
-                      {needsKey ? (
-                        <span className="ml-1 text-xs">
-                          (needs an API key in{' '}
-                          <Link to="/settings" className="underline">
-                            Settings
-                          </Link>
-                          )
-                        </span>
-                      ) : null}
-                    </span>
-                  </Checkbox>
-                )
-              })}
-              <Checkbox checked={false} disabled>
-                <PubMedIcon size={14} className="shrink-0" />
-                PubMed (coming soon)
-              </Checkbox>
+              {PAPER_SOURCES.filter((source) => isSourceAvailable(source, providers, pubmedEnabled)).map((source) => (
+                <Checkbox
+                  key={source.id}
+                  checked={activeSources.includes(source.id)}
+                  disabled={status === 'loading'}
+                  onChange={(checked) => {
+                    setSourcesEdited(true)
+                    setSources(
+                      checked ? [...activeSources, source.id] : activeSources.filter((id) => id !== source.id)
+                    )
+                  }}
+                >
+                  <source.icon size={14} className="shrink-0" />
+                  {source.label}
+                </Checkbox>
+              ))}
             </div>
           </div>
 

@@ -57,7 +57,7 @@ export default function ScoringPromptsPage() {
     <PageShell
       title="Scoring Prompts"
       icon={navIcon('/prompts')}
-      description="Refine and re-use paper scoring prompts from previous runs to get better results."
+      description="Refine and re-use paper scoring prompts from previous runs to save time and get better results."
     >
       <button
         type="button"

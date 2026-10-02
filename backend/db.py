@@ -445,6 +445,15 @@ def update_paper(paper_id, fields):
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     with _LOCK, closing(_connect()) as conn:
         conn.execute(f"UPDATE paper SET {set_clause} WHERE id = ?", (*updates.values(), paper_id))
+        if "year" in updates:
+            # Sorting and the dataset's date range prefer the full publication
+            # date, so one that contradicts the corrected year is cleared and the
+            # year is used instead. Only this paper, only when the user saves it.
+            conn.execute(
+                "UPDATE paper SET publication_date = NULL WHERE id = ? AND publication_date IS NOT NULL "
+                "AND year IS NOT NULL AND substr(publication_date, 1, 4) != CAST(year AS TEXT)",
+                (paper_id,),
+            )
         conn.commit()
 
 

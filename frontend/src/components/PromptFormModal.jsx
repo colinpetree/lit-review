@@ -5,7 +5,7 @@ import AutoGrowTextarea from './AutoGrowTextarea'
 const fieldClass =
   'mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm'
 
-// Create/edit dialog for a scoring prompt: a title and the research paper criteria
+// Create/edit dialog for a scoring prompt: a title and the ideal research paper contents
 // (the description the judge scores against). onSave may be async and throws
 // on failure, which is shown in the dialog.
 export default function PromptFormModal({ heading, initial, onSave, onClose }) {
@@ -41,7 +41,7 @@ export default function PromptFormModal({ heading, initial, onSave, onClose }) {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">Research paper criteria</label>
+          <label className="block text-sm font-medium text-gray-700">Ideal research paper contents</label>
           <AutoGrowTextarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}

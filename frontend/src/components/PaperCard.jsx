@@ -217,17 +217,17 @@ export default function PaperCard({
           )}
         </h3>
         <div className="flex shrink-0 items-center gap-2">
-          {result.is_example ? (
-            <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
-              Example
-            </span>
-          ) : null}
           {result.excluded ? (
             <span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
               Excluded
             </span>
           ) : null}
           <span className={`text-sm text-gray-500 ${dim}`}>{result.year ?? '—'}</span>
+          {result.is_example ? (
+            <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
+              Example
+            </span>
+          ) : null}
           <ScoreBadge score={result.score} />
           {menuItems.length ? <MoreMenu items={menuItems} /> : null}
         </div>

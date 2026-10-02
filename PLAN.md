@@ -27,9 +27,9 @@ user's gender.)
 
 ## Data sources
 
-Status: OpenAlex, Semantic Scholar and Elsevier (Scopus) are built as search sources
+Status: OpenAlex, Semantic Scholar, Elsevier (Scopus) and PubMed are built as search sources
 (`backend/search_sources.py`); a dataset is retrieved from any selected combination.
-PubMed is still planned. Several more sources are used only to look up missing abstracts
+Several more sources are used only to look up missing abstracts
 (see "Abstract lookup" below).
 
 - **OpenAlex** (primary, built) - free, broad multidisciplinary coverage including
@@ -52,9 +52,10 @@ PubMed is still planned. Several more sources are used only to look up missing a
   strictly to be useful); used only to fetch a missing abstract when a key is saved and the
   DOI prefix matches.
 - **Europe PMC** (lookup only) - keyless, used to fetch missing abstracts by DOI.
-- **PubMed** (planned, not built) - needed given health/medicine and biology are target test
-  fields, not just an edge case; add via NCBI E-utilities. Free, no key required for
-  low-volume use (an NCBI API key raises rate limits, same pattern as Semantic Scholar's).
+- **PubMed** (built) - needed given health/medicine and biology are target test
+  fields, not just an edge case; searched via NCBI E-utilities (esearch, then efetch for
+  abstracts and metadata). Free, and no key is used: requests are paced to the keyless
+  3 per second. An NCBI API key would raise that (not built). PubMed has no citation counts.
   Authoritative for biomedical literature (MeSH terms, clinical studies) in a way
   OpenAlex/Semantic Scholar's broader coverage doesn't guarantee.
 - **Web of Science** - optional future addition, gated behind whether the primary user's
@@ -206,7 +207,7 @@ All of this is built (table names are lowercase snake_case in `backend/db.py`).
   **`AnalysisRunDataset`** (`run_id`, `dataset_id`) rather than a single `dataset_id`
   column. Because `ai_api`/`ai_model` are stored per run, the same dataset + prompt can be
   run against different models and compared side by side.
-- **`Prompt`**: `id`, `name`, `description` (the research paper criteria), `title_pending`,
+- **`Prompt`**: `id`, `name`, `description` (the ideal research paper contents), `title_pending`,
   `created_at`, `updated_at`, `deleted_at`. Reusable across datasets. See "Saved prompts
   with examples" below.
 - **`PromptExample`**: `id`, `prompt_id`, `paper_id`, `source_run_id`, `score`, `rationale`,
@@ -290,7 +291,7 @@ yes/no/maybe labels originally planned here. Using examples to inform query expa
 not built.
 
 **Added after Phase 3 (done)**
-- Multi-source retrieval (OpenAlex, Semantic Scholar, Elsevier/Scopus), with cross-source
+- Multi-source retrieval (OpenAlex, Semantic Scholar, Elsevier/Scopus, PubMed), with cross-source
   dedupe by DOI.
 - OpenAI and Google Gemini AI providers alongside Anthropic, chosen per run.
 - Automatic abstract lookup (see Data sources) and manual paper editing.
@@ -300,7 +301,7 @@ not built.
   prompts.
 
 **Phase 4 (optional, later)**
-Not built: PubMed as a search source, Semantic Scholar citation-graph exploration ("show me
+Not built: Semantic Scholar citation-graph exploration ("show me
 what cites/references this shortlisted paper"), export shortlist to BibTeX/RIS for the
 user's reference manager, Web of Science integration if the primary user's institution has
 API access, and packaging (see Distribution / packaging).
@@ -379,14 +380,14 @@ saves confirmed good calls as well.
   allowed there. Examples are never added from the prompt itself.
 - **Prompts are reusable across datasets** and not tied to one. A run picks a prompt.
 - **Creating prompts.** (1) "New prompt" on the Scoring Prompts page: a modal with a title
-  and the research paper criteria. (2) Running an analysis on Analyze with the "New prompt"
-  option and research paper criteria. In case 2 the first scoring call of the run also
+  and the ideal research paper contents. (2) Running an analysis on Analyze with the "New prompt"
+  option and ideal research paper contents. In case 2 the first scoring call of the run also
   returns a 2-4 word title, and the server names the prompt with it (a placeholder of
   the question's first four words is used until then, or if no title comes back). A title
   is only ever requested for a prompt created this way, never for an existing prompt, and
   it never replaces a title the user set: saving any edit clears the pending flag.
-- **Analyze picker.** The research paper criteria field becomes a type-to-filter dropdown of
-  saved prompts with "New prompt" first, which reveals the research paper criteria text box.
+- **Analyze picker.** The ideal research paper contents field becomes a type-to-filter dropdown of
+  saved prompts with "New prompt" first, which reveals the ideal research paper contents text box.
   Choosing an existing prompt shows its description and example count.
 - **Examples** are added only from a run's results, through a more-horizontal menu on a
   scored paper ("Mark as example", with a confirmation modal explaining the paper's score

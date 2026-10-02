@@ -92,21 +92,22 @@ input:-webkit-autofill {
   translate: 0 var(--icon-nudge, -0.5px);
 }
 
-/* Narrow scrollbar on every scrolling area in the app (page, sidebar, lists,
-   dropdowns), copied from an earlier project's scroll areas. */
-*::-webkit-scrollbar {
+/* Narrow scrollbar on the app's inner scrolling areas (sidebar, lists, dropdowns),
+   copied from an earlier project's scroll areas. The page itself scrolls
+   in the layout's <main class="page-scroll">, which keeps the browser's default. */
+:not(.page-scroll)::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
-*::-webkit-scrollbar-track {
+:not(.page-scroll)::-webkit-scrollbar-track {
   background: transparent;
 }
-*::-webkit-scrollbar-thumb {
+:not(.page-scroll)::-webkit-scrollbar-thumb {
   background: rgb(var(--gray-300));
   border-radius: 2px;
   cursor: pointer;
 }
-*::-webkit-scrollbar-button {
+:not(.page-scroll)::-webkit-scrollbar-button {
   display: none;
 }
 

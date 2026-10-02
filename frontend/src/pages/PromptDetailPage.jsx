@@ -13,7 +13,7 @@ import { formatDate } from '../lib/format'
 
 const inputClass = 'w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800'
 
-// Name and research paper criteria, in the same preview/Edit/Save card style as the
+// Name and ideal research paper contents, in the same preview/Edit/Save card style as the
 // Settings page. Delete lives at the bottom while editing.
 function PromptDetailsCard({ prompt, onSaved, onDelete }) {
   const [name, setName] = useState(prompt.name)
@@ -75,7 +75,7 @@ function PromptDetailsCard({ prompt, onSaved, onDelete }) {
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-gray-500">Research paper criteria</label>
+            <label className="text-sm font-medium text-gray-500">Ideal research paper contents</label>
             <AutoGrowTextarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -102,7 +102,7 @@ function PromptDetailsCard({ prompt, onSaved, onDelete }) {
             <p className="text-sm text-gray-800">{prompt.name}</p>
           </div>
           <div className="flex flex-col gap-1.5">
-            <p className="text-sm font-medium text-gray-500">Research paper criteria</p>
+            <p className="text-sm font-medium text-gray-500">Ideal research paper contents</p>
             <p className="whitespace-pre-wrap text-sm text-gray-800">{prompt.description}</p>
           </div>
         </>

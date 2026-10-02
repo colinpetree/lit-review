@@ -14,8 +14,7 @@ full design: data sources, pipeline stages, architecture decisions, and phased b
 
 Current state: Phases 1-3 are built (OpenAlex retrieval, Claude-based query expansion and
 relevance scoring, SQLite persistence, multi-page UI). Three AI providers are implemented
-(Anthropic, OpenAI, Google Gemini); the user picks one per run. PubMed and Semantic Scholar are planned additional data sources, not deferred
-(needed for authoritative biology/health-medicine coverage).
+(Anthropic, OpenAI, Google Gemini); the user picks one per run. PubMed is a built search source (authoritative biology/health-medicine coverage).
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
 command line, so end-user distribution must be a double-click executable (no
@@ -74,7 +73,11 @@ routes survive refresh. In dev, run Flask on 5175 (hardcoded) next to `npm run d
 - `openalex.py` - Works API client with retry and cross-query `dedupe`. Reconstructs
   abstracts from OpenAlex's inverted-index format (`{word: [positions]}`).
 - `search_sources.py` - the paper sources a dataset can be retrieved from: OpenAlex
-  (`openalex.py`), Semantic Scholar and Elsevier (Scopus Search). Springer Nature is
+  (`openalex.py`), Semantic Scholar, Elsevier (Scopus Search) and PubMed (NCBI E-utilities:
+  esearch for ids, then efetch XML for abstracts; keyless, paced to 3 requests/s by
+  `source_http.ncbi_get`; no citation counts). A per-browser Settings switch
+  (`lib/pubmedSetting.js`, on by default) hides PubMed from Discover Papers; it is a UI
+  preference only, the backend still accepts `pubmed`. Springer Nature is
   deliberately lookup-only (its search matched too strictly to be useful).
   `POST /api/datasets` searches every selected source with every
   expanded query, and any source failing fails the whole retrieval with nothing saved. A
@@ -141,7 +144,7 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   each call scores one chunk (`SCORE_CHUNK_SIZE`=20) of still-unscored papers until the
   run's status is `completed`. `frontend/src/lib/driveAnalysisRun.js` is that loop.
 
-- A `prompt` (name + description/research paper criteria) is reusable across datasets. Each
+- A `prompt` (name + description/ideal research paper contents) is reusable across datasets. Each
   run points at one via `prompt_id` but keeps its own snapshot: `grading_prompt` (the text)
   and `examples_snapshot` (the examples used), so editing a prompt never changes old runs.
   `prompt_example` rows are added only from a run's results ("Mark as example", which
@@ -156,6 +159,9 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   prompt title replace the placeholder unless the user renamed first. Renamed via
   `PATCH /api/analysis-runs/<id>` (`RunMenu` + `RenameModal`, on the Analysis Results cards
   and the run page). Old runs are backfilled from their prompt name in `_migrate`.
+- Sorting and the dataset date range prefer `paper.publication_date` over `year`, so
+  `db.update_paper` clears that paper's full date when it contradicts the saved year (so
+  re-saving an edited paper repairs it; nothing sweeps other papers).
 - User-set paper states: `paper.read_at` (global, so Read follows the paper into every
   dataset and run; set via `PATCH /api/papers/<id>` with `{read}`, deliberately outside
   `EDITABLE_PAPER_FIELDS`) and `analysis_result.relevance` (per run; NULL = neutral, else

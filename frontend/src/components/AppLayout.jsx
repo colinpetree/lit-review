@@ -7,7 +7,8 @@ export default function AppLayout() {
   return (
     <div className="flex h-screen bg-page">
       <Sidebar />
-      <main className="flex-1 overflow-auto">
+      {/* The page scrolls here, so it keeps the browser's own scrollbar (see index.css). */}
+      <main className="page-scroll flex-1 overflow-auto">
         <Outlet />
       </main>
     </div>

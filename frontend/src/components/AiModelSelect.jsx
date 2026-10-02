@@ -22,6 +22,16 @@ export function defaultAiChoice(providers) {
   return { ai_api: provider, ai_model: MODELS_BY_PROVIDER[provider][0].id }
 }
 
+// A remembered choice, if its provider is still configured and the model is still
+// listed; otherwise null (the caller falls back to defaultAiChoice).
+export function usableAiChoice(choice, providers) {
+  return choice &&
+    providers?.[choice.ai_api] &&
+    MODELS_BY_PROVIDER[choice.ai_api]?.some((m) => m.id === choice.ai_model)
+    ? choice
+    : null
+}
+
 // Lists the models of every configured AI provider, grouped by provider once
 // there is more than one. Renders nothing if none is configured.
 export default function AiModelSelect({ providers, value, onChange }) {

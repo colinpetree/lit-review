@@ -183,7 +183,7 @@ const PAPER_DB_KEY_PROVIDERS = [
   // favicon, so its icon is a full-color image.
   {
     id: 'elsevier',
-    label: 'Elsevier',
+    label: 'Elsevier (Scopus)',
     icon: ElsevierIcon,
     description: 'Optional. Adds Elsevier (Scopus) as a search source on Discover Papers and looks up missing abstracts for Elsevier papers (DOIs starting 10.1016), which other sources often can’t provide. Free for non-commercial use. Stored locally and only sent to Elsevier.',
     keyUrl: 'https://dev.elsevier.com/',

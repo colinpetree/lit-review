@@ -10,6 +10,7 @@ the user. Callers either stop using that source for the rest of the run
 import re
 import threading
 import time
+from urllib.parse import urlparse
 
 import requests
 
@@ -38,6 +39,29 @@ def doi_url(doi):
     deduped on, so every source should report its DOIs this way."""
     doi = normalize_doi(doi)
     return f"https://doi.org/{doi}" if doi else None
+
+
+_SECRET_PARAM = re.compile(r"((?:api[_-]?key|apikey|key|token)=)[^&\s'\"]+", re.I)
+
+
+def redact(text):
+    """`text` with the value of any api_key/key/token query parameter hidden.
+    requests puts the full URL, query string included, in its error messages,
+    and some sources (OpenAlex, Springer Nature) take the key as a parameter, so
+    anything that logs an exception must pass it through here first."""
+    return _SECRET_PARAM.sub(r"\1REDACTED", str(text))
+
+
+def safe_url(value):
+    """`value` stripped if it is an http(s) URL with a host, else None. Paper
+    links come from outside APIs or are typed in by the user, and are opened in
+    the browser, so schemes like javascript: or data: must never be kept."""
+    value = (value or "").strip() if isinstance(value, str) else ""
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return None
+    return value if parsed.scheme in ("http", "https") and parsed.netloc else None
 
 
 def clean_text(text):

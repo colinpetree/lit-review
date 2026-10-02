@@ -301,6 +301,16 @@ export default function SettingsPage() {
       description="Install API Keys for paper databases and AI platforms. Minimum is OpenAlex and one AI provider. More paper databases gives you more papers in your datasets and cross-check each other to fill in missing abstracts. More AI providers just gives you more AI model options to choose from."
     >
       <div className="flex flex-col gap-8">
+        {keyStatus?.store_error && (
+          <p
+            role="alert"
+            className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-900/20 dark:text-red-300"
+          >
+            Your saved API keys could not be read, so they are shown as missing. A copy of the
+            unreadable file is kept in the app's settings folder. Saving a key again starts a fresh
+            store; you will need to enter each key again.
+          </p>
+        )}
         <SettingsSection title="Theme">
           <div className="max-w-xs">
             <Combobox options={THEME_OPTIONS} value={theme} onChange={setTheme} placeholder="Theme" />

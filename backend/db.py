@@ -19,6 +19,7 @@ from pathlib import Path
 import platformdirs
 
 from credentials import APP_NAME
+from source_http import safe_url
 
 # LIT_REVIEW_DATA_DIR is for development and tests only, so they never touch the
 # real database.
@@ -378,7 +379,7 @@ def get_or_create_paper(result):
                 result.get("citation_count", 0),
                 result.get("venue"),
                 json.dumps(result.get("authors") or []),
-                result.get("url"),
+                safe_url(result.get("url")),
                 int(bool(result.get("is_review"))),
                 _now(),
             ),

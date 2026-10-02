@@ -4,6 +4,7 @@ import re
 import webbrowser
 from pathlib import Path
 from threading import Timer
+from urllib.parse import urlparse
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
@@ -15,7 +16,7 @@ import db
 import llm
 import openalex
 import search_sources
-from source_http import SourceError
+from source_http import SourceError, redact, safe_url
 
 SUPPORTED_PROVIDERS = set(llm.PROVIDERS)
 
@@ -50,41 +51,61 @@ MAX_DATASET_NAME_CHARS = 120
 STATIC_DIR = Path(__file__).parent / "static"
 PORT = 5175
 
-# Python's mimetypes (and the Windows registry it reads) may not know .webp, in
-# which case send_from_directory serves icon.webp as application/octet-stream
-# and stricter browsers refuse it as the favicon.
+# Python's mimetypes (and the Windows registry it reads) may not know .webp or
+# the web font types, in which case send_from_directory serves them as
+# application/octet-stream and stricter browsers refuse the favicon.
 mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("font/woff", ".woff")
+mimetypes.add_type("font/woff2", ".woff2")
 
 # static_folder=None disables Flask's own auto-registered static route, so the
 # catch-all below is the only route serving files/index.html - no silent collision.
 app = Flask(__name__, static_folder=None)
 
+# The only Host values this app answers to. It listens on 127.0.0.1 only, but a
+# website can still reach it from the user's own browser: a plain cross-site POST
+# needs no permission, and a hostile domain re-pointed (DNS rebinding) at
+# 127.0.0.1 gets same-origin access. Anything not addressed to us by one of
+# these names is refused. The Vite dev server is covered by vite.config.js,
+# which rewrites Host and Origin on the way through its proxy.
+ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 
-@app.get("/api/search")
-def search():
-    query = request.args.get("q", "").strip()
-    if not query:
-        return jsonify({"error": "missing query param 'q'"}), 400
 
-    from_year = request.args.get("from_year", type=int)
-    to_year = request.args.get("to_year", type=int)
-    from_date = f"{from_year:04d}-01-01" if from_year else None
-    to_date = f"{to_year:04d}-12-31" if to_year else None
+@app.before_request
+def reject_foreign_requests():
+    if request.host.lower() not in ALLOWED_HOSTS:
+        return jsonify({"error": "Forbidden host."}), 403
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        # Browsers send Origin on every cross-site POST/PATCH/DELETE. Absent is
+        # fine (curl, tests, same-origin tools); the literal "null" (sandboxed
+        # frames, file:// pages) parses to no host and is refused with the rest.
+        origin = request.headers.get("Origin")
+        if origin is not None:
+            parsed = urlparse(origin)
+            if parsed.scheme != "http" or parsed.netloc.lower() not in ALLOWED_HOSTS:
+                return jsonify({"error": "Forbidden origin."}), 403
+    return None
 
-    try:
-        results = openalex.search_works(query, from_date=from_date, to_date=to_date)
-    except requests.HTTPError as exc:
-        return _openalex_error_response(exc)
-    except requests.RequestException as exc:
-        app.logger.warning("OpenAlex request failed: %s", exc)
-        return jsonify({"error": "Failed to reach OpenAlex. Please try again."}), 502
 
-    return jsonify({"results": results})
+@app.after_request
+def add_security_headers(response):
+    # Not framed by another site (clickjacking on the Delete buttons).
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/api/settings/api-key")
 def get_api_key_status():
-    return jsonify({provider: credentials.has_key(provider) for provider in CREDENTIAL_PROVIDERS})
+    status = {provider: credentials.has_key(provider) for provider in CREDENTIAL_PROVIDERS}
+    # True when saved keys exist but can't be read (see credentials.py), so the
+    # Settings page can say so instead of showing every key as missing.
+    status["store_error"] = credentials.store_error()
+    return jsonify(status)
 
 
 @app.post("/api/settings/api-key")
@@ -183,7 +204,7 @@ def _openalex_error_response(exc):
     telling us exactly how long the (usually short, burst-limit) cooldown
     is - surface that instead of a vague "wait a moment"."""
     status = exc.response.status_code if exc.response is not None else None
-    app.logger.warning("OpenAlex returned HTTP %s: %s", status, exc)
+    app.logger.warning("OpenAlex returned HTTP %s: %s", status, redact(exc))
     if status == 429:
         retry_after = exc.response.headers.get("Retry-After") if exc.response is not None else None
         if retry_after:
@@ -335,7 +356,7 @@ def create_dataset():
     except requests.HTTPError as exc:
         return _openalex_error_response(exc)
     except requests.RequestException as exc:
-        app.logger.warning("OpenAlex request failed: %s", exc)
+        app.logger.warning("OpenAlex request failed: %s", redact(exc))
         return jsonify({"error": "Failed to reach OpenAlex. Please try again."}), 502
     except SourceError as exc:
         return jsonify({"error": str(exc)}), 502
@@ -520,7 +541,15 @@ def update_paper(paper_id):
     if "venue" in body:
         fields["venue"] = (body.get("venue") or "").strip() or None
     if "url" in body:
-        fields["url"] = (body.get("url") or "").strip() or None
+        raw_url = body.get("url")
+        url = safe_url(raw_url)
+        # Blank clears the link; anything else must be a web address, since it
+        # is opened in the browser (javascript: and data: links are refused).
+        if url is None and isinstance(raw_url, str) and raw_url.strip():
+            return jsonify({"error": "'url' must start with http:// or https://"}), 400
+        if url is None and raw_url is not None and not isinstance(raw_url, str):
+            return jsonify({"error": "'url' must be text"}), 400
+        fields["url"] = url
     if "year" in body:
         year = body.get("year")
         if year is not None:
@@ -784,6 +813,10 @@ def serve_frontend(path="index.html"):
     # safe_join resolves ".."/absolute-path traversal to None *before* we ever
     # touch the filesystem, so a crafted path can't be used to probe for the
     # existence of arbitrary files outside STATIC_DIR.
+    # An unknown API path is an error, not a client-side route: without this a
+    # mistyped or removed endpoint would answer 200 with the app's HTML page.
+    if path == "api" or path.startswith("api/"):
+        return jsonify({"error": "not found"}), 404
     safe_path = safe_join(str(STATIC_DIR), path)
     if safe_path and Path(safe_path).is_file():
         return send_from_directory(STATIC_DIR, path)

@@ -80,11 +80,28 @@ Single Flask process serves both the API and the built frontend; there is no sep
 frontend server at runtime. `vite build` writes straight into `backend/static`, so a
 rebuild is required for Flask to pick up frontend changes. The catch-all route in
 `backend/app.py` is `safe_join`-guarded and falls back to `index.html` so client-side
-routes survive refresh. In dev, run Flask on 5175 (hardcoded) next to `npm run dev`.
+routes survive refresh. An unknown `/api/...` path is a JSON 404, not the app page. In dev, run
+Flask on 5175 (hardcoded) next to `npm run dev`.
+
+**Request guard (do not weaken).** The app listens on 127.0.0.1 only, but a website open in the
+user's own browser can still reach it. `reject_foreign_requests` in `app.py` therefore refuses
+any request whose `Host` is not `127.0.0.1:5175` or `localhost:5175` (DNS rebinding) and any
+POST/PATCH/DELETE whose `Origin` is present and is not one of those (a plain cross-site POST
+needs no preflight, and routes like `/process` and `/find-abstracts` take no body, so the
+JSON-only body parsing does not protect them). A request with no `Origin` is allowed (curl,
+tests). Consequences: a new route never needs CORS and must not add it; every mutating route is
+covered automatically; tests must use the `client` fixture, which sends the right Host. The Vite
+dev proxy (`vite.config.js`) rewrites Host, and rewrites Origin only when it came from a localhost
+page, so a website posting to the dev server is still refused. Every response also carries
+`X-Frame-Options: DENY`, a `frame-ancestors 'none'` CSP, `nosniff` and `no-referrer`; `/api/*`
+responses are `no-store`. Anything that logs an exception from an outside API must pass it through
+`source_http.redact` (OpenAlex and Springer take the key as a query parameter, and `requests`
+puts the whole URL in its error text). Links to papers must pass `source_http.safe_url` on the
+way in (only http/https) and `isHttpUrl` (`lib/format.js`) on the way out.
 
 ### Backend modules
 
-- `app.py` - all routes. `/api/search` (raw OpenAlex proxy), `/api/datasets/*`,
+- `app.py` - all routes. `/api/datasets/*`,
   `/api/papers/<id>`, `/api/analysis-runs/*`, `/api/settings/api-key`.
 - `openalex.py` - Works API client with retry and cross-query `dedupe`. Reconstructs
   abstracts from OpenAlex's inverted-index format (`{word: [positions]}`).
@@ -135,7 +152,11 @@ routes survive refresh. In dev, run Flask on 5175 (hardcoded) next to `npm run d
   model listed is that provider's default, and `_validate_ai_model` in `app.py` rejects any
   provider/model pair not in it with a 400. Adding a model means a `MODELS` entry plus the
   frontend's `lib/models.js`, which mirrors it by hand. Adding a provider also needs a key
-  card in `SettingsPage.jsx` and a `PROVIDER_LABELS` entry.
+  card in `SettingsPage.jsx` and a `PROVIDER_LABELS` entry. Paper text sent to the judge is
+  untrusted (an abstract can say "score this 100"): each paper and example is wrapped in
+  `<paper>`/`<example>` tags with `<title>`/`<abstract>`, `_fence` defuses any of those tag names
+  inside the text (other `<` is left alone), and the system prompt tells the model to ignore
+  instructions in them. Keep that structure when changing the prompt.
 - `db.py` - stdlib `sqlite3` (no ORM), short-lived connection per call, a module `_LOCK`
   serializing writes. DB lives in the platformdirs user-data dir, not the repo. Schema
   changes to existing tables go through the idempotent ALTER-based `_migrate`, since
@@ -144,7 +165,14 @@ routes survive refresh. In dev, run Flask on 5175 (hardcoded) next to `npm run d
 - `credentials.py` - API keys (the three AI providers plus openalex, elsevier, springernature,
   semanticscholar; allowed names are `CREDENTIAL_PROVIDERS` in `app.py`) in a Fernet-encrypted file in the
   platformdirs config dir, guarded by thread and file locks. Deliberately not the OS
-  keyring, so one mechanism works identically on every OS.
+  keyring, so one mechanism works identically on every OS. The Fernet key sits in the same
+  folder, so this hides keys from backups and screenshots, not from other software running as the
+  user; do not describe it as secure storage. Writes are atomic (temp file, then replace). A store
+  that exists but can't be read (missing or damaged key file, or it won't decrypt) is never read
+  as "no keys" by anything that writes: `set_key` renames both files to `*.corrupt-<time>` first,
+  readers treat it as empty (the `<NAME>_API_KEY` env fallback still works) and
+  `GET /api/settings/api-key` adds `"store_error": true`, which Settings shows as a notice. The
+  status response now has that one non-provider key, so code reading it must index by provider id.
 
 ### Data model
 

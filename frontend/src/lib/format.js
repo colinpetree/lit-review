@@ -11,6 +11,12 @@ function formatNewest(newestYear, newestPublicationDate) {
   return newestYear ? `${newestYear}` : null
 }
 
+// Only web addresses are turned into links: a paper's url comes from outside
+// APIs or was typed in, and a javascript: or data: link must never be opened.
+export function isHttpUrl(value) {
+  return typeof value === 'string' && /^https?:\/\/\S/i.test(value)
+}
+
 // Timestamps are stored as UTC ISO strings; show them in the user's locale.
 export function formatDate(iso) {
   if (!iso) return null

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { BookmarkPlus, BookOpen, BookOpenCheck, CircleSlash2, Eye, EyeOff, Pencil, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { patchJson } from '../lib/api'
+import { isHttpUrl } from '../lib/format'
 import MoreMenu from './MoreMenu'
 import ConfirmModal from './ConfirmModal'
 import AutoGrowTextarea from './AutoGrowTextarea'
@@ -203,7 +204,7 @@ export default function PaperCard({
     >
       <div className="flex items-start justify-between gap-4">
         <h3 className={`font-medium text-gray-800 ${dim}`}>
-          {result.url ? (
+          {isHttpUrl(result.url) ? (
             <a
               href={result.url}
               target="_blank"

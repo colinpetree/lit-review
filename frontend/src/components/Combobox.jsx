@@ -16,7 +16,6 @@ import { ChevronDown } from 'lucide-react'
 //                 filters from scratch instead of editing the label
 // value: the selected option's value, or null/undefined for none.
 // subtle: a shade lighter gray for the text and icons, for secondary controls.
-// narrowScrollbar: the list uses the thin scrollbar (.narrow-scrollbar in index.css).
 export default function Combobox({
   options,
   value,
@@ -24,7 +23,6 @@ export default function Combobox({
   placeholder,
   emptyText = 'No matches.',
   subtle = false,
-  narrowScrollbar = false,
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -138,9 +136,7 @@ export default function Combobox({
           ref={listRef}
           role="listbox"
           onMouseDown={(e) => e.preventDefault()}
-          className={`absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-surface py-1 shadow-lg ${
-            narrowScrollbar ? 'narrow-scrollbar' : ''
-          }`}
+          className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-surface py-1 shadow-lg"
         >
           {visible.map((option, i) => {
             const showHeading = showGroups && option.group && option.group !== visible[i - 1]?.group

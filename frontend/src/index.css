@@ -92,19 +92,21 @@ input:-webkit-autofill {
   translate: 0 var(--icon-nudge, -0.5px);
 }
 
-/* Narrow scrollbar, copied from an earlier project's scroll areas. */
-.narrow-scrollbar::-webkit-scrollbar {
+/* Narrow scrollbar on every scrolling area in the app (page, sidebar, lists,
+   dropdowns), copied from an earlier project's scroll areas. */
+*::-webkit-scrollbar {
   width: 4px;
+  height: 4px;
 }
-.narrow-scrollbar::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
-.narrow-scrollbar::-webkit-scrollbar-thumb {
+*::-webkit-scrollbar-thumb {
   background: rgb(var(--gray-300));
   border-radius: 2px;
   cursor: pointer;
 }
-.narrow-scrollbar::-webkit-scrollbar-button {
+*::-webkit-scrollbar-button {
   display: none;
 }
 

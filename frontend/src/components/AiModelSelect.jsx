@@ -57,7 +57,6 @@ export default function AiModelSelect({ providers, value, onChange }) {
         onChange({ ai_api, ai_model })
       }}
       placeholder="Choose a model"
-      narrowScrollbar
     />
   )
 }

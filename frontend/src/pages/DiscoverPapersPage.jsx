@@ -185,7 +185,7 @@ export default function DiscoverPapersPage() {
             <AutoGrowTextarea
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder="e.g. nitrogen cycling in peatland soils"
+              placeholder="e.g. peatland carbon cycling"
               rows={3}
               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
             />

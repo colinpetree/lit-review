@@ -808,7 +808,7 @@ def get_run_datasets(run_id):
 
 def list_all_runs():
     """All runs with their linked dataset names, status, and cost, for the
-    Analysis Results list page."""
+    Results list page."""
     with closing(_connect()) as conn:
         rows = conn.execute(
             """

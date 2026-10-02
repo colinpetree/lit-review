@@ -5,9 +5,9 @@ import { ChartColumn, Database, FlaskConical, ListChecks, Search, Settings } fro
 export const NAV_ITEMS = [
   { to: '/discover', label: 'Discover Papers', icon: Search },
   { to: '/datasets', label: 'Paper Datasets', icon: Database },
-  { to: '/analyze', label: 'Analyze Papers', icon: FlaskConical },
   { to: '/prompts', label: 'Scoring Prompts', icon: ListChecks },
-  { to: '/results', label: 'Analysis Results', icon: ChartColumn },
+  { to: '/evaluate', label: 'Evaluate Papers', icon: FlaskConical },
+  { to: '/results', label: 'Results', icon: ChartColumn },
 ]
 
 export const SETTINGS_ITEM = { to: '/settings', label: 'Settings', icon: Settings }

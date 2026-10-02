@@ -146,7 +146,7 @@ export default function RunResultsPage() {
 
   return (
     <PageShell>
-      <BackLink to="/results">Back to Analysis Results</BackLink>
+      <BackLink to="/results">Back to Results</BackLink>
 
       <Card className="mt-4 flex flex-col gap-5">
         <div className="flex items-start justify-between gap-4">

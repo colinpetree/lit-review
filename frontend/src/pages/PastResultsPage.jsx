@@ -44,14 +44,14 @@ export default function PastResultsPage() {
 
   return (
     <PageShell
-      title="Analysis Results"
+      title="Results"
       icon={navIcon('/results')}
       description="Saved results from previous runs where the AI judge scored papers based on your research criteria."
     >
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {runs && runs.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No analysis runs yet - run one from Discover Papers or Analyze Papers.
+          No evaluation runs yet - run one from Evaluate Papers.
         </p>
       ) : null}
       {runs && runs.length > 0 ? (

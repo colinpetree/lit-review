@@ -1,5 +1,5 @@
 // Search, date range, model filter and newest/oldest sort shared by the Paper
-// Paper Datasets, Analysis Results and Scoring Prompts lists.
+// Paper Datasets, Results and Scoring Prompts lists.
 
 export const EMPTY_LIST_FILTER = { query: '', dateFrom: '', dateTo: '', model: '' }
 

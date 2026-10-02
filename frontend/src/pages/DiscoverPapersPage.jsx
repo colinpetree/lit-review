@@ -21,8 +21,8 @@ const isSourceAvailable = (source, providers, pubmedEnabled) =>
   (source.id !== 'pubmed' || pubmedEnabled) && (!source.key || Boolean(providers?.[source.key]))
 
 // Discover Papers only retrieves papers into a dataset - it never scores or
-// analyzes them. Relevance scoring is a separate, deliberate step the user
-// takes on the Analyze Papers page (against whatever grading criteria they
+// evaluates them. Relevance scoring is a separate, deliberate step the user
+// takes on the Evaluate Papers page (against whatever grading criteria they
 // choose there, which may differ from this retrieval question) - a dataset
 // fresh out of Discover Papers should show no scores at all.
 const STAGE_LABELS = {

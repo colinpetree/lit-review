@@ -12,9 +12,9 @@ import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import { postJson } from '../lib/api'
 import { driveAnalysisRun } from '../lib/driveAnalysisRun'
 import { formatDateTime } from '../lib/format'
-import { loadAnalyzeAiChoice, saveAnalyzeAiChoice } from '../lib/analyzeSettings'
+import { loadEvaluateAiChoice, saveEvaluateAiChoice } from '../lib/evaluateSettings'
 
-export default function AnalyzePapersPage() {
+export default function EvaluatePapersPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const preselectedId = searchParams.get('dataset')
@@ -31,7 +31,7 @@ export default function AnalyzePapersPage() {
   const [prompts, setPrompts] = useState([])
   // Starts from the model of the last run (saved when a run starts); one that is
   // no longer listed or configured falls back to the default.
-  const [aiChoice, setAiChoice] = useState(loadAnalyzeAiChoice)
+  const [aiChoice, setAiChoice] = useState(loadEvaluateAiChoice)
   const [status, setStatus] = useState('idle') // idle | loading | error
   const [error, setError] = useState(null)
   const [progress, setProgress] = useState(null)
@@ -87,7 +87,7 @@ export default function AnalyzePapersPage() {
   const configured = hasConfiguredProvider(providers)
   const choice = usableAiChoice(aiChoice, providers) || defaultAiChoice(providers)
 
-  const runAnalysis = async (e) => {
+  const runEvaluation = async (e) => {
     e.preventDefault()
     if (!configured) {
       navigate('/settings')
@@ -95,7 +95,7 @@ export default function AnalyzePapersPage() {
     }
     if (!selected.size || !promptReady) return
 
-    saveAnalyzeAiChoice(choice)
+    saveEvaluateAiChoice(choice)
 
     activeRequestRef.current?.abort()
     const controller = new AbortController()
@@ -129,14 +129,14 @@ export default function AnalyzePapersPage() {
 
   return (
     <PageShell
-      title="Analyze Papers"
-      icon={navIcon('/analyze')}
+      title="Evaluate Papers"
+      icon={navIcon('/evaluate')}
       description="Describe specifically what you are looking for and the AI model will grade each paper abstract from a dataset against your criteria. Results are saved and papers are shown in order of relevance."
     >
       <Card>
-        <form onSubmit={runAnalysis} className="flex flex-col gap-4">
+        <form onSubmit={runEvaluation} className="flex flex-col gap-4">
           <div>
-            <span className="block text-sm font-medium text-gray-700">Datasets to analyze</span>
+            <span className="block text-sm font-medium text-gray-700">Datasets to evaluate</span>
             <div className="mt-1 flex flex-wrap items-start gap-2">
               <div className="w-full">
                 <Combobox
@@ -242,7 +242,7 @@ export default function AnalyzePapersPage() {
                 : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-surface disabled:text-gray-400 disabled:hover:bg-surface'
             }`}
           >
-            {providers && !configured ? 'Configure API key' : status === 'loading' ? 'Analyzing…' : 'Run Analysis'}
+            {providers && !configured ? 'Configure API key' : status === 'loading' ? 'Evaluating…' : 'Run Evaluation'}
           </button>
         </form>
       </Card>

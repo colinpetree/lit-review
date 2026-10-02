@@ -21,7 +21,7 @@ export default function RunMenu({ run, onRenamed, onDelete, className }) {
       <MoreMenu className={className} items={items} />
       {modal === 'rename' ? (
         <RenameModal
-          title="Rename analysis run"
+          title="Rename run"
           initialName={run.name ?? ''}
           maxLength={MAX_RUN_NAME_CHARS}
           onSave={async (name) => {

@@ -197,7 +197,7 @@ def _openalex_error_response(exc):
 def _dataset_to_dict(dataset_row, papers):
     # Deliberately no run/score info here - a dataset is pure retrieval
     # (PLAN.md's Paper/Dataset model), never joined to any analysis_run for
-    # display. Scores only ever appear on the Analyze Papers / Analysis Results
+    # display. Scores only ever appear on the Evaluate Papers / Results
     # side (RunResultsPage), never on Paper Datasets.
     # Excluded papers are in `papers` (so the detail page can show them grayed
     # out) but don't count toward the year spread, matching list_datasets.
@@ -631,7 +631,7 @@ def process_analysis_run(run_id):
         run_row = db.get_analysis_run(run_id)
         return jsonify({**_run_to_dict(run_row), "processed": 0})
 
-    # Only a prompt created by this run (from Analyze) is still waiting for an
+    # Only a prompt created by this run (from Evaluate) is still waiting for an
     # AI title; existing prompts never ask for one.
     prompt = db.get_prompt(run_row["prompt_id"], include_deleted=True) if run_row["prompt_id"] else None
     want_title = bool(prompt and prompt["title_pending"])

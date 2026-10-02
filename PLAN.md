@@ -111,7 +111,7 @@ localhost.
   `webbrowser.open()`, so there's no separate "installer" UX — just run the script.
 - **Frontend**: React 19 + Vite + Tailwind v3 + react-router, with lucide icons and
   self-hosted Source Sans 3 / Source Code Pro fonts. Pages: Discover Papers, Paper Datasets
-  (+ detail), Analyze Papers, Scoring Prompts (+ detail), Analysis Results (+ run results) and
+  (+ detail), Evaluate Papers, Scoring Prompts (+ detail), Results (+ run results) and
   Settings, under a shared layout. `vite build` writes straight into `backend/static`,
   which Flask serves, so the shipped app is a single Flask process (no separate frontend dev
   server needed at runtime; in dev, `npm run dev` proxies `/api` to Flask on 5175).
@@ -332,7 +332,7 @@ not a "Fix this score" action with a user-picked bracket and note, and there is 
 **Problem.** The judge's strictness is now fixed by a system prompt with score brackets
 (see `backend/llm.py`), but a user has no way to teach it what "relevant" means for their
 specific question. Per-paper yes/no/maybe labels (Core pipeline step 7) would add a new
-concept to an already slightly confusing flow (discover, dataset, analyze, results).
+concept to an already slightly confusing flow (discover, dataset, evaluate, results).
 
 **Idea.** Introduce a `prompt` entity that bundles what the user is looking for with
 worked examples, and apply it to datasets:
@@ -344,7 +344,7 @@ worked examples, and apply it to datasets:
 - **Run:** a prompt applied to one or more datasets, as today, except the prompt comes
   from the saved object.
 
-**User flow.** Write a prompt on Analyze and run it. On the results page, a wrongly scored
+**User flow.** Write a prompt on Evaluate and run it. On the results page, a wrongly scored
 paper gets a "Fix this score" action (pick the correct bracket, add a note). That paper is
 saved as an example on the prompt and used in the next run. A "this one is right" action
 saves confirmed good calls as well.
@@ -363,7 +363,7 @@ saves confirmed good calls as well.
   the "never invent citations" rule.
 
 **Suggested phasing.** Steps 1 and 2 are done; step 3 is not.
-1. Saved prompts only (no examples): new `prompt` table, Analyze picks or creates one,
+1. Saved prompts only (no examples): new `prompt` table, Evaluate picks or creates one,
    prompt snapshot stored on the run. Small, and clarifies what the prompt box is.
 2. Examples on prompts: results-page action, examples injected into `score_batch`.
 3. Later: use examples to inform query expansion.
@@ -380,13 +380,13 @@ saves confirmed good calls as well.
   allowed there. Examples are never added from the prompt itself.
 - **Prompts are reusable across datasets** and not tied to one. A run picks a prompt.
 - **Creating prompts.** (1) "New prompt" on the Scoring Prompts page: a modal with a title
-  and the ideal research paper contents. (2) Running an analysis on Analyze with the "New prompt"
+  and the ideal research paper contents. (2) Running an evaluation on Evaluate with the "New prompt"
   option and ideal research paper contents. In case 2 the first scoring call of the run also
   returns a 2-4 word title, and the server names the prompt with it (a placeholder of
   the question's first four words is used until then, or if no title comes back). A title
   is only ever requested for a prompt created this way, never for an existing prompt, and
   it never replaces a title the user set: saving any edit clears the pending flag.
-- **Analyze picker.** The ideal research paper contents field becomes a type-to-filter dropdown of
+- **Evaluate picker.** The ideal research paper contents field becomes a type-to-filter dropdown of
   saved prompts with "New prompt" first, which reveals the ideal research paper contents text box.
   Choosing an existing prompt shows its description and example count.
 - **Examples** are added only from a run's results, through a more-horizontal menu on a

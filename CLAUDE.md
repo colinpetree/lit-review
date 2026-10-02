@@ -155,7 +155,7 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   and `examples_snapshot` (the examples used), so editing a prompt never changes old runs.
   `prompt_example` rows are added only from a run's results ("Mark as example", which
   copies that paper's score and reasoning); only the newest `db.EXAMPLE_LIMIT` are sent to
-  the judge. A prompt created from Analyze gets an AI title (requested in the run's first
+  the judge. A prompt created from Evaluate gets an AI title (requested in the run's first
   scoring call via `title_pending`; never for existing prompts, and any user edit clears
   the flag). Prompts, runs and datasets are soft-deleted (`deleted_at`).
 
@@ -163,7 +163,7 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   (`db._unique_run_name` adds " (2)" etc.; renames that clash get a 409). It starts as the
   prompt's name; for a run that created its own prompt, `name_auto` lets the AI-generated
   prompt title replace the placeholder unless the user renamed first. Renamed via
-  `PATCH /api/analysis-runs/<id>` (`RunMenu` + `RenameModal`, on the Analysis Results cards
+  `PATCH /api/analysis-runs/<id>` (`RunMenu` + `RenameModal`, on the Results cards
   and the run page). Old runs are backfilled from their prompt name in `_migrate`.
 - Sorting and the dataset date range prefer `paper.publication_date` over `year`, so
   `db.update_paper` clears that paper's full date when it contradicts the saved year (so
@@ -181,7 +181,7 @@ API-returned abstracts and must never invent citations.
 ### Frontend
 
 React 19 + Vite + Tailwind v3 (PostCSS, `tailwind.config.js`, same as an earlier project) + react-router. Routes are in
-`src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), analyze,
+`src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), evaluate,
 prompts (+ `:id`), results (+ `:id`), settings. Shared UI: `MoreMenu` (more-horizontal
 popover), `Modal`/`ConfirmModal`, `DeleteMenu`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
 

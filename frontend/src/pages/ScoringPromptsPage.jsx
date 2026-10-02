@@ -73,7 +73,7 @@ export default function ScoringPromptsPage() {
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {prompts && prompts.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No prompts yet - create one here, or run an analysis from Analyze Papers.
+          No prompts yet - create one here, or run an evaluation from Evaluate Papers.
         </p>
       ) : null}
       {prompts && prompts.length > 0 ? (

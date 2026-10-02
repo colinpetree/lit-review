@@ -207,6 +207,16 @@ def _migrate(conn):
         conn.execute("ALTER TABLE dataset ADD COLUMN sources TEXT")
         conn.commit()
 
+    # The search's publication date bounds ("YYYY-MM-DD"), replacing the bare
+    # years in from_year/to_year (still filled in, as the year of each bound).
+    # Datasets from before get a bound from their year: Jan 1 / Dec 31.
+    for column in ("from_date", "to_date"):
+        if column not in dataset_columns:
+            conn.execute(f"ALTER TABLE dataset ADD COLUMN {column} TEXT")
+    conn.execute("UPDATE dataset SET from_date = printf('%04d-01-01', from_year) WHERE from_date IS NULL AND from_year IS NOT NULL")
+    conn.execute("UPDATE dataset SET to_date = printf('%04d-12-31', to_year) WHERE to_date IS NULL AND to_year IS NOT NULL")
+    conn.commit()
+
     # Datasets from before titles existed get the first few words of their
     # topic as a title (editable later). New datasets always set a name.
     for row in conn.execute("SELECT id, verbose_query FROM dataset WHERE name IS NULL").fetchall():
@@ -528,22 +538,25 @@ def _dataset_sources(raw):
     return sources or ["openalex"]
 
 
-def create_dataset(verbose_query, expanded_queries, from_year=None, to_year=None, name=None, sources=None):
-    """name is the short title (AI-written at expansion time); without one, the
+def create_dataset(verbose_query, expanded_queries, from_date=None, to_date=None, name=None, sources=None):
+    """from_date and to_date are the search's "YYYY-MM-DD" publication date bounds. name is the short title (AI-written at expansion time); without one, the
     first few words of the topic stand in. sources are the paper source ids it
     was retrieved from (default OpenAlex)."""
     name = (name or "").strip() or _placeholder_title(verbose_query)
     with _LOCK, closing(_connect()) as conn:
         cur = conn.execute(
             """
-            INSERT INTO dataset (name, verbose_query, from_year, to_year, expanded_queries, sources, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO dataset
+                (name, verbose_query, from_year, to_year, from_date, to_date, expanded_queries, sources, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
                 verbose_query,
-                from_year,
-                to_year,
+                int(from_date[:4]) if from_date else None,
+                int(to_date[:4]) if to_date else None,
+                from_date,
+                to_date,
                 json.dumps(expanded_queries),
                 json.dumps(sources or ["openalex"]),
                 _now(),
@@ -563,8 +576,8 @@ def add_papers_to_dataset(dataset_id, paper_ids):
         conn.commit()
 
 
-def find_dataset(verbose_query, from_year=None, to_year=None, sources=None):
-    """Look up an existing dataset with the same question + year filters +
+def find_dataset(verbose_query, from_date=None, to_date=None, sources=None):
+    """Look up an existing dataset with the same question + date filters +
     paper sources, so resubmitting an identical search reuses it instead of
     re-running expansion/retrieval (see PLAN.md's reuse-first rule for
     POST /api/datasets). The same topic searched in different sources is a
@@ -576,11 +589,11 @@ def find_dataset(verbose_query, from_year=None, to_year=None, sources=None):
             SELECT id, sources FROM dataset
             WHERE verbose_query = ?
               AND deleted_at IS NULL
-              AND (from_year IS ? OR from_year = ?)
-              AND (to_year IS ? OR to_year = ?)
+              AND (from_date IS ? OR from_date = ?)
+              AND (to_date IS ? OR to_date = ?)
             ORDER BY created_at DESC
             """,
-            (verbose_query, from_year, from_year, to_year, to_year),
+            (verbose_query, from_date, from_date, to_date, to_date),
         ).fetchall()
         for row in rows:
             if sorted(_dataset_sources(row["sources"])) == wanted:

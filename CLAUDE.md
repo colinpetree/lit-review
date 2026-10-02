@@ -79,6 +79,12 @@ routes survive refresh. In dev, run Flask on 5175 (hardcoded) next to `npm run d
   (`lib/pubmedSetting.js`, on by default) hides PubMed from Discover Papers; it is a UI
   preference only, the backend still accepts `pubmed`. Springer Nature is
   deliberately lookup-only (its search matched too strictly to be useful).
+  The publication date range is `from_date`/`to_date` ("YYYY-MM-DD"; the Discover fields
+  take a year, month or full date, a bare `from_year`/`to_year` is still accepted), stored on the
+  dataset and matched when reusing a search. Each source narrows by its own means (some only by
+  year), then `search_sources._filtered` keeps only papers whose shown date is in range (a PubMed
+  paper with only a month or year is stored as the 1st but kept if any day of that month/year
+  overlaps the range, via `date_precision`).
   `POST /api/datasets` searches every selected source with every
   expanded query, and any source failing fails the whole retrieval with nothing saved. A
   dataset records its `sources` (NULL = OpenAlex) and "reuse an identical search" also

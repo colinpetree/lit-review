@@ -1,18 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import DatePicker from './DatePicker'
+import { cleanDateInput, formatBound } from '../lib/dateRange'
 
-// The condensed text shown while the popover is closed.
-function rangeText(from, to) {
-  if (from && to) return `${from}-${to}`
-  if (from) return `${from}-present`
+// The condensed text shown while the popover is closed. Each end is a year or a
+// month or full date (shown like "Aug 2026" or "Aug 30, 2026").
+function rangeText(fromDate, toDate) {
+  const from = formatBound(fromDate)
+  const to = formatBound(toDate)
+  if (from && to) return `${from} - ${to}`
+  if (from) return `${from} - present`
   if (to) return `Up to ${to}`
   return 'All time'
 }
 
-// A year range shown as one short button ("All time", "1950-2026", "Up to 2020",
-// "2020-present"). Clicking opens a popover below it with the From and To year
-// inputs and a Clear Dates link; clicking outside or pressing Escape closes it.
-export default function DateRangeField({ fromYear, toYear, onFromChange, onToChange, disabled }) {
+// A publication date range shown as one short button ("All time", "1950 -
+// 2026", "Up to 2020", "Mar 5, 2026 - present"). Clicking opens a popover below it
+// with the From and To fields and a Clear Dates link; clicking outside or pressing
+// Escape closes it. Each field takes a year ("2026"), a month ("2026-03") or a
+// date ("2026-03-05") typed in, and opens a calendar to pick a date when it is clicked.
+export default function DateRangeField({ fromDate, toDate, onFromChange, onToChange, disabled }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -40,7 +47,7 @@ export default function DateRangeField({ fromYear, toYear, onFromChange, onToCha
         onClick={() => setOpen((o) => !o)}
         className="w-full rounded-md border border-gray-300 bg-surface py-2 pl-3 pr-9 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
       >
-        {rangeText(fromYear, toYear)}
+        {rangeText(fromDate, toDate)}
       </button>
       <ChevronDown size={16} className="pointer-events-none absolute right-3 top-3 text-gray-400" />
       {open ? (
@@ -50,22 +57,27 @@ export default function DateRangeField({ fromYear, toYear, onFromChange, onToCha
           className="absolute left-0 top-full z-20 mt-1 flex w-full flex-col gap-3 rounded-xl border border-gray-200 bg-surface p-3 shadow-lg"
         >
           <div className="flex gap-3">
-            {[
-              ['From year', fromYear, onFromChange],
-              ['To year', toYear, onToChange],
-            ].map(([label, value, onChange]) => (
-              <div key={label}>
-                <label className="block text-xs text-gray-500">{label}</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={4}
-                  value={value}
-                  onChange={(e) => onChange(e.target.value.replace(/\D/g, ''))}
-                  className="mt-1 w-24 rounded-md border border-gray-300 px-3 py-2 text-sm"
-                />
-              </div>
-            ))}
+            <div className="min-w-0 flex-1">
+              <label className="block text-xs text-gray-500">From</label>
+              <DatePicker
+                ariaLabel="From year, month or date"
+                placeholder="Date"
+                value={fromDate}
+                onChange={(v) => onFromChange(cleanDateInput(v))}
+                className="mt-1"
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <label className="block text-xs text-gray-500">To</label>
+              <DatePicker
+                ariaLabel="To year, month or date"
+                placeholder="Date"
+                align="right"
+                value={toDate}
+                onChange={(v) => onToChange(cleanDateInput(v))}
+                className="mt-1"
+              />
+            </div>
           </div>
           <button
             type="button"
@@ -73,7 +85,7 @@ export default function DateRangeField({ fromYear, toYear, onFromChange, onToCha
               onFromChange('')
               onToChange('')
             }}
-            disabled={!fromYear && !toYear}
+            disabled={!fromDate && !toDate}
             className="self-start text-sm text-gray-500 underline hover:text-gray-700 disabled:opacity-40 disabled:no-underline"
           >
             Clear dates

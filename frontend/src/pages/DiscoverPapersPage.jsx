@@ -13,6 +13,7 @@ import { postJson } from '../lib/api'
 import { DEFAULT_SOURCES, PAPER_SOURCES } from '../lib/paperSources'
 import { MODELS_BY_PROVIDER } from '../lib/models'
 import { loadDiscoverSettings, saveDiscoverSettings } from '../lib/discoverSettings'
+import { dateBounds, dateRangeError } from '../lib/dateRange'
 
 // A source is offered (and used) only when it is enabled: it needs no API key or
 // its key is saved, and PubMed has not been switched off in Settings.
@@ -41,8 +42,9 @@ export default function DiscoverPapersPage() {
   const [question, setQuestion] = useState('')
   const [sources, setSources] = useState(remembered.sources?.length ? remembered.sources : DEFAULT_SOURCES)
   const [sourcesEdited, setSourcesEdited] = useState(false)
-  const [fromYear, setFromYear] = useState('')
-  const [toYear, setToYear] = useState('')
+  // Each end of the publication dates is typed as a year or a full date.
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [aiChoice, setAiChoice] = useState(remembered.aiChoice)
   const [status, setStatus] = useState('idle') // idle | loading | error
   const [error, setError] = useState(null)
@@ -81,6 +83,14 @@ export default function DiscoverPapersPage() {
     const trimmed = question.trim()
     if (!trimmed || activeSources.length === 0) return
 
+    const rangeError = dateRangeError(fromDate, toDate)
+    if (rangeError) {
+      setError(rangeError)
+      setStatus('error')
+      return
+    }
+    const { from, to } = dateBounds(fromDate, toDate)
+
     saveDiscoverSettings({ sources: activeSources, aiChoice: choice })
 
     activeRequestRef.current?.abort()
@@ -97,8 +107,8 @@ export default function DiscoverPapersPage() {
         '/api/datasets/expand',
         {
           question: trimmed,
-          from_year: fromYear ? Number(fromYear) : undefined,
-          to_year: toYear ? Number(toYear) : undefined,
+          from_date: from ?? undefined,
+          to_date: to ?? undefined,
           ai_api: choice.ai_api,
           ai_model: choice.ai_model,
           sources: activeSources,
@@ -117,8 +127,8 @@ export default function DiscoverPapersPage() {
         queries: expand.queries,
         title: expand.title,
         usage: expand.usage,
-        from_year: fromYear ? Number(fromYear) : undefined,
-        to_year: toYear ? Number(toYear) : undefined,
+        from_date: from ?? undefined,
+        to_date: to ?? undefined,
         sources: activeSources,
       }
 
@@ -180,7 +190,7 @@ export default function DiscoverPapersPage() {
     <PageShell
       title="Discover Papers"
       icon={navIcon('/discover')}
-      description="Write a sentence describing the topic you want to find research papers about. Choose the databases you want to search and the AI model to process your sentence with. This will create a group of papers associated with your search."
+      description="Write a sentence describing the topic you want to find research papers about. Choose the databases you want to search and the AI model to process your sentence with. This will create a dataset of papers with abstracts associated with your search."
     >
       <Card>
         <form onSubmit={runDiscovery} className="flex flex-col gap-4">
@@ -198,10 +208,10 @@ export default function DiscoverPapersPage() {
           <div>
             <span className="block text-sm font-medium text-gray-700">Publication dates</span>
             <DateRangeField
-              fromYear={fromYear}
-              toYear={toYear}
-              onFromChange={setFromYear}
-              onToChange={setToYear}
+              fromDate={fromDate}
+              toDate={toDate}
+              onFromChange={setFromDate}
+              onToChange={setToDate}
               disabled={status === 'loading'}
             />
           </div>
@@ -214,6 +224,8 @@ export default function DiscoverPapersPage() {
                   key={source.id}
                   checked={activeSources.includes(source.id)}
                   disabled={status === 'loading'}
+                  // Only the box and the name toggle it, not the rest of the row.
+                  className="self-start"
                   onChange={(checked) => {
                     setSourcesEdited(true)
                     setSources(

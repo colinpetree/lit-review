@@ -1,4 +1,6 @@
+import datetime
 import mimetypes
+import re
 import webbrowser
 from pathlib import Path
 from threading import Timer
@@ -66,9 +68,11 @@ def search():
 
     from_year = request.args.get("from_year", type=int)
     to_year = request.args.get("to_year", type=int)
+    from_date = f"{from_year:04d}-01-01" if from_year else None
+    to_date = f"{to_year:04d}-12-31" if to_year else None
 
     try:
-        results = openalex.search_works(query, from_year=from_year, to_year=to_year)
+        results = openalex.search_works(query, from_date=from_date, to_date=to_date)
     except requests.HTTPError as exc:
         return _openalex_error_response(exc)
     except requests.RequestException as exc:
@@ -117,6 +121,36 @@ def _optional_year(body, field):
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"'{field}' must be an integer")
     return value
+
+
+def _optional_date(body, date_field, year_field, end_of_year):
+    """A "YYYY-MM-DD" bound from body[date_field], else from a bare year in
+    body[year_field] (Jan 1, or Dec 31 for an end bound), else None."""
+    value = body.get(date_field)
+    if value is not None:
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError(f"'{date_field}' must be a date like 2026-03-05")
+        try:
+            datetime.date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"'{date_field}' is not a real date") from exc
+        return value
+    year = _optional_year(body, year_field)
+    if year is None:
+        return None
+    if not 1 <= year <= 9999:
+        raise ValueError(f"'{year_field}' must be a four-digit year")
+    return f"{year:04d}-12-31" if end_of_year else f"{year:04d}-01-01"
+
+
+def _optional_range(body):
+    """(from_date, to_date) publication date bounds from a request body, each a
+    "YYYY-MM-DD" string or None. Raises ValueError (message safe to show)."""
+    from_date = _optional_date(body, "from_date", "from_year", False)
+    to_date = _optional_date(body, "to_date", "to_year", True)
+    if from_date and to_date and from_date > to_date:
+        raise ValueError("The 'from' date is after the 'to' date.")
+    return from_date, to_date
 
 
 def _validate_ai_api(ai_api):
@@ -176,6 +210,8 @@ def _dataset_to_dict(dataset_row, papers):
         "verbose_query": dataset_row["verbose_query"],
         "from_year": dataset_row["from_year"],
         "to_year": dataset_row["to_year"],
+        "from_date": dataset_row["from_date"],
+        "to_date": dataset_row["to_date"],
         "expanded_queries": dataset_row["expanded_queries"],
         "sources": dataset_row["sources"],
         "created_at": dataset_row["created_at"],
@@ -216,8 +252,7 @@ def expand_dataset_query():
         return jsonify({"error": "missing 'question'"}), 400
 
     try:
-        from_year = _optional_year(body, "from_year")
-        to_year = _optional_year(body, "to_year")
+        from_date, to_date = _optional_range(body)
         ai_api, ai_model = _ai_choice(body)
         sources = search_sources.validate_sources(body.get("sources"))
     except ValueError as exc:
@@ -230,7 +265,7 @@ def expand_dataset_query():
     # the same paper pool was already retrieved, not which model happened to
     # expand it.
     if not body.get("force_new"):
-        existing_id = db.find_dataset(question, from_year=from_year, to_year=to_year, sources=sources)
+        existing_id = db.find_dataset(question, from_date=from_date, to_date=to_date, sources=sources)
         if existing_id is not None:
             dataset_row = db.get_dataset(existing_id)
             papers = db.get_dataset_papers(existing_id)
@@ -278,8 +313,7 @@ def create_dataset():
         return jsonify({"error": "missing or empty 'queries'"}), 400
 
     try:
-        from_year = _optional_year(body, "from_year")
-        to_year = _optional_year(body, "to_year")
+        from_date, to_date = _optional_range(body)
         usage_api, usage_model = _ai_choice({"ai_api": usage.get("ai_api"), "ai_model": usage.get("model")})
         input_tokens = int(usage.get("input_tokens") or 0)
         output_tokens = int(usage.get("output_tokens") or 0)
@@ -293,7 +327,7 @@ def create_dataset():
     # dataset never silently lacks a source the user asked for.
     try:
         result_lists = [
-            search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_year, to_year)
+            search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date)
             for source_id in sources
             for q in queries
         ]
@@ -308,7 +342,7 @@ def create_dataset():
 
     expand_usage = llm.Usage(input_tokens, output_tokens, model=usage_model, provider=usage_api)
     dataset_id = db.create_dataset(
-        question, queries, from_year=from_year, to_year=to_year, name=title, sources=sources
+        question, queries, from_date=from_date, to_date=to_date, name=title, sources=sources
     )
     db.record_llm_call("query_expansion", usage_api, expand_usage.model, expand_usage, dataset_id=dataset_id)
     paper_ids = [db.get_or_create_paper(candidate) for candidate in candidates]

@@ -19,6 +19,8 @@ so those papers come in without abstracts; the dataset page's "Find missing
 abstracts" button fills them in.
 """
 
+import calendar
+import functools
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -37,7 +39,8 @@ SCOPUS_PER_PAGE = 25
 class SearchSource:
     id: str
     label: str
-    search: Callable[[str, Optional[int], Optional[int]], list]
+    # search(query, from_date, to_date): the dates are "YYYY-MM-DD" or None.
+    search: Callable[[str, Optional[str], Optional[str]], list]
     # Credential provider a key must be saved under (None = no key needed).
     required_credential: Optional[str] = None
 
@@ -47,18 +50,70 @@ def _year(value):
     return int(match.group()) if match else None
 
 
-def _search_openalex(query, from_year, to_year):
-    return openalex.search_works(query, per_page=PER_PAGE, from_year=from_year, to_year=to_year)
+def _span(result):
+    """(earliest, latest) "YYYY-MM-DD" a result could have been published on, or
+    (None, None) if nothing is known. A source that knows only the month or year
+    (`date_precision` "month" or "year", with the date filled in as the 1st) could
+    have published on any day of it."""
+    date = result.get("publication_date")
+    year = result.get("year")
+    precision = result.get("date_precision")
+    if date and precision == "month":
+        y, m = int(date[:4]), int(date[5:7])
+        return f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
+    if date and precision == "year":
+        return f"{date[:4]}-01-01", f"{date[:4]}-12-31"
+    if date:
+        return date, date
+    if year:
+        return f"{year:04d}-01-01", f"{year:04d}-12-31"
+    return None, None
 
 
-def _search_semanticscholar(query, from_year, to_year):
+def _in_range(result, from_date, to_date):
+    """Whether a result could fall within the "YYYY-MM-DD" bounds (either may be
+    None): it is kept unless every day it might have been published on is outside
+    them. A result with no date at all is kept."""
+    earliest, latest = _span(result)
+    if from_date and latest and latest < from_date:
+        return False
+    if to_date and earliest and earliest > to_date:
+        return False
+    return True
+
+
+def _filtered(search):
+    """Wrap a source's search so it only returns papers inside the requested
+    dates. Each source narrows the search its own way (some only by year, and
+    PubMed's date filter also matches a paper's print issue date), so this makes
+    the shown dates decide."""
+
+    @functools.wraps(search)
+    def wrapper(query, from_date, to_date):
+        return [r for r in search(query, from_date, to_date) if _in_range(r, from_date, to_date)]
+
+    return wrapper
+
+
+def _year_of(date):
+    return int(date[:4]) if date else None
+
+
+@_filtered
+def _search_openalex(query, from_date, to_date):
+    return openalex.search_works(query, per_page=PER_PAGE, from_date=from_date, to_date=to_date)
+
+
+@_filtered
+def _search_semanticscholar(query, from_date, to_date):
     params = {
         "query": query,
         "limit": PER_PAGE,
         "fields": "title,abstract,year,publicationDate,citationCount,externalIds,venue,authors,url,publicationTypes",
     }
-    if from_year or to_year:
-        params["year"] = f"{from_year or ''}-{to_year or ''}"
+    if from_date or to_date:
+        # Narrowed by year here; _filtered applies the exact dates.
+        params["year"] = f"{_year_of(from_date) or ''}-{_year_of(to_date) or ''}"
     response = semanticscholar_get("https://api.semanticscholar.org/graph/v1/paper/search", params)
     if response.status_code in (400, 404):
         return []
@@ -89,22 +144,24 @@ def _search_semanticscholar(query, from_year, to_year):
     return results
 
 
-def _scopus_query(query, from_year, to_year):
+def _scopus_query(query, from_date, to_date):
     # Scopus's query language treats quotes, brackets and braces specially.
     words = re.sub(r'[(){}\[\]"\\]', " ", query).strip()
     scopus = f"TITLE-ABS-KEY({words})"
-    if from_year:
-        scopus += f" AND PUBYEAR > {from_year - 1}"
-    if to_year:
-        scopus += f" AND PUBYEAR < {to_year + 1}"
+    # Narrowed by year here; _filtered applies the exact dates.
+    if from_date:
+        scopus += f" AND PUBYEAR > {_year_of(from_date) - 1}"
+    if to_date:
+        scopus += f" AND PUBYEAR < {_year_of(to_date) + 1}"
     return scopus
 
 
-def _search_scopus(query, from_year, to_year):
+@_filtered
+def _search_scopus(query, from_date, to_date):
     response = get(
         "Elsevier",
         "https://api.elsevier.com/content/search/scopus",
-        params={"query": _scopus_query(query, from_year, to_year), "count": SCOPUS_PER_PAGE},
+        params={"query": _scopus_query(query, from_date, to_date), "count": SCOPUS_PER_PAGE},
         headers={"X-ELS-APIKey": credentials.get_key("elsevier"), "Accept": "application/json"},
     )
     if response.status_code in (401, 403):
@@ -157,22 +214,26 @@ def _text(element):
 
 
 def _pubmed_date(article):
-    """(year, ISO-ish date) for a PubmedArticle. Prefers the electronic
-    publication date, then the journal issue date; the date may be only a year."""
+    """(year, date, precision) for a PubmedArticle. Prefers the electronic
+    publication date, then the journal issue date. The date is "YYYY-MM-DD", with
+    the 1st filled in when PubMed has only a month or a year; precision says which
+    ("day", "month" or "year")."""
     node = article.find(".//Article/ArticleDate")
     if node is None:
         node = article.find(".//Article/Journal/JournalIssue/PubDate")
     if node is None:
-        return None, None
+        return None, None, None
     year = _year(node.findtext("Year")) or _year(node.findtext("MedlineDate"))
     if not year:
-        return None, None
+        return None, None, None
     month = (node.findtext("Month") or "").strip()
     month = int(month) if month.isdigit() else _MONTHS.get(month[:3].lower())
     day = (node.findtext("Day") or "").strip()
     if month and day.isdigit():
-        return year, f"{year:04d}-{month:02d}-{int(day):02d}"
-    return year, f"{year:04d}-{month:02d}-01" if month else f"{year:04d}-01-01"
+        return year, f"{year:04d}-{month:02d}-{int(day):02d}", "day"
+    if month:
+        return year, f"{year:04d}-{month:02d}-01", "month"
+    return year, f"{year:04d}-01-01", "year"
 
 
 def _pubmed_result(article):
@@ -197,7 +258,7 @@ def _pubmed_result(article):
         name = " ".join(p for p in (node.findtext("ForeName"), node.findtext("LastName")) if p)
         if name or collective:
             authors.append(name or collective)
-    year, date = _pubmed_date(article)
+    year, date, date_precision = _pubmed_date(article)
     types = [_text(t) for t in article.findall(".//Article/PublicationTypeList/PublicationType")]
     return {
         "source": "pubmed",
@@ -206,6 +267,8 @@ def _pubmed_result(article):
         "abstract": " ".join(parts),
         "year": year,
         "publication_date": date,
+        # How much of the date PubMed knows; only used by _in_range.
+        "date_precision": date_precision,
         # PubMed has no citation counts; OpenAlex's record wins when both find a paper.
         "citation_count": 0,
         "doi": doi,
@@ -216,12 +279,19 @@ def _pubmed_result(article):
     }
 
 
-def _search_pubmed(query, from_year, to_year):
+@_filtered
+def _search_pubmed(query, from_date, to_date):
     # Square brackets are PubMed field tags ("[Author]"), which a topic never needs.
     term = re.sub(r"[\[\]]", " ", query).strip()
     params = {"db": "pubmed", "term": term, "retmax": PER_PAGE, "retmode": "json", "sort": "relevance"}
-    if from_year or to_year:
-        params.update({"datetype": "pdat", "mindate": from_year or 1800, "maxdate": to_year or 3000})
+    if from_date or to_date:
+        params.update(
+            {
+                "datetype": "pdat",
+                "mindate": (from_date or "1800-01-01").replace("-", "/"),
+                "maxdate": (to_date or "3000-12-31").replace("-", "/"),
+            }
+        )
     response = ncbi_get(f"{_EUTILS}/esearch.fcgi", params)
     if response.status_code != 200:
         raise SourceError(f"PubMed returned an error (HTTP {response.status_code}).")
@@ -254,16 +324,10 @@ def _search_pubmed(query, from_year, to_year):
         result = _pubmed_result(article)
         if result:
             by_id[result["id"]] = result
-    # efetch doesn't promise the order esearch ranked them in. PubMed's date
-    # filter matches a paper's print issue date or its electronic date, so a paper
-    # e-published in 2025 and printed in 2026 passes a "2026 onward" search while
-    # showing the earlier year. Keep only papers whose shown year is in range.
-    results = [by_id[pmid] for pmid in ids if pmid in by_id]
-    return [
-        r
-        for r in results
-        if r["year"] is None or ((not from_year or r["year"] >= from_year) and (not to_year or r["year"] <= to_year))
-    ]
+    # efetch doesn't promise the order esearch ranked them in. (PubMed's date
+    # filter also matches a paper's print issue date, which is why _filtered
+    # re-checks the shown dates.)
+    return [by_id[pmid] for pmid in ids if pmid in by_id]
 
 
 # In the order sources are searched. OpenAlex goes first so that when the same

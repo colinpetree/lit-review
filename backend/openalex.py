@@ -66,8 +66,9 @@ def _work_to_result(work):
     }
 
 
-def search_works(query, per_page=DEFAULT_PER_PAGE, from_year=None, to_year=None):
-    """Run a keyword search against OpenAlex and return a flat list of results."""
+def search_works(query, per_page=DEFAULT_PER_PAGE, from_date=None, to_date=None):
+    """Run a keyword search against OpenAlex and return a flat list of results.
+    from_date and to_date are optional "YYYY-MM-DD" publication date bounds."""
     params = {
         "search": query,
         "per_page": min(per_page, 200),
@@ -75,10 +76,10 @@ def search_works(query, per_page=DEFAULT_PER_PAGE, from_year=None, to_year=None)
     }
 
     filters = []
-    if from_year:
-        filters.append(f"from_publication_date:{from_year}-01-01")
-    if to_year:
-        filters.append(f"to_publication_date:{to_year}-12-31")
+    if from_date:
+        filters.append(f"from_publication_date:{from_date}")
+    if to_date:
+        filters.append(f"to_publication_date:{to_date}")
     if filters:
         params["filter"] = ",".join(filters)
 

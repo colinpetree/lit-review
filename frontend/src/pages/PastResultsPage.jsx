@@ -81,9 +81,15 @@ export default function PastResultsPage() {
                   {datasetLabels(run.datasets).join(', ')}
                   {` · ${run.paper_count} paper${run.paper_count === 1 ? '' : 's'}`}
                 </p>
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-gray-400">
-                  <span>{formatDateTime(run.completed_at || run.created_at)} ·</span>
-                  <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} />
+                <div className="mt-1 flex items-center justify-between gap-x-2 text-sm text-gray-400">
+                  <div className="flex flex-wrap items-center gap-x-2">
+                    <span>{formatDateTime(run.completed_at || run.created_at)} ·</span>
+                    <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} />
+                  </div>
+                  {/* Only a run that stopped before scoring every paper gets a label; finished is the normal case. */}
+                  {run.status !== 'completed' ? (
+                    <span className="shrink-0 font-medium text-amber-600 dark:text-amber-400">Incomplete</span>
+                  ) : null}
                 </div>
               </Card>
             </Link>

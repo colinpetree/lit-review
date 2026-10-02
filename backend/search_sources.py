@@ -20,6 +20,7 @@ abstracts" button fills them in.
 """
 
 import calendar
+import datetime
 import functools
 import re
 import xml.etree.ElementTree as ET
@@ -86,10 +87,16 @@ def _filtered(search):
     """Wrap a source's search so it only returns papers inside the requested
     dates. Each source narrows the search its own way (some only by year, and
     PubMed's date filter also matches a paper's print issue date), so this makes
-    the shown dates decide."""
+    the shown dates decide. A blank end means "present", so it defaults to today:
+    an open-ended range can't return papers dated in the future (early-access or
+    in-press records some sources give a coming year or issue date). An end the
+    user typed is honored, even a future one, and so is a future start with no end."""
 
     @functools.wraps(search)
     def wrapper(query, from_date, to_date):
+        today = datetime.date.today().isoformat()
+        if not to_date and (not from_date or from_date <= today):
+            to_date = today
         return [r for r in search(query, from_date, to_date) if _in_range(r, from_date, to_date)]
 
     return wrapper

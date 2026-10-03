@@ -193,6 +193,7 @@ export default function EvaluatePapersPage() {
                 value={gradingPrompt}
                 onChange={(e) => setGradingPrompt(e.target.value)}
                 placeholder="Precisely what should a paper show to be relevant?"
+                maxLength={4000}
                 rows={3}
                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
               />

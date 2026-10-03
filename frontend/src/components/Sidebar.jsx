@@ -16,7 +16,7 @@ export default function Sidebar() {
           Lit Review Assistant
         </span>
       </div>
-      <nav className="mt-1 flex-1 overflow-auto px-3 space-y-1">
+      <nav className="mt-3 flex-1 overflow-auto px-3 space-y-1">
         {NAV_ITEMS.map((item) => (
           <NavLink key={item.to} to={item.to} className={linkClass}>
             <item.icon size={16} />

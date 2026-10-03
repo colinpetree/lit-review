@@ -451,3 +451,70 @@ class TestAnUnusableDataFolder:
             assert fixed.wait_serving(START_TIMEOUT), fixed.output
         finally:
             fixed.kill()
+
+
+def http_call(port, method, path, token, body=None, content_type=None):
+    """One request to a real copy; returns (status, body bytes). A fresh connection each time."""
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    headers = {"Authorization": f"Bearer {token}"}
+    if content_type:
+        headers["Content-Type"] = content_type
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+class TestBackupAndRestoreThroughARealServer:
+    """The restore reads its body straight off the connection, past the 1 MB limit the test
+    client does not exercise, so it is checked against a real server."""
+
+    def test_a_backup_downloaded_from_a_real_copy_restores_into_it(self, launcher, tmp_path):
+        import json
+        import sqlite3
+        from contextlib import closing
+
+        copy = launcher()
+        assert copy.wait_serving(START_TIMEOUT), copy.output
+        port, token = copy.port, copy.token
+
+        def prompts():
+            status, body = http_call(port, "GET", "/api/prompts", token)
+            assert status == 200
+            return [p["name"] for p in json.loads(body)["prompts"]]
+
+        def add_prompt(name):
+            status, _ = http_call(
+                port, "POST", "/api/prompts", token, json.dumps({"name": name, "description": "d"}), "application/json"
+            )
+            assert status == 200
+
+        add_prompt("Before")
+        status, backup = http_call(port, "GET", "/api/data/backup", token)
+        assert status == 200 and backup.startswith(b"SQLite format 3")
+        add_prompt("After")
+        assert sorted(prompts()) == ["After", "Before"]
+
+        # Pad it past the 1 MB every ordinary request is held to, as a real backup would be.
+        big = tmp_path / "big.db"
+        big.write_bytes(backup)
+        with closing(sqlite3.connect(big)) as conn:
+            conn.execute("CREATE TABLE padding (data BLOB)")
+            conn.execute("INSERT INTO padding VALUES (?)", (b"\x00" * (3 * 1024 * 1024),))
+            conn.commit()
+        upload = big.read_bytes()
+        assert len(upload) > 1_000_000
+
+        status, body = http_call(port, "POST", "/api/data/restore", token, upload, "application/octet-stream")
+        assert status == 200, body
+        assert "before-restore" in json.loads(body)["safety_copy"]
+        assert prompts() == ["Before"]
+
+        # A refused upload leaves the data alone, and the server answers the next request.
+        status, body = http_call(port, "POST", "/api/data/restore", token, b"garbage" * 1000, "application/octet-stream")
+        assert status == 400 and json.loads(body)["error"]
+        assert prompts() == ["Before"]
+        add_prompt("Still works")
+        assert sorted(prompts()) == ["Before", "Still works"]

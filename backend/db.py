@@ -11,8 +11,10 @@ threaded.
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import threading
+import time
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1684,3 +1686,272 @@ def get_run_cost(run_id):
             (run_id, run_id),
         ).fetchone()
         return row["total"] or 0.0
+
+
+# Backup, restore and the trash
+
+class BackupError(Exception):
+    """A backup that cannot be made or used. The message is safe to show the user."""
+
+
+# A file without these is not one of this app's databases, whatever else it holds. Only
+# tables every version has had (prompts came later): the lit_review.db.pre-upgrade-* copies
+# the app keeps are old databases, and restoring one must work. Newer tables are created
+# by the upgrade that follows a restore.
+REQUIRED_BACKUP_TABLES = ("paper", "dataset", "analysis_run")
+_SQLITE_HEADER = b"SQLite format 3\x00"
+
+
+def write_backup(destination):
+    """Copy the whole database, as it is at this moment, to a new file at `destination`
+    (SQLite's own backup, so a write in progress cannot give a torn copy). The copy is a
+    single self-contained file, not one that needs a -wal file beside it."""
+    with closing(_connect()) as source:
+        target = sqlite3.connect(str(destination))
+        try:
+            source.backup(target)
+            target.execute("PRAGMA journal_mode = DELETE")
+        finally:
+            target.close()
+
+
+def validate_backup_file(path):
+    """Raise BackupError unless `path` is a whole, undamaged database of this app that this
+    version can open. It is opened read-only and immutable, so checking it writes nothing
+    (not even side files) and cannot change it."""
+    with open(path, "rb") as f:
+        if f.read(len(_SQLITE_HEADER)) != _SQLITE_HEADER:
+            raise BackupError("That file is not a Lit Review backup.")
+    try:
+        conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro&immutable=1", uri=True)
+    except sqlite3.Error as exc:
+        raise BackupError("That file could not be opened as a backup.") from exc
+    try:
+        try:
+            check = conn.execute("PRAGMA integrity_check").fetchall()
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+        except sqlite3.Error as exc:
+            raise BackupError("That backup is damaged or is not a Lit Review backup.") from exc
+    finally:
+        conn.close()
+    if check != [("ok",)]:
+        raise BackupError("That backup is damaged (it failed its integrity check), so it was not used.")
+    missing = [t for t in REQUIRED_BACKUP_TABLES if t not in tables]
+    if missing:
+        raise BackupError("That file is not a Lit Review backup (it has no " + ", ".join(missing) + " table).")
+    if version > SCHEMA_VERSION:
+        raise BackupError(
+            "That backup was made by a newer version of Lit Review. Please update Lit Review to use it."
+        )
+
+
+def _remove_side_files(path):
+    for suffix in ("-wal", "-shm"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
+
+
+def _replace_file(source, target):
+    """os.replace, trying a few times: on Windows a virus scanner or indexer can hold a
+    file it has just seen for a moment, which fails the replace with PermissionError."""
+    for attempt in range(10):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.2)
+
+
+def replace_with_backup(upload):
+    """Make the checked backup file `upload` (in the data folder, so the swap is one rename)
+    the database. The current one is first copied to lit_review.db.before-restore-<time>,
+    which the app never deletes. Nothing else may be using the database: the caller has
+    shut the request gate (see request_gate.py). An older backup is upgraded the way any
+    older database is. If the result cannot be opened, the previous data is put back.
+    Returns the safety copy's file name. Raises BackupError."""
+    global _ready_for
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    safety = DB_PATH.with_name(f"{DB_PATH.name}.before-restore-{stamp}")
+    n = 2
+    while safety.exists():
+        safety = DB_PATH.with_name(f"{DB_PATH.name}.before-restore-{stamp}-{n}")
+        n += 1
+    with _LOCK:
+        try:
+            write_backup(safety)
+        except (OSError, sqlite3.Error) as exc:
+            safety.unlink(missing_ok=True)
+            raise BackupError("The current data could not be copied first, so nothing was changed.") from exc
+        try:
+            _remove_side_files(DB_PATH)
+            _ready_for = None
+            _replace_file(upload, DB_PATH)
+            _ensure_ready()
+        except Exception as exc:
+            logging.getLogger(__name__).error("Restoring a backup failed: %s", exc)
+            try:
+                _ready_for = None
+                _remove_side_files(DB_PATH)
+                staged = DB_PATH.with_name(DB_PATH.name + ".putback")
+                shutil.copyfile(safety, staged)
+                _replace_file(staged, DB_PATH)
+            except OSError as put_back:
+                raise BackupError(
+                    "The backup could not be used, and your previous data could not be put back "
+                    f"automatically. A full copy of it is kept as {safety.name} in the app's data folder."
+                ) from put_back
+            raise BackupError("That backup could not be used, so your previous data was put back.") from exc
+    return safety.name
+
+
+class TrashError(Exception):
+    """Something in the trash cannot be removed (it is still in use). Safe to show."""
+
+
+TRASH_KINDS = ("dataset", "prompt", "run")
+_TRASH_TABLES = {"dataset": "dataset", "prompt": "prompt", "run": "analysis_run"}
+
+
+def list_trash():
+    """What was deleted but is still kept: datasets and prompts (soft-deleted) and any
+    result runs deleted by an older version (a run is removed outright now)."""
+    with closing(_connect()) as conn:
+        datasets = conn.execute(
+            """
+            SELECT d.id, d.name, d.verbose_query, d.deleted_at,
+                   (SELECT COUNT(*) FROM dataset_paper dp WHERE dp.dataset_id = d.id) AS paper_count,
+                   (SELECT COUNT(*) FROM analysis_run_dataset ard WHERE ard.dataset_id = d.id) AS run_count
+            FROM dataset d WHERE d.deleted_at IS NOT NULL ORDER BY d.deleted_at DESC, d.id DESC
+            """
+        ).fetchall()
+        prompts = conn.execute(
+            """
+            SELECT pr.id, pr.name, pr.description, pr.deleted_at,
+                   (SELECT COUNT(*) FROM prompt_example pe WHERE pe.prompt_id = pr.id) AS example_count,
+                   (SELECT COUNT(*) FROM analysis_run r WHERE r.prompt_id = pr.id) AS run_count
+            FROM prompt pr WHERE pr.deleted_at IS NOT NULL ORDER BY pr.deleted_at DESC, pr.id DESC
+            """
+        ).fetchall()
+        runs = conn.execute(
+            """
+            SELECT r.id, COALESCE(r.name, substr(r.grading_prompt, 1, 80)) AS name, r.deleted_at,
+                   (SELECT COUNT(*) FROM analysis_result ar WHERE ar.run_id = r.id) AS result_count
+            FROM analysis_run r WHERE r.deleted_at IS NOT NULL ORDER BY r.deleted_at DESC, r.id DESC
+            """
+        ).fetchall()
+        return {
+            "datasets": [dict(row) for row in datasets],
+            "prompts": [dict(row) for row in prompts],
+            "runs": [dict(row) for row in runs],
+        }
+
+
+def restore_from_trash(kind, item_id):
+    """Bring a deleted item back. Returns {"id", and for a run its "name"}, or None if it
+    is not in the trash. A run's name may now clash with a live run's, so it gets a
+    free one (the name it ended up with is returned)."""
+    table = _TRASH_TABLES[kind]
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute(f"SELECT * FROM {table} WHERE id = ? AND deleted_at IS NOT NULL", (item_id,)).fetchone()
+        if row is None:
+            return None
+        result = {"id": item_id}
+        if kind == "run":
+            result["name"] = _unique_run_name(conn, row["name"] or row["grading_prompt"], item_id)
+            conn.execute(
+                "UPDATE analysis_run SET deleted_at = NULL, name = ? WHERE id = ?", (result["name"], item_id)
+            )
+        else:
+            conn.execute(f"UPDATE {table} SET deleted_at = NULL WHERE id = ?", (item_id,))
+        conn.commit()
+        return result
+
+
+def _delete_unreferenced_papers(conn, paper_ids):
+    """Remove those of `paper_ids` that nothing refers to any more, so a purged dataset does
+    not leave its papers behind for ever. Only the ones that belonged to what was purged
+    are considered: any other unreferenced paper is left as it is."""
+    removed = 0
+    ids = list(dict.fromkeys(paper_ids))
+    for start in range(0, len(ids), 500):
+        batch = ids[start : start + 500]
+        marks = ",".join("?" * len(batch))
+        removed += conn.execute(
+            f"""
+            DELETE FROM paper WHERE id IN ({marks})
+              AND id NOT IN (SELECT paper_id FROM dataset_paper)
+              AND id NOT IN (SELECT paper_id FROM prompt_example)
+              AND id NOT IN (SELECT paper_id FROM analysis_result)
+            """,
+            batch,
+        ).rowcount
+    return removed
+
+
+def purge_from_trash(kind, item_id):
+    """Delete something in the trash for good. Returns the number of papers that went with
+    it, or None if it is not in the trash. Raises TrashError if a result run still uses it.
+
+    What is spent stays counted: the item's llm_call rows are detached from it, not deleted.
+    Rows go in an order the foreign keys allow, in one transaction."""
+    table = _TRASH_TABLES[kind]
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute(f"SELECT id FROM {table} WHERE id = ? AND deleted_at IS NOT NULL", (item_id,)).fetchone()
+        if row is None:
+            return None
+        if kind == "dataset":
+            in_use = conn.execute(
+                "SELECT COUNT(*) FROM analysis_run_dataset WHERE dataset_id = ?", (item_id,)
+            ).fetchone()[0]
+        elif kind == "prompt":
+            in_use = conn.execute("SELECT COUNT(*) FROM analysis_run WHERE prompt_id = ?", (item_id,)).fetchone()[0]
+        else:
+            in_use = 0
+        if in_use:
+            raise TrashError(
+                f"{in_use} result run{' still uses' if in_use == 1 else 's still use'} this {kind}. "
+                f"Delete {'that run' if in_use == 1 else 'those runs'} first."
+            )
+        if kind == "dataset":
+            paper_ids = [r[0] for r in conn.execute("SELECT paper_id FROM dataset_paper WHERE dataset_id = ?", (item_id,))]
+            conn.execute("UPDATE llm_call SET dataset_id = NULL WHERE dataset_id = ?", (item_id,))
+            conn.execute("DELETE FROM dataset_paper WHERE dataset_id = ?", (item_id,))
+            conn.execute("DELETE FROM dataset WHERE id = ?", (item_id,))
+        elif kind == "prompt":
+            paper_ids = [r[0] for r in conn.execute("SELECT paper_id FROM prompt_example WHERE prompt_id = ?", (item_id,))]
+            conn.execute("DELETE FROM prompt_example WHERE prompt_id = ?", (item_id,))
+            conn.execute("DELETE FROM prompt WHERE id = ?", (item_id,))
+        else:
+            paper_ids = [r[0] for r in conn.execute("SELECT paper_id FROM analysis_result WHERE run_id = ?", (item_id,))]
+            conn.execute("UPDATE llm_call SET run_id = NULL WHERE run_id = ?", (item_id,))
+            conn.execute("UPDATE prompt_example SET source_run_id = NULL WHERE source_run_id = ?", (item_id,))
+            conn.execute("DELETE FROM analysis_result WHERE run_id = ?", (item_id,))
+            conn.execute("DELETE FROM analysis_run_dataset WHERE run_id = ?", (item_id,))
+            conn.execute("DELETE FROM analysis_run WHERE id = ?", (item_id,))
+        removed = _delete_unreferenced_papers(conn, paper_ids)
+        conn.commit()
+        return removed
+
+
+def empty_trash():
+    """Purge everything in the trash that can be. Runs go first (a dataset or prompt a
+    trashed run used is free once it is gone), then datasets, then prompts. What is still
+    in use stays, and is listed with the reason. Returns {"purged": {kind: count},
+    "papers_removed": n, "skipped": [{"kind", "id", "name", "reason"}]}."""
+    trash = list_trash()
+    purged = {"run": 0, "dataset": 0, "prompt": 0}
+    skipped = []
+    papers_removed = 0
+    for kind, items in (("run", trash["runs"]), ("dataset", trash["datasets"]), ("prompt", trash["prompts"])):
+        for item in items:
+            try:
+                removed = purge_from_trash(kind, item["id"])
+            except TrashError as exc:
+                skipped.append({"kind": kind, "id": item["id"], "name": item["name"], "reason": str(exc)})
+                continue
+            if removed is not None:
+                purged[kind] += 1
+                papers_removed += removed
+    return {"purged": purged, "papers_removed": papers_removed, "skipped": skipped}

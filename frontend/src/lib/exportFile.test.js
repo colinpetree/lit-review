@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { downloadExport, exportMenuItem, filenameFromDisposition } from './exportFile'
+import { downloadExport, exportMenuItems, filenameFromDisposition } from './exportFile'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -40,37 +40,32 @@ describe('downloadExport', () => {
   })
 })
 
-describe('exportMenuItem', () => {
+describe('exportMenuItems', () => {
   const base = { url: '/api/datasets/1/export', all: [1, 2, 3, 4], shown: [3, 1], onError: () => {} }
+  const labels = (item) => item.submenu.map((i) => i.label)
 
-  it('offers one choice per format when no filter is on', () => {
-    const item = exportMenuItem({ ...base, filterActive: false })
-    expect(item.submenu.map((i) => i.label)).toEqual(['CSV (4)', 'RIS (4)', 'BibTeX (4)'])
+  it('is one Export entry listing the formats when no filter is on', () => {
+    const items = exportMenuItems({ ...base, filterActive: false })
+    expect(items.map((i) => i.label)).toEqual(['Export (4)'])
+    expect(labels(items[0])).toEqual(['CSV', 'RIS', 'BibTeX'])
   })
 
-  it('offers shown and all for each format when a filter is on', () => {
-    const item = exportMenuItem({ ...base, filterActive: true })
-    expect(item.submenu.map((i) => i.label)).toEqual([
-      'CSV, shown (2)',
-      'CSV, all (4)',
-      'RIS, shown (2)',
-      'RIS, all (4)',
-      'BibTeX, shown (2)',
-      'BibTeX, all (4)',
-    ])
-    expect(new Set(item.submenu.map((i) => i.label)).size).toBe(item.submenu.length)
+  it('is two entries, shown and all, each listing the formats, when a filter is on', () => {
+    const items = exportMenuItems({ ...base, filterActive: true })
+    expect(items.map((i) => i.label)).toEqual(['Export shown (2)', 'Export all (4)'])
+    for (const item of items) expect(labels(item)).toEqual(['CSV', 'RIS', 'BibTeX'])
   })
 
   it('sends the shown ids in order, or no ids for all, and reports a failure', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: 'Nope' }) })
     vi.stubGlobal('fetch', fetchMock)
     const onError = vi.fn()
-    const item = exportMenuItem({ ...base, filterActive: true, onError })
-    item.submenu[0].onClick()
-    item.submenu[1].onClick()
+    const [shown, all] = exportMenuItems({ ...base, filterActive: true, onError })
+    shown.submenu[0].onClick()
+    all.submenu[1].onClick()
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(2))
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ format: 'csv', paper_ids: [3, 1] })
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ format: 'csv' })
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ format: 'ris' })
     expect(onError).toHaveBeenCalledWith('Nope')
   })
 })

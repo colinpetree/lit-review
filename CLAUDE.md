@@ -371,6 +371,29 @@ against real copies on spare ports works well.
   The file name is a slug of the run or dataset name plus the date, so the header is safe. The
   client is `lib/exportFile.js` (a POST through `apiFetch`, since a plain link could not carry the
   secret) and the "Export" entry in `RunMenu`/`DatasetMenu` (`extraItems`).
+- `request_gate.py`, and **backup, restore and the trash** (`db.py`, `app.py`, `TrashPage.jsx`, the
+  "Backup and restore" card in Settings). `GET /api/data/backup` is `db.write_backup` (SQLite's own
+  backup API into a folder in the user's data dir, streamed and removed; never the API keys).
+  `POST /api/data/restore` takes the backup file **as the raw request body** and reads it straight
+  from `wsgi.input` in 1 MB pieces (`MAX_RESTORE_BYTES` 500 MB): Flask 3.0.3's `MAX_CONTENT_LENGTH` is a
+  read-only 1 MB for every request, so the route must not touch `request.stream` or `get_data`.
+  The upload is checked read-only and immutable (`db.validate_backup_file`: SQLite header,
+  `integrity_check`, the `paper`/`dataset`/`analysis_run`/`prompt` tables, and `user_version` not above
+  `SCHEMA_VERSION`), then `RequestGate.close_when_quiet` turns new `/api/*` requests away (503) and
+  waits up to `RESTORE_WAIT_SECONDS` for running ones (a scoring call can be slow: a restore that
+  cannot wait changes nothing and answers 409). Every `/api/*` request except `/api/health` enters the
+  gate in `before_request` and leaves in `teardown_request`; a new route needs nothing. Under the gate
+  `db.replace_with_backup` copies the current database to `lit_review.db.before-restore-<time>` (never
+  deleted), removes the old `-wal`/`-shm`, swaps the file (`os.replace`, retried on Windows
+  `PermissionError`), resets `_ready_for` and migrates; if that fails the safety copy is put back.
+  One restore at a time (`_exclusive("restore", 0)`). **Trash:** `GET /api/trash`,
+  `POST /api/trash/<kind>/<id>/restore` (a run gets a free name through `_unique_run_name`),
+  `DELETE /api/trash/<kind>/<id>` (purge; 409 while a result run still uses the dataset or prompt) and
+  `DELETE /api/trash` (empty: runs, then datasets, then prompts, listing what stayed and why). Runs are
+  hard-deleted now, so the trash holds datasets and prompts, plus any run an older version soft-deleted.
+  A purge runs in one transaction, **detaches** `llm_call` rows (`dataset_id`/`run_id` NULL) instead of
+  deleting them so total spend stays right, and removes only the purged item's own papers that nothing
+  else refers to (not every unreferenced paper).
 - `access.py`, `single_instance.py` - who may use a running copy and how a second launch finds it
   (see "One app per user" above); small and self-contained.
 - `credentials.py` - API keys (the three AI providers plus openalex, elsevier, springernature,

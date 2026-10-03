@@ -13,25 +13,22 @@ export function filenameFromDisposition(header) {
   return match ? match[1] : 'papers'
 }
 
-// POST the export request and save the file it answers with. Goes through apiFetch so
-// the request carries the app's secret, which a plain link to the file could not.
-export async function downloadExport(url, body) {
-  const res = await apiFetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    let message
-    try {
-      message = (await res.json()).error
-    } catch {
-      // not JSON: the status below is all there is to say
-    }
-    const error = new Error(message || `The export failed (${res.status}).`)
-    error.status = res.status
-    throw error
+// An Error from a refused response: the server's own message when it sent one, else the
+// fallback and the status. The status is kept for callers that treat some specially.
+export async function responseError(res, fallback) {
+  let message
+  try {
+    message = (await res.json()).error
+  } catch {
+    // not JSON: the status below is all there is to say
   }
+  const error = new Error(message || `${fallback} (${res.status}).`)
+  error.status = res.status
+  return error
+}
+
+// Save a successful response's body as a file, under the name the server chose.
+export async function saveResponseAsFile(res) {
   const blob = await res.blob()
   const link = document.createElement('a')
   const objectUrl = URL.createObjectURL(blob)
@@ -44,22 +41,33 @@ export async function downloadExport(url, body) {
   setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
 }
 
-// The "Export" entry for a MoreMenu. `url` is the page's export route, `all` and
-// `shown` the ids of the papers the server would export in full and of those the page's
-// filter and sort currently show (in that order). With no filter on, the two are the same,
-// so each format is one choice; with one on, each format can be exported either way.
-// `onError(message)` is called when a download fails.
-export function exportMenuItem({ url, all, shown, filterActive, onError }) {
+// POST the export request and save the file it answers with. Goes through apiFetch so
+// the request carries the app's secret, which a plain link to the file could not.
+export async function downloadExport(url, body) {
+  const res = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw await responseError(res, 'The export failed')
+  await saveResponseAsFile(res)
+}
+
+// The Export entries for a MoreMenu (an array, to spread into its items). `url` is the
+// page's export route, `all` and `shown` the ids of the papers the server would export in
+// full and of those the page's filter and sort currently show (in that order). With no
+// filter on, the two are the same: one "Export" entry listing the formats. With one on there
+// are two entries, "Export shown" and "Export all", each listing the formats, so the choice
+// is made once rather than beside every format. `onError(message)` is called when a download
+// fails.
+export function exportMenuItems({ url, all, shown, filterActive, onError }) {
   const start = (format, paperIds) => {
     downloadExport(url, paperIds ? { format, paper_ids: paperIds } : { format }).catch((err) => onError(err.message))
   }
-  const submenu = FORMATS.flatMap(({ id, label }) =>
-    filterActive
-      ? [
-          { label: `${label}, shown (${shown.length})`, onClick: () => start(id, shown) },
-          { label: `${label}, all (${all.length})`, onClick: () => start(id, null) },
-        ]
-      : [{ label: `${label} (${all.length})`, onClick: () => start(id, null) }]
-  )
-  return { label: 'Export', icon: Download, submenu }
+  const formats = (paperIds) => FORMATS.map(({ id, label }) => ({ label, onClick: () => start(id, paperIds) }))
+  if (!filterActive) return [{ label: `Export (${all.length})`, icon: Download, submenu: formats(null) }]
+  return [
+    { label: `Export shown (${shown.length})`, icon: Download, submenu: formats(shown) },
+    { label: `Export all (${all.length})`, icon: Download, submenu: formats(null) },
+  ]
 }

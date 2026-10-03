@@ -13,6 +13,7 @@ import PromptDetailPage from './pages/PromptDetailPage'
 import PastResultsPage from './pages/PastResultsPage'
 import RunResultsPage from './pages/RunResultsPage'
 import SettingsPage from './pages/SettingsPage'
+import TrashPage from './pages/TrashPage'
 
 // The app opens this page with its secret after the # in the address. Take it, and
 // remove it from the address bar, before anything is shown or any call is made.
@@ -33,6 +34,7 @@ createRoot(document.getElementById('root')).render(
           <Route path="results" element={<PastResultsPage />} />
           <Route path="results/:id" element={<RunResultsPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="settings/trash" element={<TrashPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

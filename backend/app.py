@@ -5,9 +5,11 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import socket
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -20,7 +22,7 @@ from threading import Timer
 from urllib.parse import urlparse
 
 import requests
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, abort, g, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 from werkzeug.serving import ThreadedWSGIServer
 from werkzeug.utils import safe_join
@@ -34,6 +36,7 @@ import llm
 import openalex
 import search_sources
 import single_instance
+from request_gate import RequestGate
 from source_http import SourceError, redact, safe_url
 
 SUPPORTED_PROVIDERS = set(llm.PROVIDERS)
@@ -228,6 +231,28 @@ def require_session():
     return None
 
 
+# Every API request registers here while it runs, so a restore can replace the database
+# file only when nothing else is using it (see request_gate.py). The health check is
+# exempt: it touches nothing, and a second launch must still be able to ask it.
+_GATE = RequestGate()
+
+
+@app.before_request
+def hold_off_during_restore():
+    if not request.path.startswith("/api/") or request.path in OPEN_PATHS:
+        return None
+    if not _GATE.enter():
+        return jsonify({"error": "Restoring a backup. Try again in a moment."}), 503
+    g.in_flight = True
+    return None
+
+
+@app.teardown_request
+def leave_the_gate(_exc):
+    if g.pop("in_flight", False):
+        _GATE.leave()
+
+
 @app.get("/api/health")
 def health():
     """Lets a second launch tell that this port is already Lit Review, and which
@@ -271,6 +296,161 @@ def delete_api_key():
     provider = _provider_name(_json_body())
     credentials.delete_key(provider)
     return jsonify({"ok": True})
+
+
+def _stream_then_remove(path):
+    """The file's bytes, then the folder it was made in is removed (also if the client
+    goes away half way, which closes this generator)."""
+    try:
+        with open(path, "rb") as f:
+            while chunk := f.read(1 << 20):
+                yield chunk
+    finally:
+        shutil.rmtree(Path(path).parent, ignore_errors=True)
+
+
+@app.get("/api/data/backup")
+def download_backup():
+    """The whole database as one file: every dataset, paper, result run, prompt and the
+    record of spending. Not the API keys, which are kept apart and are not backed up."""
+    db.ensure_ready()
+    # In the user's own data folder (private to their account), not a shared temp folder.
+    folder = tempfile.mkdtemp(prefix="backup-", dir=db.DB_PATH.parent)
+    path = Path(folder) / "backup.db"
+    try:
+        db.write_backup(path)
+        size = path.stat().st_size
+    except (OSError, sqlite3.Error):
+        shutil.rmtree(folder, ignore_errors=True)
+        app.logger.error("Making a backup failed:\n%s", redact(traceback.format_exc()))
+        return jsonify({"error": "The backup could not be made."}), 500
+    filename = f"lit-review-backup-{datetime.date.today().isoformat()}.db"
+    return Response(
+        _stream_then_remove(path),
+        content_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Content-Length": str(size)},
+    )
+
+
+# A backup is a whole database, far above the 1 MB every other request is held to, so
+# this route reads its own body (see restore_backup) and has its own ceiling.
+MAX_RESTORE_BYTES = 500 * 1024 * 1024
+# How long a restore waits for requests already running (a scoring call can take a while)
+# before giving up with nothing changed.
+RESTORE_WAIT_SECONDS = 30
+
+
+def _discard_body(length):
+    """Read and drop the rest of a request body that is being refused, so the browser, which
+    is still sending it, receives the refusal instead of a dropped connection."""
+    stream = request.environ["wsgi.input"]
+    remaining = length
+    while remaining:
+        chunk = stream.read(min(1 << 20, remaining))
+        if not chunk:
+            break
+        remaining -= len(chunk)
+
+
+@app.post("/api/data/restore")
+def restore_backup():
+    """Replace all the data with a backup (the request body is the backup file itself). It
+    is checked first, the current data is kept as lit_review.db.before-restore-<time>, and
+    while the file is swapped every other request is turned away (503)."""
+    length = request.content_length
+    if not length or length < 0:
+        raise InvalidRequest("Send the backup file as the request body.")
+    if length > MAX_RESTORE_BYTES:
+        return jsonify({"error": f"That file is larger than {MAX_RESTORE_BYTES // (1024 * 1024)} MB, too large to be a backup."}), 413
+    with _exclusive("restore", 0) as acquired:
+        if not acquired:
+            _discard_body(length)
+            return jsonify({"error": "A backup is already being restored."}), 409
+        db.ensure_ready()
+        descriptor, temp_name = tempfile.mkstemp(prefix="restore-", suffix=".tmp", dir=db.DB_PATH.parent)
+        temp = Path(temp_name)
+        try:
+            # Read straight from the connection, a megabyte at a time, so a large file is
+            # never held in memory and the 1 MB limit on ordinary bodies does not apply.
+            try:
+                with os.fdopen(descriptor, "wb") as out:
+                    stream = request.environ["wsgi.input"]
+                    remaining = length
+                    while remaining:
+                        chunk = stream.read(min(1 << 20, remaining))
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        remaining -= len(chunk)
+            except OSError:
+                app.logger.error("Saving an uploaded backup failed:\n%s", redact(traceback.format_exc()))
+                return jsonify(
+                    {"error": "The uploaded backup could not be saved (is the disk full?). Nothing was changed."}
+                ), 500
+            if remaining:
+                raise InvalidRequest("The upload was cut short, so nothing was changed.")
+            try:
+                db.validate_backup_file(temp)
+            except db.BackupError as exc:
+                return jsonify({"error": str(exc)}), 400
+            if not _GATE.close_when_quiet(RESTORE_WAIT_SECONDS):
+                return jsonify(
+                    {"error": "Other work is still running, so nothing was changed. Wait for it to finish and try again."}
+                ), 409
+            try:
+                safety_copy = db.replace_with_backup(temp)
+            except db.BackupError as exc:
+                return jsonify({"error": str(exc)}), 500
+            finally:
+                _GATE.open()
+        finally:
+            for leftover in (temp, Path(f"{temp}-wal"), Path(f"{temp}-shm"), Path(f"{temp}-journal")):
+                leftover.unlink(missing_ok=True)
+    return jsonify(
+        {
+            "ok": True,
+            "safety_copy": safety_copy,
+            "message": f"Backup restored. Your previous data was kept as {safety_copy} in the app's data folder.",
+        }
+    )
+
+
+def _trash_item(kind, item_id):
+    """Only the kinds of thing the trash holds, and ids the database can hold, are routes."""
+    if kind not in db.TRASH_KINDS or item_id > MAX_SQLITE_INT:
+        abort(404)
+
+
+@app.get("/api/trash")
+def get_trash():
+    return jsonify(db.list_trash())
+
+
+@app.post("/api/trash/<kind>/<int:item_id>/restore")
+def restore_trash_item(kind, item_id):
+    _trash_item(kind, item_id)
+    restored = db.restore_from_trash(kind, item_id)
+    if restored is None:
+        return jsonify({"error": "That item is not in the trash."}), 404
+    return jsonify(restored)
+
+
+@app.delete("/api/trash/<kind>/<int:item_id>")
+def purge_trash_item(kind, item_id):
+    """Delete one thing in the trash for good (409 while a result run still uses it)."""
+    _trash_item(kind, item_id)
+    try:
+        removed = db.purge_from_trash(kind, item_id)
+    except db.TrashError as exc:
+        return jsonify({"error": str(exc)}), 409
+    if removed is None:
+        return jsonify({"error": "That item is not in the trash."}), 404
+    return jsonify({"ok": True, "papers_removed": removed})
+
+
+@app.delete("/api/trash")
+def empty_trash():
+    return jsonify(db.empty_trash())
 
 
 MAX_QUESTION_CHARS = 4000

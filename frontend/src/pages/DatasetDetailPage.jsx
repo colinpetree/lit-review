@@ -9,7 +9,7 @@ import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
-import { exportMenuItem } from '../lib/exportFile'
+import { exportMenuItems } from '../lib/exportFile'
 import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
@@ -300,15 +300,13 @@ export default function DatasetDetailPage() {
   const visiblePapers = sortPapers(filterPapers(dataset.papers, filter), sort)
   // The export holds the included papers only (an excluded one can be shown on this page).
   const exportItems = includedCount
-    ? [
-        exportMenuItem({
-          url: `/api/datasets/${dataset.id}/export`,
-          all: dataset.papers.filter((p) => !p.excluded).map((p) => p.id),
-          shown: visiblePapers.filter((p) => !p.excluded).map((p) => p.id),
-          filterActive: isPaperFilterActive(filter),
-          onError: setToggleError,
-        }),
-      ]
+    ? exportMenuItems({
+        url: `/api/datasets/${dataset.id}/export`,
+        all: dataset.papers.filter((p) => !p.excluded).map((p) => p.id),
+        shown: visiblePapers.filter((p) => !p.excluded).map((p) => p.id),
+        filterActive: isPaperFilterActive(filter),
+        onError: setToggleError,
+      })
     : []
 
   const refreshing = refreshingId === dataset.id

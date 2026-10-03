@@ -8,7 +8,7 @@ import { DEFAULT_PAPER_SORT, EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActi
 import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
-import { fetchJson, patchJson, postJson } from '../lib/api'
+import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
 import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
@@ -40,13 +40,13 @@ function RetrievalCompleteness({ retrieval, onShowDetails }) {
 
 // The dataset's title (renamed from its dots menu, like an analysis run's) and
 // the details it was retrieved with (all fixed).
-function DatasetDetailsCard({ dataset, onRenamed, onShowCompleteness }) {
+function DatasetDetailsCard({ dataset, onRenamed, onDelete, onShowCompleteness }) {
   return (
     <Card className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-2xl font-semibold text-gray-800">{dataset.name}</h1>
         <div className="shrink-0">
-          <DatasetMenu dataset={dataset} onRenamed={onRenamed} />
+          <DatasetMenu dataset={dataset} onRenamed={onRenamed} onDelete={onDelete} />
         </div>
       </div>
 
@@ -318,6 +318,10 @@ export default function DatasetDetailPage() {
         <DatasetDetailsCard
           dataset={dataset}
           onRenamed={(name) => setDataset((prev) => ({ ...prev, name }))}
+          onDelete={async () => {
+            await deleteJson(`/api/datasets/${dataset.id}`)
+            navigate('/datasets')
+          }}
           onShowCompleteness={() => setShowCompleteness(true)}
         />
 

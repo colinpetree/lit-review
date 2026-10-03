@@ -1031,12 +1031,16 @@ def rename_analysis_run(run_id, name):
 
 
 def delete_analysis_run(run_id):
-    """Soft delete: the run and its scores are hidden, not removed."""
+    """Hard delete: the run, its scores and its dataset links are removed,
+    since nothing depends on a run. What it leaves behind is detached, not
+    deleted: its llm_call rows stay (run_id cleared) so total spend is still
+    right, and prompt examples marked from it stay with their prompt."""
     with _LOCK, closing(_connect()) as conn:
-        conn.execute(
-            "UPDATE analysis_run SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
-            (_now(), run_id),
-        )
+        conn.execute("UPDATE llm_call SET run_id = NULL WHERE run_id = ?", (run_id,))
+        conn.execute("UPDATE prompt_example SET source_run_id = NULL WHERE source_run_id = ?", (run_id,))
+        conn.execute("DELETE FROM analysis_result WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM analysis_run_dataset WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM analysis_run WHERE id = ?", (run_id,))
         conn.commit()
 
 

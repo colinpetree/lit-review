@@ -4,7 +4,7 @@ import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
-import DeleteMenu from '../components/DeleteMenu'
+import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
 import { deleteJson, fetchJson } from '../lib/api'
 import { formatDateTime, formatYearRange } from '../lib/format'
@@ -32,6 +32,8 @@ export default function PaperDataSetsPage() {
       ),
     [datasets, filter, sort]
   )
+
+  const renameDataset = (id, name) => setDatasets((prev) => prev.map((d) => (d.id === id ? { ...d, name } : d)))
 
   const deleteDataset = async (id) => {
     await deleteJson(`/api/datasets/${id}`)
@@ -89,11 +91,11 @@ export default function PaperDataSetsPage() {
                   <ModelBadge aiApi={d.ai_api} aiModel={d.ai_model} className="mt-1 text-sm text-gray-300" />
                 </Card>
               </Link>
-              <DeleteMenu
+              <DatasetMenu
                 className="absolute right-5 top-[22px]"
-                title="Delete this dataset?"
-                message="This removes the dataset from your list. Past result runs that used it and the papers themselves are not deleted."
-                onConfirm={() => deleteDataset(d.id)}
+                dataset={d}
+                onRenamed={(name) => renameDataset(d.id, name)}
+                onDelete={() => deleteDataset(d.id)}
               />
             </div>
           )

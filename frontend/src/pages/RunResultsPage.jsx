@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { PageShell, BackLink, Card } from '../components/ui'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
 import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
-import { fetchJson, patchJson, postJson } from '../lib/api'
+import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
@@ -12,6 +12,7 @@ import RunMenu from '../components/RunMenu'
 
 export default function RunResultsPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [run, setRun] = useState(null)
   const [error, setError] = useState(null)
   const [resuming, setResuming] = useState(false)
@@ -159,6 +160,11 @@ export default function RunResultsPage() {
               onRenamed={(name) => {
                 renamedRef.current = name
                 setRun((prev) => ({ ...prev, name }))
+              }}
+              onDelete={async () => {
+                activeRequestRef.current?.abort()
+                await deleteJson(`/api/analysis-runs/${run.id}`)
+                navigate('/results')
               }}
             />
           </div>

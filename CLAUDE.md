@@ -406,7 +406,10 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   copies that paper's score and reasoning); only the newest `db.EXAMPLE_LIMIT` are sent to
   the judge. A prompt created from Evaluate gets an AI title (requested in the run's first
   scoring call via `title_pending`; never for existing prompts, and any user edit clears
-  the flag). Prompts, runs and datasets are soft-deleted (`deleted_at`).
+  the flag). Prompts and datasets are soft-deleted (`deleted_at`); runs are hard-deleted
+  (`db.delete_analysis_run`: results and dataset links removed, `llm_call` and `prompt_example`
+  rows detached by clearing their run id, so spend totals and examples survive). Runs deleted
+  before that change remain as hidden `deleted_at` rows.
 
 - A run has its own `analysis_run.name`, unique among live (not deleted) runs, case-insensitive
   (`db._unique_run_name` adds " (2)" etc.; renames that clash get a 409). It starts as the
@@ -432,7 +435,7 @@ API-returned abstracts and must never invent citations.
 React 19 + Vite + Tailwind v3 (PostCSS, `tailwind.config.js`, same as an earlier project) + react-router. Routes are in
 `src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), evaluate,
 prompts (+ `:id`), results (+ `:id`), settings. Shared UI: `MoreMenu` (more-horizontal
-popover), `Modal`/`ConfirmModal`, `DeleteMenu`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
+popover), `Modal`/`ConfirmModal`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
 
 Theme (Light/Dark/System, set at the top of Settings) is stored per browser in localStorage
 (`lib/theme.js`) and applied as a `dark` class on `<html>`; an inline script in `index.html`

@@ -341,6 +341,52 @@ def score_batch(grading_prompt, candidates, ai_api, model, examples=None, want_t
     return scores, usage, title
 
 
+# What a cost estimate assumes. About four characters make a token in English text; each call
+# also carries the output schema and instructions (a rough fixed size); and the model writes
+# a few sentences of comparison per paper (about 150 tokens) unless the user's earlier
+# runs show what that model really writes. About a tenth of papers are skipped by the model
+# and asked again, so the input is counted a tenth over.
+CHARS_PER_TOKEN = 4
+CALL_OVERHEAD_TOKENS = 400
+DEFAULT_OUTPUT_TOKENS_PER_PAPER = 150
+RETRY_SHARE = 0.10
+
+
+def _tokens(chars):
+    return chars / CHARS_PER_TOKEN
+
+
+def estimate_scoring_cost(
+    candidates, grading_prompt, examples, ai_api, model, chunk_size, output_tokens_per_paper=None
+):
+    """An approximate cost of scoring `candidates` ({title, abstract} dicts) in chunks of
+    `chunk_size`, from what the prompts will contain, without calling the model. Returns
+    {papers, chunks, input_tokens, output_tokens, usd}. `output_tokens_per_paper` is what
+    earlier runs of this model averaged, if known; otherwise a fixed guess. It is an
+    estimate: models and tokenizers differ, so the real bill can be a good deal off, and
+    thinking models that bill hidden reasoning as output can be well above it."""
+    rates = MODELS[ai_api][model]
+    fixed_chars = len(_JUDGE_SYSTEM_PROMPT) + len(_examples_block(examples)) + len(grading_prompt or "")
+    paper_chars = [
+        # The <paper>, <title> and <abstract> tags around each.
+        len(f'<paper id="000000">\n<title>{c.get("title") or "(no title)"}</title>\n'
+            f'<abstract>{_usable_abstract(c) or "(no abstract available)"}</abstract>\n</paper>\n\n')
+        for c in candidates
+    ]
+    chunks = [paper_chars[i : i + chunk_size] for i in range(0, len(paper_chars), chunk_size)]
+    input_tokens = sum(CALL_OVERHEAD_TOKENS + _tokens(fixed_chars + sum(chunk)) for chunk in chunks)
+    input_tokens *= 1 + RETRY_SHARE
+    per_paper = output_tokens_per_paper or DEFAULT_OUTPUT_TOKENS_PER_PAPER
+    output_tokens = per_paper * len(candidates)
+    return {
+        "papers": len(candidates),
+        "chunks": len(chunks),
+        "input_tokens": round(input_tokens),
+        "output_tokens": round(output_tokens),
+        "usd": round((input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000, 6),
+    }
+
+
 def _score_call(grading_prompt, candidates, ai_api, model, examples=None, want_title=False):
     """One LLM call. Only ids that belong to `candidates` are returned, so a
     made-up or non-numeric id from the model is dropped here."""

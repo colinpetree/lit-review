@@ -31,6 +31,8 @@ export async function fetchJson(url, options) {
     // The status lets callers treat some failures specially (409: busy).
     const error = new Error(data.error || `Request failed (${res.status})`)
     error.status = res.status
+    // A run stopped by its spending limit (not a failure: raising the limit resumes it).
+    error.limitReached = data.limit_reached === true
     throw error
   }
   return data

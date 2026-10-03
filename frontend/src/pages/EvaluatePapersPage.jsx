@@ -14,6 +14,9 @@ import { fetchJson, postJson } from '../lib/api'
 import { driveAnalysisRun } from '../lib/driveAnalysisRun'
 import { formatDateTime } from '../lib/format'
 import { loadEvaluateAiChoice, saveEvaluateAiChoice } from '../lib/evaluateSettings'
+import ConfirmModal from '../components/ConfirmModal'
+import useRunEstimate from '../lib/useRunEstimate'
+import { formatUsd, getSpendThreshold, limitFor, needsConfirmation } from '../lib/spendSetting'
 
 export default function EvaluatePapersPage() {
   const navigate = useNavigate()
@@ -38,6 +41,10 @@ export default function EvaluatePapersPage() {
   const [status, setStatus] = useState('idle') // idle | loading | error
   const [error, setError] = useState(null)
   const [progress, setProgress] = useState(null)
+  // A run whose estimate is above the user's threshold, waiting for their yes: { usd, papers, limit }.
+  const [confirming, setConfirming] = useState(null)
+  // Waiting for an estimate that the run's start needs and the form did not have yet.
+  const [pricing, setPricing] = useState(false)
   // Aborts a prior in-flight submission before starting a new one - guards
   // against a rapid double-submit (double-click, double Enter) firing two
   // real analysis runs (and paying for LLM scoring twice) before the
@@ -88,14 +95,56 @@ export default function EvaluatePapersPage() {
   const configured = hasConfiguredProvider(providers)
   const choice = usableAiChoice(aiChoice, providers) || defaultAiChoice(providers)
 
+  // What would be sent to start the run, or null while the form is not ready to run. The
+  // same body prices it (POST /api/analysis-runs/estimate) and, with a limit added, creates it.
+  const runRequest =
+    configured && selected.size && promptReady && choice
+      ? {
+          dataset_ids: [...selected],
+          ...(isNewPrompt ? { grading_prompt: gradingPrompt.trim() } : { prompt_id: promptChoice }),
+          ai_api: choice.ai_api,
+          ai_model: choice.ai_model,
+          include_retracted: includeRetracted,
+        }
+      : null
+  const { estimate, failed: estimateFailed, loading: estimating } = useRunEstimate(runRequest)
+
+  // Asks the user first when the estimate is above their threshold (Settings), then starts.
   const runEvaluation = async (e) => {
     e.preventDefault()
     if (!configured) {
       navigate('/settings')
       return
     }
-    if (!selected.size || !promptReady) return
+    if (!runRequest) return
 
+    const threshold = getSpendThreshold()
+    if (threshold === null) {
+      startRun(null)
+      return
+    }
+    // The estimate on screen, or one asked for now if the form changed a moment ago.
+    let priced = estimate
+    if (!priced) {
+      setPricing(true)
+      setError(null)
+      try {
+        priced = await postJson('/api/analysis-runs/estimate', runRequest)
+      } catch (err) {
+        setError(`The cost could not be estimated, so nothing was started. ${err.message}`)
+        return
+      } finally {
+        setPricing(false)
+      }
+    }
+    if (needsConfirmation(priced.usd, threshold)) {
+      setConfirming({ usd: priced.usd, papers: priced.papers, threshold, limit: limitFor({ usd: priced.usd, threshold, confirmed: true }) })
+      return
+    }
+    startRun(limitFor({ usd: priced.usd, threshold, confirmed: false }))
+  }
+
+  const startRun = async (maxUsd) => {
     saveEvaluateAiChoice(choice)
 
     activeRequestRef.current?.abort()
@@ -106,24 +155,26 @@ export default function EvaluatePapersPage() {
     setError(null)
     setProgress(null)
 
+    let createdId = null
     try {
       const run = await postJson(
         '/api/analysis-runs',
-        {
-          dataset_ids: [...selected],
-          ...(isNewPrompt ? { grading_prompt: gradingPrompt.trim() } : { prompt_id: promptChoice }),
-          ai_api: choice.ai_api,
-          ai_model: choice.ai_model,
-          include_retracted: includeRetracted,
-        },
+        { ...runRequest, ...(maxUsd === null ? {} : { max_usd: maxUsd }) },
         { signal: controller.signal }
       )
+      createdId = run.id
       await driveAnalysisRun(run.id, controller.signal, (update) => {
         setProgress({ processed: update.candidate_papers.length - update.remaining, remaining: update.remaining })
       })
       navigate(`/results/${run.id}`)
     } catch (err) {
       if (err.name === 'AbortError') return
+      // The run's spending limit stopped it: not a failure. What was scored is saved, and
+      // the run page offers to raise the limit and carry on.
+      if (err.limitReached && createdId !== null) {
+        navigate(`/results/${createdId}`)
+        return
+      }
       setError(err.message)
       setStatus('error')
     }
@@ -242,9 +293,23 @@ export default function EvaluatePapersPage() {
             />
           ) : null}
 
+          {runRequest ? (
+            <p className="text-sm text-gray-500" aria-live="polite">
+              {estimate
+                ? `About ${formatUsd(estimate.usd)} for ${estimate.papers.toLocaleString()} paper${estimate.papers === 1 ? '' : 's'}${
+                    estimate.basis === 'history' ? ', based on your earlier runs with this model' : ''
+                  }. An estimate: the real cost can differ.`
+                : estimateFailed
+                  ? 'The cost could not be estimated.'
+                  : estimating
+                    ? 'Estimating the cost…'
+                    : null}
+            </p>
+          ) : null}
+
           <button
             type="submit"
-            disabled={!providers || status === 'loading' || (configured && (!selected.size || !promptReady))}
+            disabled={!providers || status === 'loading' || pricing || (configured && (!selected.size || !promptReady))}
             // White while it can't be run yet (key status still loading, no dataset
             // or prompt), blue once it can. While a run is going it stays blue,
             // just faded.
@@ -254,10 +319,26 @@ export default function EvaluatePapersPage() {
                 : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-surface disabled:text-gray-400 disabled:hover:bg-surface'
             }`}
           >
-            {providers && !configured ? 'Configure API key' : status === 'loading' ? 'Evaluating…' : 'Run Evaluation'}
+            {providers && !configured ? 'Configure API key' : status === 'loading' ? 'Evaluating…' : pricing ? 'Estimating…' : 'Run Evaluation'}
           </button>
         </form>
       </Card>
+      {confirming ? (
+        <ConfirmModal
+          title="Run this evaluation?"
+          message={`This is estimated to cost about ${formatUsd(confirming.usd)} for ${confirming.papers.toLocaleString()} papers, ${
+            confirming.threshold === 0
+              ? 'and you asked to be asked before every run'
+              : `more than the ${formatUsd(confirming.threshold)} you asked to be asked about`
+          }. Scoring stops at about ${formatUsd(confirming.limit)}, and can pass that by up to one batch of 20 papers. You can raise the limit later from the run.`}
+          confirmLabel="Run evaluation"
+          // Not awaited: the modal closes now and the page shows the run's progress.
+          onConfirm={() => {
+            startRun(confirming.limit)
+          }}
+          onClose={() => setConfirming(null)}
+        />
+      ) : null}
     </PageShell>
   )
 }

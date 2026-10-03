@@ -36,9 +36,10 @@ _LOCK = threading.Lock()
 # 3 = dataset.last_refresh (the latest "check for new papers").
 # 4 = paper.is_retracted, paper.work_type and analysis_run.include_retracted.
 # 5 = dataset.search_limit.
-# 6 = paper.abstract_answered. A database stamped higher than this was made by a newer
+# 6 = paper.abstract_answered.
+# 7 = analysis_run.max_usd. A database stamped higher than this was made by a newer
 # version and is not opened.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _INIT_LOCK = threading.Lock()
 _ready_for = None  # the DB_PATH that has been created, migrated and tuned
@@ -308,6 +309,10 @@ def _migrate(conn):
         ("name", "TEXT"),
         ("name_auto", "INTEGER NOT NULL DEFAULT 0"),
         ("include_retracted", "INTEGER NOT NULL DEFAULT 1"),
+        # max_usd: the most the run may spend scoring (NULL = no limit, as for every run
+        # from before it existed). Checked before each chunk, so a run can pass it by up
+        # to one chunk.
+        ("max_usd", "REAL"),
     ):
         if column not in run_columns:
             conn.execute(f"ALTER TABLE analysis_run ADD COLUMN {column} {ddl}")
@@ -1067,7 +1072,21 @@ def _scoring_examples(conn, prompt_id):
     return [dict(row) for row in rows]
 
 
-def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id=None, include_retracted=False):
+def get_scoring_inputs(prompt_id):
+    """(description, examples) a run made from this saved prompt would be scored with, or
+    None if there is no such live prompt. The same as create_analysis_run snapshots."""
+    with closing(_connect()) as conn:
+        prompt = conn.execute(
+            "SELECT description FROM prompt WHERE id = ? AND deleted_at IS NULL", (prompt_id,)
+        ).fetchone()
+        if prompt is None:
+            return None
+        return prompt["description"], _scoring_examples(conn, prompt_id)
+
+
+def create_analysis_run(
+    dataset_ids, grading_prompt, ai_api, ai_model, prompt_id=None, include_retracted=False, max_usd=None
+):
     """A run can span several datasets - scores the union of their papers in
     one pass. dataset_ids must be non-empty (validated by the caller).
 
@@ -1076,7 +1095,8 @@ def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id
     too. Without one, a new prompt is created from grading_prompt in the same
     transaction, with a placeholder name and title_pending set so the first
     scoring call supplies a real title. Retracted papers are left out of the run unless
-    include_retracted (kept on the run, so resuming it applies the same rule)."""
+    include_retracted (kept on the run, so resuming it applies the same rule). `max_usd` is
+    the most the run may spend scoring, or None for no limit."""
     with _LOCK, closing(_connect()) as conn:
         now = _now()
         # The run's name starts as its prompt's. For a new prompt that is only a
@@ -1106,12 +1126,12 @@ def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id
             """
             INSERT INTO analysis_run
                 (grading_prompt, ai_api, ai_model, status, created_at, prompt_id, examples_snapshot,
-                 name, name_auto, include_retracted)
-            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
+                 name, name_auto, include_retracted, max_usd)
+            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 grading_prompt, ai_api, ai_model, now, prompt_id, json.dumps(examples),
-                _unique_run_name(conn, prompt_name), name_auto, int(bool(include_retracted)),
+                _unique_run_name(conn, prompt_name), name_auto, int(bool(include_retracted)), max_usd,
             ),
         )
         run_id = cur.lastrowid
@@ -1378,22 +1398,25 @@ def get_run_results(run_id):
         return results
 
 
-def _included_papers_sql(run_id_sql, include_retracted_sql):
+def _included_papers_sql(run_id_sql, include_retracted_sql, datasets_sql=None):
     """SQL selecting a run's candidate paper ids: the union of every linked dataset's
     non-excluded papers, deduped (a paper can appear in more than one selected dataset) -
     included if at least one of its dataset_paper rows among the run's datasets isn't
     excluded (excluded via dataset A but present via dataset B still counts as included).
     A retracted paper is left out unless the run includes them. The one definition of what
-    a run scores: the Results counts, the papers scored, and what is left to score all
-    use it, so they cannot disagree. The arguments are SQL expressions for the run's id
-    and its include_retracted flag (a placeholder, or a column of an outer query)."""
+    a run scores: the Results counts, the papers scored, what is left to score and the
+    estimate before a run exists all use it, so they cannot disagree. The arguments are SQL
+    expressions for the run's id and its include_retracted flag (a placeholder, or a column
+    of an outer query). `datasets_sql` (a query returning a dataset_id column) stands in
+    for the run's linked datasets when there is no run yet."""
+    if datasets_sql is None:
+        datasets_sql = f"SELECT dataset_id FROM analysis_run_dataset WHERE run_id = {run_id_sql}"
     return f"""
         SELECT dp.paper_id
         FROM dataset_paper dp
-        JOIN analysis_run_dataset rd ON rd.dataset_id = dp.dataset_id
+        JOIN ({datasets_sql}) rd ON rd.dataset_id = dp.dataset_id
         JOIN paper pp ON pp.id = dp.paper_id
-        WHERE rd.run_id = {run_id_sql}
-          AND ({include_retracted_sql} = 1 OR COALESCE(pp.is_retracted, 0) = 0)
+        WHERE ({include_retracted_sql} = 1 OR COALESCE(pp.is_retracted, 0) = 0)
         GROUP BY dp.paper_id
         HAVING SUM(CASE WHEN dp.excluded_at IS NULL THEN 1 ELSE 0 END) > 0
     """
@@ -1473,6 +1496,64 @@ def count_unscored_papers(run_id):
             (*params, run_id),
         ).fetchone()
         return row["total"]
+
+
+def get_estimate_candidates(dataset_ids, include_retracted):
+    """The papers a run over these datasets would score (title and abstract are all the
+    estimate needs), by the same rule as a real run (see _included_papers_sql)."""
+    sql = _included_papers_sql(
+        None, "?", datasets_sql="SELECT value AS dataset_id FROM json_each(?)"
+    )
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT p.title, p.abstract
+            FROM ({sql}) included
+            JOIN paper p ON p.id = included.paper_id
+            """,
+            (json.dumps(list(dataset_ids)), int(bool(include_retracted))),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def observed_output_tokens_per_paper(ai_api, model, minimum_papers=20):
+    """(output tokens per scored paper, papers it is based on) from this user's earlier
+    scoring with this provider and model, or None until `minimum_papers` have been scored
+    (too few to say). A model that thinks before answering bills that as output, so what
+    it really used says more than a fixed guess. The retry calls for skipped papers are
+    in the tokens too, as they are in the bill."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                (SELECT COALESCE(SUM(c.output_tokens), 0) FROM llm_call c
+                  WHERE c.purpose = 'scoring' AND c.ai_api = ? AND c.ai_model = ?) AS tokens,
+                (SELECT COUNT(*) FROM analysis_result ar
+                   JOIN analysis_run r ON r.id = ar.run_id
+                  WHERE r.ai_api = ? AND r.ai_model = ?) AS papers
+            """,
+            (ai_api, model, ai_api, model),
+        ).fetchone()
+    if row["papers"] < minimum_papers or row["tokens"] <= 0:
+        return None
+    return row["tokens"] / row["papers"], row["papers"]
+
+
+def get_run_scoring_cost(run_id):
+    """What scoring this run has cost so far (not the datasets' query expansion), which is
+    what the run's spending limit is checked against."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(usd), 0) AS total FROM llm_call WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return row["total"] or 0.0
+
+
+def set_run_max_usd(run_id, max_usd):
+    """Set (or, with None, remove) a run's spending limit."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute("UPDATE analysis_run SET max_usd = ? WHERE id = ?", (max_usd, run_id))
+        conn.commit()
 
 
 def record_analysis_chunk(run_id, scores, usage):

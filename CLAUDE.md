@@ -356,7 +356,7 @@ against real copies on spare ports works well.
   database stamped higher than the code (`DatabaseTooNew`) is refused. (Version 3 added
   `dataset.last_refresh`; 4 added `paper.is_retracted`, `paper.work_type` and
   `analysis_run.include_retracted`; 5 added `dataset.search_limit`; 6 added
-  `paper.abstract_answered`.) Foreign keys are enforced.
+  `paper.abstract_answered`; 7 added `analysis_run.max_usd`.) Foreign keys are enforced.
   Papers without a DOI match on `paper.title_key` (`title_match.title_key`: markup, accents, case
   and punctuation ignored, `+` and `#` kept) plus year; it is stored, so a change to that rule
   needs a version bump and re-backfill. `get_or_create_papers` inserts a whole search in one
@@ -413,6 +413,25 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   papers scored and what is left to score all use: never copy that SQL. A scored paper that is
   later found to be retracted keeps its result. The run page says how many were left out
   (`retracted_left_out`), so they are never omitted silently.
+- **Cost before and during a run.** `POST /api/analysis-runs/estimate` takes the same body as creating
+  a run and returns `{papers, chunks, input_tokens, output_tokens, usd, basis, approximate}` without
+  creating anything or calling the AI. The papers come from `db.get_estimate_candidates`, which uses
+  `_included_papers_sql` (with its `datasets_sql` argument standing in for a run's datasets), so it
+  prices exactly what a run would score. `llm.estimate_scoring_cost` counts the prompt text at 4
+  characters a token, repeats the fixed text per chunk, adds 10% for retries, and guesses 150 output
+  tokens a paper; once this provider and model have scored 20+ of the user's papers
+  (`db.observed_output_tokens_per_paper`) it uses their real average (`basis: "history"`), which
+  matters for thinking models that bill hidden reasoning as output. A run's optional `max_usd` (set on
+  create or by `PATCH`, null removes it) is checked against `db.get_run_scoring_cost` (scoring only,
+  not the datasets' expansion) **before** each chunk in `_process_run_chunk`, so a run can pass it by up
+  to one chunk; past it `/process` answers 400 with `limit_reached: true` and writes nothing (the run
+  is not reopened), and the run dict carries `scoring_cost` and `limit_reached`. Raising the limit
+  and calling `/process` again carries on. On the client, `lib/spendSetting.js` holds the per-browser
+  "ask before spending more than" amount (default $1.00, 0 = always ask, blank = never ask and no
+  limit) and `limitFor` (a confirmed run is limited to its estimate plus 25%, an unconfirmed one to
+  the threshold); Evaluate shows the estimate (`lib/useRunEstimate.js`), asks through `ConfirmModal`
+  above the threshold, and a run stopped by its limit sends the user to the run page, which offers
+  "Raise limit and continue".
 - Runs are resumable. The client repeatedly POSTs `/api/analysis-runs/<id>/process`, and
   each call scores one chunk (`SCORE_CHUNK_SIZE`=20) of still-unscored papers until the
   run's status is `completed`. `frontend/src/lib/driveAnalysisRun.js` is that loop.

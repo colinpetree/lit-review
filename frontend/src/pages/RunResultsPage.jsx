@@ -6,6 +6,7 @@ import PaperFilterBar from '../components/PaperFilterBar'
 import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
 import { exportMenuItem } from '../lib/exportFile'
+import { formatUsd } from '../lib/spendSetting'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
@@ -19,6 +20,9 @@ export default function RunResultsPage() {
   const [resuming, setResuming] = useState(false)
   const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
   const [actionError, setActionError] = useState(null)
+  // What the user has typed as the new spending limit (null: show the suggestion).
+  const [limitInput, setLimitInput] = useState(null)
+  const [raising, setRaising] = useState(false)
   // /results/:id is one long-lived route element - React Router doesn't
   // remount it on a param-only change, so a "Resume scoring" loop started
   // on one run keeps running (and keeps calling setRun) even after the
@@ -49,6 +53,8 @@ export default function RunResultsPage() {
     setResuming(false)
     setFilter(EMPTY_PAPER_FILTER)
     setActionError(null)
+    setLimitInput(null)
+    setRaising(false)
     fetchJson(`/api/analysis-runs/${id}`)
       .then((r) => !cancelled && setRun(mergeRunResults(r)))
       .catch((err) => !cancelled && setError(err.message))
@@ -69,10 +75,38 @@ export default function RunResultsPage() {
         if (!controller.signal.aborted) setRun(withEdits(updated))
       })
     } catch (err) {
-      if (err.name !== 'AbortError') setError(err.message)
+      if (err.limitReached) {
+        // Not a failure: the run is paused at its spending limit. Reload it so the page
+        // shows that (and what is left), instead of replacing the page with an error.
+        try {
+          const latest = await fetchJson(`/api/analysis-runs/${id}`)
+          if (!controller.signal.aborted) setRun(withEdits(mergeRunResults(latest)))
+        } catch (reloadErr) {
+          if (!controller.signal.aborted) setActionError(reloadErr.message)
+        }
+      } else if (err.name !== 'AbortError') {
+        setError(err.message)
+      }
     } finally {
       if (!controller.signal.aborted) setResuming(false)
     }
+  }
+
+  // Raise a run's spending limit and carry on scoring.
+  const raiseLimit = async (amount) => {
+    setActionError(null)
+    setRaising(true)
+    try {
+      await patchJson(`/api/analysis-runs/${id}`, { max_usd: amount })
+      setRun((prev) => ({ ...prev, max_usd: amount, limit_reached: false }))
+      setLimitInput(null)
+    } catch (err) {
+      setActionError(err.message)
+      return
+    } finally {
+      setRaising(false)
+    }
+    await resumeScoring()
   }
 
   if (error) {
@@ -263,7 +297,47 @@ export default function RunResultsPage() {
           </div>
         ) : null}
 
-        {run.remaining > 0 ? (
+        {run.max_usd != null ? (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm font-medium text-gray-500">Spending limit</p>
+            <p className="text-sm text-gray-800">
+              {formatUsd(run.max_usd)} for scoring, {formatUsd(run.scoring_cost)} spent so far. A limit is checked
+              before each batch of 20 papers, so a run can pass it by up to one batch.
+            </p>
+          </div>
+        ) : null}
+
+        {run.limit_reached ? (
+          <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+            <p className="text-sm text-amber-900 dark:text-amber-200">
+              Scoring paused: this run reached its spending limit of {formatUsd(run.max_usd)}.{' '}
+              {run.remaining.toLocaleString()} paper{run.remaining === 1 ? ' is' : 's are'} not scored yet. Everything
+              scored so far is kept.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="new-limit" className="text-sm text-amber-900 dark:text-amber-200">
+                New limit ($)
+              </label>
+              <input
+                id="new-limit"
+                value={limitInput ?? (Math.ceil(run.max_usd * 2 * 100) / 100).toFixed(2)}
+                onChange={(e) => setLimitInput(e.target.value)}
+                inputMode="decimal"
+                className="w-24 rounded-md border border-gray-300 bg-surface px-2 py-1 text-sm"
+              />
+              <button
+                type="button"
+                disabled={raising || resuming || !(Number(limitInput ?? run.max_usd * 2) > run.scoring_cost)}
+                onClick={() => raiseLimit(Number(limitInput ?? Math.ceil(run.max_usd * 2 * 100) / 100))}
+                className="rounded-md border border-gray-300 bg-surface px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+              >
+                Raise limit and continue
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {run.remaining > 0 && !run.limit_reached ? (
           <button
             type="button"
             onClick={resumeScoring}

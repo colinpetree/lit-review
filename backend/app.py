@@ -817,18 +817,28 @@ def delete_dataset(dataset_id):
 
 @app.patch("/api/analysis-runs/<int:run_id>")
 def update_analysis_run(run_id):
-    """Rename a run. Names are unique among live runs (case-insensitive)."""
-    if db.get_analysis_run(run_id) is None:
+    """Rename a run and/or set its spending limit (`max_usd`, null to remove it). Names
+    are unique among live runs (case-insensitive)."""
+    run_row = db.get_analysis_run(run_id)
+    if run_row is None:
         return jsonify({"error": "analysis run not found"}), 404
-    name = " ".join(_str(_json_body(), "name").split())
-    if not name:
-        return jsonify({"error": "'name' cannot be blank"}), 400
-    if len(name) > db.MAX_RUN_NAME_CHARS:
-        return jsonify({"error": f"'name' must be at most {db.MAX_RUN_NAME_CHARS} characters"}), 400
-    saved = db.rename_analysis_run(run_id, name)
-    if saved is None:
-        return jsonify({"error": "Another analysis run already has that name"}), 409
-    return jsonify({"id": run_id, "name": saved})
+    body = _json_body()
+    # Both checked before either is saved, so a refused request changes nothing.
+    sets_limit = "max_usd" in body
+    max_usd = _max_usd(body["max_usd"]) if sets_limit else None
+    saved = run_row["name"]
+    if "name" in body or not sets_limit:
+        name = " ".join(_str(body, "name").split())
+        if not name:
+            return jsonify({"error": "'name' cannot be blank"}), 400
+        if len(name) > db.MAX_RUN_NAME_CHARS:
+            return jsonify({"error": f"'name' must be at most {db.MAX_RUN_NAME_CHARS} characters"}), 400
+        saved = db.rename_analysis_run(run_id, name)
+        if saved is None:
+            return jsonify({"error": "Another analysis run already has that name"}), 409
+    if sets_limit:
+        db.set_run_max_usd(run_id, max_usd)
+    return jsonify({"id": run_id, "name": saved, "max_usd": max_usd if sets_limit else run_row["max_usd"]})
 
 
 @app.delete("/api/analysis-runs/<int:run_id>")
@@ -1036,9 +1046,29 @@ def update_paper(paper_id):
     return jsonify(db.get_paper(paper_id))
 
 
-@app.post("/api/analysis-runs")
-def create_analysis_run():
-    body = _json_body()
+MAX_RUN_USD = 10_000
+
+
+def _limit_reached(max_usd, spent):
+    """Whether a run with this spending limit may not score another chunk. It is checked
+    before a chunk, so a run can pass its limit by up to one chunk's cost."""
+    return max_usd is not None and spent >= max_usd
+
+
+def _max_usd(value):
+    """A run's spending limit in dollars: None (no limit) or a number above 0."""
+    if value is None:
+        return None
+    # One range check, no float conversion: a huge whole number would raise OverflowError in
+    # math.isfinite (a 500), and NaN and infinity fail the range check by themselves.
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= MAX_RUN_USD:
+        raise InvalidRequest(f"'max_usd' must be an amount above 0 and at most {MAX_RUN_USD}")
+    return round(float(value), 4)
+
+
+def _run_request(body):
+    """What a request to start (or price) a run asks for, validated: (dataset_ids,
+    grading_prompt, prompt_id, include_retracted, ai_api, ai_model). Raises InvalidRequest."""
     dataset_ids = body.get("dataset_ids")
     grading_prompt = _str(body, "grading_prompt", MAX_PROMPT_DESCRIPTION_CHARS)
     prompt_id = body.get("prompt_id")
@@ -1048,15 +1078,15 @@ def create_analysis_run():
         raise InvalidRequest("'include_retracted' must be true or false")
 
     if not isinstance(dataset_ids, list) or not dataset_ids:
-        return jsonify({"error": "missing or empty 'dataset_ids'"}), 400
+        raise InvalidRequest("missing or empty 'dataset_ids'")
     if prompt_id is not None:
         # An existing saved prompt: its own description is used, so any
         # grading_prompt text in the body is ignored.
         prompt_id = _int_id(prompt_id, "prompt_id")
         if db.get_prompt(prompt_id) is None:
-            return jsonify({"error": "prompt not found"}), 400
+            raise InvalidRequest("prompt not found")
     elif not grading_prompt:
-        return jsonify({"error": "missing 'prompt_id' or 'grading_prompt'"}), 400
+        raise InvalidRequest("missing 'prompt_id' or 'grading_prompt'")
     # De-duplicated, order preserved - a repeated id would otherwise hit
     # analysis_run_dataset's (run_id, dataset_id) PK constraint on the
     # second insert and crash with a raw 500 instead of a clean error.
@@ -1064,16 +1094,51 @@ def create_analysis_run():
     try:
         ai_api, ai_model = _ai_choice(body)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        raise InvalidRequest(str(exc)) from exc
 
     for dataset_id in dataset_ids:
         if db.get_dataset(dataset_id) is None:
-            return jsonify({"error": f"dataset {dataset_id} not found"}), 400
+            raise InvalidRequest(f"dataset {dataset_id} not found")
+    return dataset_ids, grading_prompt, prompt_id, include_retracted, ai_api, ai_model
 
+
+@app.post("/api/analysis-runs")
+def create_analysis_run():
+    body = _json_body()
+    dataset_ids, grading_prompt, prompt_id, include_retracted, ai_api, ai_model = _run_request(body)
+    max_usd = _max_usd(body.get("max_usd"))
     run_id = db.create_analysis_run(
-        dataset_ids, grading_prompt, ai_api, ai_model, prompt_id, include_retracted=include_retracted
+        dataset_ids, grading_prompt, ai_api, ai_model, prompt_id, include_retracted=include_retracted, max_usd=max_usd
     )
     return jsonify(_run_to_dict(db.get_analysis_run(run_id)))
+
+
+@app.post("/api/analysis-runs/estimate")
+def estimate_analysis_run():
+    """What starting this run would roughly cost, without starting it or calling the AI
+    (the body is the same as for creating one). Based on what the prompts will contain and,
+    once this model has scored enough of the user's papers, on what it really wrote
+    for them (`basis` says which). Approximate: shown as "about"."""
+    dataset_ids, grading_prompt, prompt_id, include_retracted, ai_api, ai_model = _run_request(_json_body())
+    examples = []
+    if prompt_id is not None:
+        inputs = db.get_scoring_inputs(prompt_id)
+        if inputs is None:  # deleted since the request was checked
+            raise InvalidRequest("prompt not found")
+        grading_prompt, examples = inputs
+    observed = db.observed_output_tokens_per_paper(ai_api, ai_model)
+    estimate = llm.estimate_scoring_cost(
+        db.get_estimate_candidates(dataset_ids, include_retracted),
+        grading_prompt,
+        examples,
+        ai_api,
+        ai_model,
+        SCORE_CHUNK_SIZE,
+        output_tokens_per_paper=observed[0] if observed else None,
+    )
+    estimate["basis"] = "history" if observed else "default"
+    estimate["approximate"] = True
+    return jsonify(estimate)
 
 
 @app.get("/api/analysis-runs")
@@ -1101,6 +1166,11 @@ def _run_to_dict(run_row):
     # Retracted papers this run's datasets hold but it does not score, so the page can say so.
     run["retracted_left_out"] = db.count_retracted_left_out(run["id"])
     run["cost"] = round(db.get_run_cost(run["id"]), 6)
+    # What scoring alone has cost (the limit is checked against this, not `cost`, which
+    # also holds the datasets' query expansion), and whether the limit is what is
+    # holding the run back.
+    run["scoring_cost"] = round(db.get_run_scoring_cost(run["id"]), 6)
+    run["limit_reached"] = _limit_reached(run["max_usd"], run["scoring_cost"]) and run["remaining"] > 0
     return run
 
 
@@ -1179,6 +1249,17 @@ def _process_run_chunk(run_id):
             db.mark_run_completed(run_id)
             run_row = db.get_analysis_run(run_id)
         return jsonify({**_run_to_dict(run_row), "processed": 0})
+
+    if _limit_reached(run_row["max_usd"], db.get_run_scoring_cost(run_id)):
+        # Nothing is written and the run is left as it is, so raising the limit and
+        # calling /process again carries on from the same unscored papers.
+        return jsonify(
+            {
+                "error": f"This run reached its spending limit of ${run_row['max_usd']:.2f}. "
+                "Raise the limit on the run page to continue.",
+                "limit_reached": True,
+            }
+        ), 400
 
     if run_row["status"] == "completed":
         # Papers have come back since the run finished (an excluded one was

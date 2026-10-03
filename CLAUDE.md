@@ -28,6 +28,12 @@ packaging. The maintainer (secondary user) works from source as described below.
 pip install -r requirements.txt
 python app.py                     # http://127.0.0.1:5175, opens browser
 ```
+Every line in `requirements.txt` is pinned to the version that was tested (the provider SDKs
+use newer parameters, such as `output_config` in `providers/anthropic.py`, that an older
+release would reject). When bumping one, run the whole test suite, since the tests fake the
+provider call and will not notice an SDK change by themselves. Check one real scoring call
+with your own key before shipping an SDK bump, and keep PLAN.md's packaging hidden-imports
+list in sync with the provider modules.
 
 **Frontend** (from `frontend/`):
 ```

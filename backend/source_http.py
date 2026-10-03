@@ -7,6 +7,7 @@ the user. Callers either stop using that source for the rest of the run
 (abstract lookup) or report it and fail the search (paper search).
 """
 
+import html
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ from urllib.parse import quote, urlparse
 import requests
 
 import credentials
+from title_match import INLINE_TAG_RE
 
 REQUEST_TIMEOUT = 20
 USER_AGENT = "lit-review/0.1 (local research tool)"
@@ -89,6 +91,14 @@ def clean_text(text):
     text = re.sub(r"\s+", " ", text).strip()
     # Some publishers prefix an abstract with the word "Abstract".
     return re.sub(r"^abstract\s*[:.\-]?\s+(?=\S)", "", text, flags=re.I)
+
+
+def clean_title(title):
+    """A paper title without the inline markup (<i>, <sub>...) some APIs leave in
+    it. Unlike clean_text it keeps a leading "Abstract", which can be a real word."""
+    if not title:
+        return title
+    return re.sub(r"\s+", " ", html.unescape(INLINE_TAG_RE.sub("", title))).strip()
 
 
 def get(source_label, url, **kwargs):

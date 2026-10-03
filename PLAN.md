@@ -83,7 +83,7 @@ quota) is skipped for the rest of the run. See Phase 4 below for the design rati
 2. **Query expansion**: LLM turns the free-text question into a handful of structured
    search queries / keyword sets (since API keyword search is literal, not semantic).
 3. **Retrieval**: run expanded queries against the selected sources (OpenAlex by default,
-   optionally Semantic Scholar and Elsevier/Scopus), pull top N results per query (e.g.
+   optionally Semantic Scholar, Elsevier/Scopus and PubMed), pull top N results per query (e.g.
    50-100), merge.
 4. **Dedupe**: match across sources by DOI, fall back to title+year fuzzy match.
 5. **Relevance/novelty scoring**: LLM scores each candidate abstract against the original
@@ -102,8 +102,19 @@ quota) is skipped for the rest of the run. See Phase 4 below for the design rati
 
 Local-only, OS-agnostic (Windows/Mac/Linux), launched on demand by the machine owner —
 no networking beyond outbound calls to the scholarly APIs and whichever AI provider is
-selected. No auth/multi-tenancy needed since it's single-user and never exposed off
-localhost.
+selected. Single-user and never exposed off localhost, but loopback is shared by every
+account on the computer and by every website open in the user's browser, so the app is
+guarded (built; details and rationale in CLAUDE.md, "Architecture"):
+- **Request guard**: requests with a foreign `Host` (DNS rebinding) or a foreign `Origin` on
+  POST/PATCH/DELETE are refused; responses carry anti-framing and `no-store` headers. No CORS.
+- **Per-user access secret**: a random secret in `access.token`, sent as a Bearer header (not a
+  cookie, because cookies are not port-scoped). The browser is opened on a `#token=` link.
+- **One copy per user**: a lock file, a port chosen per copy (5175 up, 20 ports) and an
+  exclusive bind on Windows, so a second launch opens the running copy instead of starting
+  another.
+- **One slow job per run or dataset**: scoring and abstract lookup return 409 if one is already
+  running, so Stop then Resume or a second tab cannot pay for the same work twice.
+- **Unusable data folder**: found at launch and explained plainly rather than as a traceback.
 
 - **Backend**: Python + Flask (existing, working stack — reused as-is from the other
   project). Runs a local dev/WSGI server bound to `127.0.0.1` on a fixed or
@@ -260,14 +271,19 @@ Currently in `backend/requirements.txt`:
 - `openai` (pinned) - OpenAI API SDK
 - `google-genai` (pinned) - Gemini API SDK
 - `sqlite3` (stdlib) - DB; no ORM
-- `cryptography` + `platformdirs` + `filelock` - cross-platform encrypted local-file storage
+- `cryptography` + `platformdirs` - cross-platform encrypted local-file storage
   for API keys (deliberately not `keyring`/OS credential managers, see Architecture)
+- `filelock` - the key-store lock and the one-copy-per-user `instance.lock`
 
 **Frontend (JS)**
 - `react` 19, `react-dom`, `react-router-dom` 7, `vite`
 - `tailwindcss` 3 via PostCSS + autoprefixer
 - `lucide-react` (icons), `@fontsource/source-sans-3` and `@fontsource/source-code-pro`
-- `oxlint` for linting (no test suite exists in backend or frontend)
+- `oxlint` for linting, `vitest` for the `src/lib` modules (components are checked by hand)
+
+**Tests (built)**: pytest for the backend (`requirements-dev.txt`) and Vitest for the frontend
+libs. Every backend test gets a temp database and key store and cannot reach a non-loopback
+host, so a test can neither touch real data nor spend money. Commands are in CLAUDE.md.
 
 All of the above are open-source/free to use; only the AI provider API calls
 themselves are metered, and that cost is the user's own (their key, their bill).
@@ -300,8 +316,16 @@ not built.
 - Soft-deletable datasets, runs and prompts, and AI-written short titles for datasets and
   prompts.
 
+**Added later (done)**
+- Security and startup hardening: request guard, per-user access secret, one copy per user,
+  one slow job per run or dataset, readable errors for an unusable data folder or key store
+  (see Architecture).
+- Backend (pytest) and frontend (Vitest) test suites.
+- Light/Dark/System theme, and a Settings switch to hide PubMed from Discover Papers.
+
 **Phase 4 (optional, later)**
-Not built: Semantic Scholar citation-graph exploration ("show me
+Not built, roughly in priority order: packaging (see Distribution / packaging; needed for the
+primary user), Semantic Scholar citation-graph exploration ("show me
 what cites/references this shortlisted paper"), export shortlist to BibTeX/RIS for the
 user's reference manager, Web of Science integration if the primary user's institution has
 API access, and packaging (see Distribution / packaging).
@@ -408,9 +432,13 @@ saves confirmed good calls as well.
 
 Status: nothing here is built yet. There is no PyInstaller spec, no GitHub Actions
 workflow and no update check in the repo, and the app currently runs from source
-(`python app.py` in `backend/`). The `collect_all()` list below will also need `requests`
-and the `openai` and `google-genai` SDKs, and the `providers.*` modules must be listed as
-hidden imports, because `llm.py` loads them by name at runtime. Target user has never used a command line or downloaded code
+(`python app.py` in `backend/`). This is the largest remaining gap against the primary user's
+needs. The `collect_all()` list below will also need `requests`, `filelock` and the `openai`
+and `google-genai` SDKs, and the `providers.*` modules must be listed as hidden imports,
+because `llm.py` loads them by name at runtime. Also verify in the frozen build: the
+single-copy startup (the venv launcher problem does not apply, but the lock and port logic
+does), the `static` folder location, and that data and keys still land in the user's profile
+folders. There is no app version string yet; one is needed for the update check. Target user has never used a command line or downloaded code
 from GitHub before, so "clone the repo and run pip install" is not acceptable UX. Plan:
 
 - **Packaging**: PyInstaller `--onedir` bundles the Flask backend + all Python deps +
@@ -453,7 +481,7 @@ from GitHub before, so "clone the repo and run pip install" is not acceptable UX
   - *`certifi` cert bundle must be bundled as data, not just code*: `requests`/
     `anthropic`-style HTTPS calls fail cert verification once frozen unless `certifi`'s
     `cacert.pem` is included via `collect_data_files('certifi')`. This will bite every
-    one of our 4 AI providers plus OpenAlex/Semantic Scholar calls if skipped — easy to
+    one of our 3 AI providers plus OpenAlex/Semantic Scholar calls if skipped — easy to
     miss because dev mode works fine (uses the system Python's certifi) and it only
     breaks in the packaged build.
   - *Dynamic class-path loading*: not directly applicable (no gunicorn for a local

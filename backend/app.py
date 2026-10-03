@@ -465,7 +465,7 @@ def create_dataset():
         question, queries, from_date=from_date, to_date=to_date, name=title, sources=sources
     )
     db.record_llm_call("query_expansion", usage_api, expand_usage.model, expand_usage, dataset_id=dataset_id)
-    paper_ids = [db.get_or_create_paper(candidate) for candidate in candidates]
+    paper_ids = db.get_or_create_papers(candidates)
     db.add_papers_to_dataset(dataset_id, paper_ids)
 
     dataset_row = db.get_dataset(dataset_id)
@@ -1149,11 +1149,16 @@ def hand_over_to_running_copy(state_dir, wait_seconds=RUNNING_COPY_WAIT_SECONDS)
 
 def _data_folder_problem(folder, exc):
     reason = getattr(exc, "strerror", None) or str(exc)
+    advice = (
+        "Then start Lit Review again."
+        if isinstance(exc, db.DatabaseTooNew)
+        else "Make sure that folder can be written to and the disk is not full, then start Lit Review again."
+    )
     print(
         "Lit Review cannot use its data folder:\n"
         f"  {folder}\n"
         f"{reason}\n"
-        "Make sure that folder can be written to and the disk is not full, then start Lit Review again.",
+        f"{advice}",
         file=sys.stderr,
     )
     return 1

@@ -1,7 +1,5 @@
 from contextlib import closing
 
-import pytest
-
 import db
 import openalex
 
@@ -46,7 +44,6 @@ class TestDedupe:
         a, b, c = result("W1", title="One"), result("W2", title="Two"), result("W3", title="One")
         assert [r["id"] for r in openalex.dedupe([[a, b], [c]])] == ["W1", "W2"]
 
-    @pytest.mark.xfail(strict=True, reason="Phase 2.2: titles are not normalized beyond case and spaces")
     def test_trailing_period_and_markup_do_not_split_a_paper(self):
         pubmed = result("1", title="Coral growth modeling.", source="pubmed")
         alex = result("W1", title="Coral <i>growth</i> modeling")
@@ -93,7 +90,6 @@ class TestGetOrCreatePaper:
         db.get_or_create_paper(result("W1", title="Different title", year=2025))
         assert self.count() == 1
 
-    @pytest.mark.xfail(strict=True, reason="Phase 2.2: titles are not normalized beyond case and spaces")
     def test_trailing_period_does_not_split_a_paper(self):
         first = db.get_or_create_paper(result("W1", title="Coral growth modeling"))
         second = db.get_or_create_paper(result("1", title="Coral growth modeling.", source="pubmed"))

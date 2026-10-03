@@ -9,6 +9,7 @@ threaded.
 """
 
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -19,13 +20,27 @@ from pathlib import Path
 import platformdirs
 
 from credentials import APP_NAME
+from openalex import dedupe_key
 from source_http import safe_url
+from title_match import title_key
 
 # LIT_REVIEW_DATA_DIR is for development and tests only, so they never touch the
 # real database.
 DB_PATH = Path(os.environ.get("LIT_REVIEW_DATA_DIR") or platformdirs.user_data_dir(APP_NAME)) / "lit_review.db"
 
 _LOCK = threading.Lock()
+
+# Bumped when the schema changes in a way an older copy of the app could not read.
+# 1 = everything up to the title_key column and the indexes. A database stamped
+# higher than this was made by a newer version and is not opened.
+SCHEMA_VERSION = 1
+
+_INIT_LOCK = threading.Lock()
+_ready_for = None  # the DB_PATH that has been created, migrated and tuned
+
+
+class DatabaseTooNew(sqlite3.DatabaseError):
+    pass
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper (
@@ -187,6 +202,12 @@ def _migrate(conn):
     if "read_at" not in existing_columns:
         conn.execute("ALTER TABLE paper ADD COLUMN read_at TEXT")
         conn.commit()
+    # The title reduced to what identifies the paper across sources
+    # (title_match.title_key), the dedupe key for papers without a DOI.
+    if "title_key" not in existing_columns:
+        conn.execute("ALTER TABLE paper ADD COLUMN title_key TEXT")
+        conn.commit()
+    _backfill_title_keys(conn)
 
     # The user's relevance call on one run's result: 'relevant', 'not_relevant',
     # or NULL for neutral. Per result because relevance depends on the run's
@@ -223,6 +244,9 @@ def _migrate(conn):
 
     # Datasets from before titles existed get the first few words of their
     # topic as a title (editable later). New datasets always set a name.
+    if "name" not in dataset_columns:
+        conn.execute("ALTER TABLE dataset ADD COLUMN name TEXT")
+        conn.commit()
     for row in conn.execute("SELECT id, verbose_query FROM dataset WHERE name IS NULL").fetchall():
         conn.execute(
             "UPDATE dataset SET name = ? WHERE id = ?",
@@ -302,12 +326,95 @@ def _migrate(conn):
         conn.commit()
 
 
+def _backfill_title_keys(conn):
+    """Give every paper from before title_key existed its key, in batches. A
+    paper with no usable title gets '' (not NULL), so it is not revisited."""
+    while True:
+        rows = conn.execute("SELECT id, title FROM paper WHERE title_key IS NULL LIMIT 1000").fetchall()
+        if not rows:
+            return
+        conn.executemany(
+            "UPDATE paper SET title_key = ? WHERE id = ?",
+            [(title_key(row["title"]), row["id"]) for row in rows],
+        )
+        conn.commit()
+
+
+def _create_indexes(conn):
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_paper_doi ON paper(lower(doi))",
+        "CREATE INDEX IF NOT EXISTS idx_paper_title_key ON paper(title_key)",
+        "CREATE INDEX IF NOT EXISTS idx_dataset_paper_paper ON dataset_paper(paper_id)",
+        "CREATE INDEX IF NOT EXISTS idx_llm_call_run ON llm_call(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_llm_call_dataset ON llm_call(dataset_id)",
+        "CREATE INDEX IF NOT EXISTS idx_prompt_example_paper ON prompt_example(paper_id)",
+    ):
+        conn.execute(statement)
+    conn.commit()
+
+
+def _keep_copy_before_upgrade(conn, old_version):
+    """Copy the database (as it is, before any migration touches it) next to the
+    original, once, so the first launch after an upgrade can never cost the user
+    their data. Never overwritten or deleted by the app."""
+    copy = DB_PATH.with_name(f"{DB_PATH.name}.pre-upgrade-{old_version}-to-{SCHEMA_VERSION}")
+    if copy.exists():
+        return
+    temp = copy.with_name(copy.name + ".partial")
+    temp.unlink(missing_ok=True)
+    target = sqlite3.connect(str(temp))
+    try:
+        conn.backup(target)
+    finally:
+        target.close()
+    os.replace(temp, copy)
+
+
+def _ensure_ready():
+    """Create, upgrade and tune the database once per process (and again if
+    DB_PATH changes, which tests do). Routes never run migrations themselves."""
+    global _ready_for
+    if _ready_for == DB_PATH and DB_PATH.exists():
+        return
+    with _INIT_LOCK:
+        if _ready_for == DB_PATH and DB_PATH.exists():
+            return
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        had_data = DB_PATH.exists() and DB_PATH.stat().st_size > 0
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10)
+        conn.row_factory = sqlite3.Row
+        try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise DatabaseTooNew(
+                    "This data was made by a newer version of Lit Review. Please update Lit Review to open it."
+                )
+            if had_data and version < SCHEMA_VERSION:
+                _keep_copy_before_upgrade(conn, version)
+            conn.executescript(_SCHEMA)
+            _migrate(conn)
+            _create_indexes(conn)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.commit()
+            # Foreign keys are enforced from here on. Rows an older version left
+            # dangling are reported, never repaired behind the user's back.
+            orphans = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if orphans:
+                logging.getLogger(__name__).warning(
+                    "The database has %d rows that point at missing rows (left as they are).", len(orphans)
+                )
+        finally:
+            conn.close()
+        _ready_for = DB_PATH
+
+
 def _connect():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    _ensure_ready()
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.executescript(_SCHEMA)
-    _migrate(conn)
+    conn.execute("PRAGMA busy_timeout = 10000")
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -316,37 +423,88 @@ def ensure_ready():
     date), so a folder that cannot be used fails here, at launch, where it can be
     explained, instead of as an error on the first request. Raises OSError or
     sqlite3.Error."""
-    with closing(_connect()):
-        pass
-
-
-def _dedupe_key(result):
-    if result.get("doi"):
-        return ("doi", result["doi"].lower())
-    return ("title", (result.get("title") or "").strip().lower(), result.get("year"))
+    _ensure_ready()
 
 
 def _backfill_abstract_if_blank(conn, paper_id, existing_abstract, new_abstract):
-    """Shared by both of get_or_create_paper()'s "found an existing row"
+    """Shared by both of _get_or_create_paper()'s "found an existing row"
     branches (the initial dedupe-key lookup, and the lost-an-insert-race
     fallback) - never overwrites an existing non-blank abstract, only fills
     a gap. Caller commits; this only executes the UPDATE when needed."""
     if not (existing_abstract or "").strip() and new_abstract and new_abstract.strip():
         conn.execute("UPDATE paper SET abstract = ? WHERE id = ?", (new_abstract, paper_id))
-        conn.commit()
 
 
-def get_or_create_paper(result):
-    """Insert a paper (in the shape openalex._work_to_result() returns) if no
-    matching row exists yet, else return the existing row's id. Matching
-    follows the same rule openalex.dedupe() applies in-memory: DOI first,
+def _get_or_create_paper(conn, result):
+    """One paper's lookup-then-insert on an open connection, without committing
+    (see get_or_create_papers, which holds _LOCK and commits once)."""
+    key = dedupe_key(result)
+    row = None
+    if key[0] == "doi":
+        row = conn.execute("SELECT id, abstract FROM paper WHERE lower(doi) = ?", (key[1],)).fetchone()
+    elif key[0] == "title":
+        row = conn.execute(
+            "SELECT id, abstract FROM paper WHERE doi IS NULL AND title_key = ? "
+            "AND (year IS ? OR year = ?) ORDER BY id LIMIT 1",
+            (key[1], key[2], key[2]),
+        ).fetchone()
+    if row:
+        _backfill_abstract_if_blank(conn, row["id"], row["abstract"], result.get("abstract"))
+        return row["id"]
+
+    cur = conn.execute(
+        """
+        INSERT INTO paper
+            (source, source_id, doi, title, title_key, abstract, year, publication_date,
+             citation_count, venue, authors, url, is_review, first_seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (source, source_id) DO NOTHING
+        """,
+        (
+            result.get("source", "openalex"),
+            result["id"],
+            result.get("doi"),
+            result.get("title"),
+            title_key(result.get("title")),
+            result.get("abstract"),
+            result.get("year"),
+            result.get("publication_date"),
+            result.get("citation_count", 0),
+            result.get("venue"),
+            json.dumps(result.get("authors") or []),
+            safe_url(result.get("url")),
+            int(bool(result.get("is_review"))),
+            _now(),
+        ),
+    )
+    if cur.rowcount:
+        return cur.lastrowid
+    # The same source id is already stored under a different dedupe key (its
+    # title or DOI changed since): use that row. The abstract backfill applies
+    # here too, so a more complete copy is not dropped just because it came second.
+    row = conn.execute(
+        "SELECT id, abstract FROM paper WHERE source = ? AND source_id = ?",
+        (result.get("source", "openalex"), result["id"]),
+    ).fetchone()
+    _backfill_abstract_if_blank(conn, row["id"], row["abstract"], result.get("abstract"))
+    return row["id"]
+
+
+def get_or_create_papers(results):
+    """Insert each paper (in the shape openalex._work_to_result() returns) that has
+    no matching row yet, and return every paper's row id, in input order. All in
+    one transaction, so a search of thousands of papers is one commit, and one
+    that fails part way leaves nothing behind.
+
+    Matching follows the same rule openalex.dedupe() applies in-memory: DOI first,
     else normalized (title, year) - not expressible as a single UNIQUE
-    constraint, so it's a lookup-then-insert done under _LOCK.
+    constraint, so it's a lookup-then-insert done under _LOCK. A paper repeated
+    within `results` matches the row its first occurrence inserted.
 
     If a matching row already exists but has no abstract, and this occurrence
     of the paper does, backfill it - the same paper can turn up more than
-    once (different expanded queries in one search, or eventually different
-    source databases) and whichever occurrence is seen first otherwise wins
+    once (different expanded queries in one search, or different source
+    databases) and whichever occurrence is seen first otherwise wins
     forever, even if a later one is more complete. Abstracts are stored as
     '' (not NULL) when OpenAlex has none (openalex.reconstruct_abstract()
     returns '' for a missing/empty abstract_inverted_index) - a blank check
@@ -354,61 +512,14 @@ def get_or_create_paper(result):
     trigger. Never overwrites an existing non-blank abstract with a
     different one - this only fills a gap, it doesn't reconcile conflicts."""
     with _LOCK, closing(_connect()) as conn:
-        key = _dedupe_key(result)
-        if key[0] == "doi":
-            row = conn.execute(
-                "SELECT id, abstract FROM paper WHERE lower(doi) = ?", (key[1],)
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT id, abstract FROM paper WHERE doi IS NULL AND lower(trim(title)) = ? "
-                "AND (year IS ? OR year = ?)",
-                (key[1], key[2], key[2]),
-            ).fetchone()
-        if row:
-            _backfill_abstract_if_blank(conn, row["id"], row["abstract"], result.get("abstract"))
-            return row["id"]
-
-        cur = conn.execute(
-            """
-            INSERT INTO paper
-                (source, source_id, doi, title, abstract, year, publication_date,
-                 citation_count, venue, authors, url, is_review, first_seen_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (source, source_id) DO NOTHING
-            """,
-            (
-                result.get("source", "openalex"),
-                result["id"],
-                result.get("doi"),
-                result.get("title"),
-                result.get("abstract"),
-                result.get("year"),
-                result.get("publication_date"),
-                result.get("citation_count", 0),
-                result.get("venue"),
-                json.dumps(result.get("authors") or []),
-                safe_url(result.get("url")),
-                int(bool(result.get("is_review"))),
-                _now(),
-            ),
-        )
+        ids = [_get_or_create_paper(conn, result) for result in results]
         conn.commit()
-        if cur.lastrowid and cur.rowcount:
-            return cur.lastrowid
-        # Lost a race with another insert of the same source/source_id, or the
-        # in-memory result carries an OpenAlex id already seen under a
-        # different dedupe key - either way, look the row up by source_id.
-        # Same abstract-backfill applies here as the initial-lookup branch
-        # above - a race is exactly the case where "whichever copy inserted
-        # first wins forever" would otherwise silently drop a more complete
-        # abstract from the copy that lost the race.
-        row = conn.execute(
-            "SELECT id, abstract FROM paper WHERE source = ? AND source_id = ?",
-            (result.get("source", "openalex"), result["id"]),
-        ).fetchone()
-        _backfill_abstract_if_blank(conn, row["id"], row["abstract"], result.get("abstract"))
-        return row["id"]
+        return ids
+
+
+def get_or_create_paper(result):
+    """get_or_create_papers() for one paper."""
+    return get_or_create_papers([result])[0]
 
 
 def _paper_row_to_dict(row):
@@ -466,6 +577,9 @@ def update_paper(paper_id, fields):
     if "authors" in updates:
         updates["authors"] = json.dumps(updates["authors"] or [])
     set_clause = ", ".join(f"{k} = ?" for k in updates)
+    if "title" in updates:
+        set_clause += ", title_key = ?"
+        updates["title_key"] = title_key(updates["title"])
     with _LOCK, closing(_connect()) as conn:
         conn.execute(f"UPDATE paper SET {set_clause} WHERE id = ?", (*updates.values(), paper_id))
         if "year" in updates:

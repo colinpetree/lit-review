@@ -42,6 +42,34 @@ def _words(title):
     return {w for w in _WORD_RE.findall(text) if w not in _STOP_WORDS}
 
 
+# The markup APIs leave in titles (italics, sub/superscripts, MathML, line breaks).
+# Only these are tags: a bare "<" in a title is a symbol ("x<5 and y>3"), and a
+# catch-all <...> pattern would delete the text between two of them.
+# HTML tags are matched only bare (<i>, </sub>, <br/>), never with attributes, so
+# "a<b and c>d" is left alone; only MathML tags, which do carry attributes, may.
+INLINE_TAG_RE = re.compile(
+    r"</?(?:i|b|u|em|strong|sub|sup|small|sc|span|br|p|italic|bold)\s*/?>|</?(?:mml:[a-z]+|math)\b[^<>]*>",
+    re.I,
+)
+
+
+def title_key(title):
+    """A title reduced to what identifies the paper, for matching the same paper
+    across sources: markup, accents, case, punctuation and spacing are gone, so
+    "Coral <i>growth</i> modeling" (OpenAlex) and "Coral growth modeling." (PubMed)
+    give the same key. '' for a title with nothing to match on, which callers must
+    not treat as a match."""
+    if not isinstance(title, str):
+        return ""
+    # Tags go without a space, so H<sub>2</sub>O is h2o, as plain text H2O is.
+    text = INLINE_TAG_RE.sub("", title)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c)).lower()
+    text = re.sub(r"[_{}^]", "", text)
+    # "+" and "#" stay, since they tell titles apart ("C++" and "C", "Na+" and "Na").
+    return re.sub(r"[^\w+#]+", " ", text).strip()
+
+
 def overlap(stored_title, found_title):
     """Share of the shorter title's meaningful words found in the other, or
     None if either title has none to compare."""

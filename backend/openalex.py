@@ -15,6 +15,8 @@ import time
 import requests
 
 import credentials
+from source_http import clean_title
+from title_match import title_key
 
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
 DEFAULT_PER_PAGE = 25
@@ -50,7 +52,7 @@ def _work_to_result(work):
 
     return {
         "id": work.get("id"),
-        "title": work.get("title") or work.get("display_name"),
+        "title": clean_title(work.get("title") or work.get("display_name")),
         "abstract": reconstruct_abstract(work.get("abstract_inverted_index")),
         "year": work.get("publication_year"),
         "publication_date": work.get("publication_date"),
@@ -122,6 +124,17 @@ def _get_with_retry(params):
         return response
 
 
+def dedupe_key(result):
+    """What identifies a paper across sources: its DOI, else its normalized title
+    and year. A paper with neither a DOI nor a usable title is never merged."""
+    if result.get("doi"):
+        return ("doi", result["doi"].lower())
+    key = title_key(result.get("title"))
+    if not key:
+        return ("id", result.get("source", "openalex"), result.get("id"))
+    return ("title", key, result.get("year"))
+
+
 def dedupe(results_lists):
     """Merge several result lists (e.g. one per expanded query), deduplicating
     by DOI first, then by normalized title+year - the same matching plan
@@ -142,10 +155,7 @@ def dedupe(results_lists):
     merged = []
     for results in results_lists:
         for result in results:
-            if result.get("doi"):
-                key = ("doi", result["doi"].lower())
-            else:
-                key = ("title", (result.get("title") or "").strip().lower(), result.get("year"))
+            key = dedupe_key(result)
             if key in seen:
                 existing = seen[key]
                 if not (existing.get("abstract") or "").strip() and (result.get("abstract") or "").strip():

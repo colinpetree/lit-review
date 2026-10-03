@@ -601,6 +601,9 @@ def _paper_row_to_dict(row):
         "authors": json.loads(row["authors"]),
         "is_review": bool(row["is_review"]),
     }
+    # Which source it was first found in (used by the export).
+    if "source" in row.keys():
+        paper["source"] = row["source"]
     # Left out (not False) when the row lacks the column, like the flags below.
     if "is_retracted" in row.keys():
         paper["is_retracted"] = bool(row["is_retracted"])

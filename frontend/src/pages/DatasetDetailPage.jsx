@@ -9,6 +9,7 @@ import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
+import { exportMenuItem } from '../lib/exportFile'
 import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
@@ -40,13 +41,13 @@ function RetrievalCompleteness({ retrieval, onShowDetails }) {
 
 // The dataset's title (renamed from its dots menu, like an analysis run's) and
 // the details it was retrieved with (all fixed).
-function DatasetDetailsCard({ dataset, onRenamed, onDelete, onShowCompleteness }) {
+function DatasetDetailsCard({ dataset, onRenamed, onDelete, onShowCompleteness, menuItems }) {
   return (
     <Card className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-2xl font-semibold text-gray-800">{dataset.name}</h1>
         <div className="shrink-0">
-          <DatasetMenu dataset={dataset} onRenamed={onRenamed} onDelete={onDelete} />
+          <DatasetMenu dataset={dataset} onRenamed={onRenamed} onDelete={onDelete} extraItems={menuItems} />
         </div>
       </div>
 
@@ -297,6 +298,18 @@ export default function DatasetDetailPage() {
   const includedCount = dataset.papers.filter((p) => !p.excluded).length
   const excludedCount = dataset.papers.length - includedCount
   const visiblePapers = sortPapers(filterPapers(dataset.papers, filter), sort)
+  // The export holds the included papers only (an excluded one can be shown on this page).
+  const exportItems = includedCount
+    ? [
+        exportMenuItem({
+          url: `/api/datasets/${dataset.id}/export`,
+          all: dataset.papers.filter((p) => !p.excluded).map((p) => p.id),
+          shown: visiblePapers.filter((p) => !p.excluded).map((p) => p.id),
+          filterActive: isPaperFilterActive(filter),
+          onError: setToggleError,
+        }),
+      ]
+    : []
 
   const refreshing = refreshingId === dataset.id
 
@@ -323,6 +336,7 @@ export default function DatasetDetailPage() {
             navigate('/datasets')
           }}
           onShowCompleteness={() => setShowCompleteness(true)}
+          menuItems={exportItems}
         />
 
         <div className="mt-6 flex items-center justify-between gap-4">

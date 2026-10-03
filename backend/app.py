@@ -20,7 +20,7 @@ from threading import Timer
 from urllib.parse import urlparse
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 from werkzeug.serving import ThreadedWSGIServer
 from werkzeug.utils import safe_join
@@ -29,6 +29,7 @@ import abstracts
 import access
 import credentials
 import db
+import export
 import llm
 import openalex
 import search_sources
@@ -1109,6 +1110,50 @@ def get_analysis_run(run_id):
     if not run_row:
         return jsonify({"error": "analysis run not found"}), 404
     return jsonify(_run_to_dict(run_row))
+
+
+MAX_EXPORT_IDS = 50_000
+
+
+def _export_response(papers, name, scored):
+    """The file for a POST .../export: `format` (csv, ris or bibtex) and, optionally,
+    `paper_ids`, the papers to include in that order (the page sends what its filter
+    and sort show). Ids that are not among `papers` are ignored, so a paper excluded
+    in another tab since the page loaded does not fail the download. Without
+    `paper_ids`, every paper in `papers`."""
+    body = _json_body()
+    fmt = _str(body, "format", 20).lower()
+    if fmt not in export.FORMATS:
+        raise InvalidRequest(f"'format' must be one of {', '.join(export.FORMATS)}")
+    ids = body.get("paper_ids")
+    if ids is not None:
+        if not isinstance(ids, list) or len(ids) > MAX_EXPORT_IDS:
+            raise InvalidRequest("'paper_ids' must be a list of paper ids")
+        by_id = {paper["id"]: paper for paper in papers}
+        papers = [by_id[i] for i in dict.fromkeys(_int_id(raw, "paper_ids") for raw in ids) if i in by_id]
+    if not papers:
+        raise InvalidRequest("There are no papers to export.")
+    data, content_type, extension = export.build(fmt, papers, scored=scored)
+    filename = export.safe_filename(name, extension, datetime.date.today().isoformat())
+    return Response(
+        data, content_type=content_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@app.post("/api/analysis-runs/<int:run_id>/export")
+def export_analysis_run(run_id):
+    run_row = db.get_analysis_run(run_id)
+    if not run_row:
+        return jsonify({"error": "analysis run not found"}), 404
+    return _export_response(db.get_run_results(run_id), run_row.get("name"), scored=True)
+
+
+@app.post("/api/datasets/<int:dataset_id>/export")
+def export_dataset(dataset_id):
+    dataset_row = db.get_dataset(dataset_id)
+    if not dataset_row:
+        return jsonify({"error": "dataset not found"}), 404
+    return _export_response(db.get_dataset_papers(dataset_id), dataset_row["name"], scored=False)
 
 
 @app.post("/api/analysis-runs/<int:run_id>/process")

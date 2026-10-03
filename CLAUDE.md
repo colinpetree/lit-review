@@ -361,6 +361,16 @@ against real copies on spare ports works well.
   and punctuation ignored, `+` and `#` kept) plus year; it is stored, so a change to that rule
   needs a version bump and re-backfill. `get_or_create_papers` inserts a whole search in one
   transaction. Known limitation: duplicates stored before `title_key` existed are not merged.
+- `export.py` - CSV, RIS and BibTeX files from the paper dicts `db.get_run_results` and
+  `db.get_dataset_papers` return (pure, no database access). Served by
+  `POST /api/analysis-runs/<id>/export` and `POST /api/datasets/<id>/export` with
+  `{format, paper_ids?}`: `paper_ids` is the page's filtered and sorted list, kept in that order,
+  and ids not in the run or dataset are ignored (a dataset export holds included papers only).
+  Every field is outside text, so CSV cells that start with `= + - @`, tab or CR get a leading
+  `'` (formula injection), BibTeX characters are escaped in one pass, and RIS values are one line.
+  The file name is a slug of the run or dataset name plus the date, so the header is safe. The
+  client is `lib/exportFile.js` (a POST through `apiFetch`, since a plain link could not carry the
+  secret) and the "Export" entry in `RunMenu`/`DatasetMenu` (`extraItems`).
 - `access.py`, `single_instance.py` - who may use a running copy and how a second launch finds it
   (see "One app per user" above); small and self-contained.
 - `credentials.py` - API keys (the three AI providers plus openalex, elsevier, springernature,

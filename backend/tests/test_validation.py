@@ -141,6 +141,20 @@ BAD_REQUESTS = [
     ("post", "/api/analysis-runs/{run}/examples", {"paper_id": 1.5}),
     ("post", "/api/analysis-runs/{run}/examples", {"paper_id": 10**30}),
     ("post", "/api/analysis-runs/{run}/examples", {}),
+    # export
+    ("post", "/api/datasets/{dataset}/export", [1]),
+    ("post", "/api/datasets/{dataset}/export", {}),
+    ("post", "/api/datasets/{dataset}/export", {"format": ["csv"]}),
+    ("post", "/api/datasets/{dataset}/export", {"format": "pdf"}),
+    ("post", "/api/datasets/{dataset}/export", {"format": "csv", "paper_ids": "1"}),
+    ("post", "/api/datasets/{dataset}/export", {"format": "csv", "paper_ids": [True]}),
+    ("post", "/api/datasets/{dataset}/export", {"format": "csv", "paper_ids": ["1"]}),
+    ("post", "/api/datasets/{dataset}/export", {"format": "csv", "paper_ids": [10**30]}),
+    ("post", "/api/datasets/{dataset}/export", {"format": "csv", "paper_ids": list(range(1, 50_002))}),
+    ("post", "/api/datasets/{dataset}/export", {"format": "csv", "paper_ids": []}),
+    ("post", "/api/analysis-runs/{run}/export", {"format": "pdf"}),
+    ("post", "/api/analysis-runs/{run}/export", {"format": 5}),
+    ("post", "/api/analysis-runs/{run}/export", {"format": "csv", "paper_ids": {"a": 1}}),
 ]
 
 

@@ -5,6 +5,7 @@ import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
 import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
+import { exportMenuItem } from '../lib/exportFile'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
@@ -142,6 +143,17 @@ export default function RunResultsPage() {
 
   const canMarkExamples = run.prompt && !run.prompt.deleted
   const visibleResults = filterPapers(run.results, filter)
+  const exportItems = run.results.length
+    ? [
+        exportMenuItem({
+          url: `/api/analysis-runs/${run.id}/export`,
+          all: run.results.map((p) => p.id),
+          shown: visibleResults.map((p) => p.id),
+          filterActive: isPaperFilterActive(filter),
+          onError: setActionError,
+        }),
+      ]
+    : []
   // When it finished, or when it was started if it hasn't.
   const runDate = formatDateTime(run.completed_at || run.created_at)
 
@@ -157,6 +169,7 @@ export default function RunResultsPage() {
           <div className="shrink-0">
             <RunMenu
               run={run}
+              extraItems={exportItems}
               onRenamed={(name) => {
                 renamedRef.current = name
                 setRun((prev) => ({ ...prev, name }))

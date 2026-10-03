@@ -10,10 +10,10 @@ const MAX_DATASET_NAME_CHARS = 120 // matches MAX_DATASET_NAME_CHARS in app.py
 // The more-horizontal menu for a dataset: Rename (a modal that saves the new
 // name, then calls onRenamed(name)) and, when onDelete is given, Delete behind
 // a confirmation.
-export default function DatasetMenu({ dataset, onRenamed, onDelete, className }) {
+export default function DatasetMenu({ dataset, onRenamed, onDelete, className, extraItems = [] }) {
   const [modal, setModal] = useState(null) // 'rename' | 'delete' | null
 
-  const items = [{ label: 'Rename', icon: Pencil, onClick: () => setModal('rename') }]
+  const items = [{ label: 'Rename', icon: Pencil, onClick: () => setModal('rename') }, ...extraItems]
   if (onDelete) items.push({ label: 'Delete', icon: Trash2, danger: true, onClick: () => setModal('delete') })
 
   return (

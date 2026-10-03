@@ -73,6 +73,12 @@ select {
   color: inherit;
 }
 
+/* Click-to-choose pickers (Combobox with searchable={false}) hover like the filter
+   buttons. Unlayered on purpose: the rule above would beat a Tailwind hover utility. */
+input.pick-field:hover {
+  background-color: rgb(var(--gray-100));
+}
+
 /* Keep saved-key autofill from painting a bright background in dark mode. */
 input:-webkit-autofill {
   -webkit-text-fill-color: rgb(var(--gray-800));
@@ -111,13 +117,32 @@ input:-webkit-autofill {
   display: none;
 }
 
+/* Hovering a text field darkens its border a step, like the dataset cards do. Must stay
+   above the focus rule below (same specificity) so a focused field keeps its darker border. */
+input:where(:not([type="checkbox"], [type="radio"], :disabled)):hover,
+textarea:where(:not(:disabled)):hover {
+  /* Only a hint of the way from the resting border to the focus one, so focusing
+     still visibly steps further. */
+  border-color: color-mix(in srgb, rgb(var(--gray-300)), rgb(var(--gray-500)) 15%);
+}
+
+/* Buttons that open a popover (.pick-button, the neutral Filters button) take the same
+   hover border, and the focus border while their popover is open. */
+.pick-button:where(:not(:disabled)):hover {
+  border-color: color-mix(in srgb, rgb(var(--gray-300)), rgb(var(--gray-500)) 15%);
+}
+.pick-button[aria-expanded="true"] {
+  border-color: rgb(var(--gray-600));
+}
+
 /* Active text field: just a darker border, no outline or ring. Deliberately
    outside any @layer so it beats the border-color utilities on each field. */
 input:not([type="checkbox"]):not([type="radio"]):focus,
+input[data-open="true"],
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: rgb(var(--gray-500));
+  border-color: rgb(var(--gray-600));
 }
 
 /* No drag handle on any textarea; fields that should grow use AutoGrowTextarea. */

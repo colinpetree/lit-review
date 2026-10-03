@@ -93,7 +93,7 @@ export default function ListFilterBar({
             aria-expanded={open}
             onClick={() => setOpen((o) => !o)}
             className={`relative flex items-center gap-1.5 rounded-md border bg-surface px-3 py-2 text-sm hover:bg-gray-100 ${
-              popoverActive ? 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300' : 'border-gray-300 text-gray-600'
+              popoverActive ? 'border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300' : 'pick-button border-gray-300 text-gray-600'
             }`}
           >
             <SlidersHorizontal size={14} />
@@ -141,7 +141,7 @@ export default function ListFilterBar({
         </div>
 
         <div className="w-40 shrink-0">
-          <Combobox options={SORT_OPTIONS} value={sort} onChange={onSortChange} placeholder="Sort by" subtle />
+          <Combobox options={SORT_OPTIONS} value={sort} onChange={onSortChange} placeholder="Sort by" subtle searchable={false} />
         </div>
       </div>
 

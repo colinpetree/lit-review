@@ -45,7 +45,7 @@ export default function DateRangeField({ fromDate, toDate, onFromChange, onToCha
         aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="w-full rounded-md border border-gray-300 bg-surface py-2 pl-3 pr-9 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        className="pick-button w-full rounded-md border border-gray-300 bg-surface py-2 pl-3 pr-9 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
       >
         {rangeText(fromDate, toDate)}
       </button>

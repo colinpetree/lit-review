@@ -18,6 +18,8 @@ import { ChevronDown } from 'lucide-react'
 //                 filters from scratch instead of editing the label
 // value: the selected option's value, or null/undefined for none.
 // subtle: a shade lighter gray for the text and icons, for secondary controls.
+// searchable: false makes it a plain click-and-choose picker (read-only field,
+//   pointer cursor, always shows the selected label) for short fixed lists.
 // blurOnChoose: take focus out of the field after a choice (for multi-select
 //   pickers, where the field stays empty and the cursor would just sit there).
 export default function Combobox({
@@ -28,6 +30,7 @@ export default function Combobox({
   emptyText = 'No matches.',
   subtle = false,
   blurOnChoose = false,
+  searchable = true,
 }) {
   const inputRef = useRef(null)
   const [open, setOpen] = useState(false)
@@ -99,7 +102,13 @@ export default function Combobox({
     }
   }
 
-  const inputValue = open ? query : selected && !selected.asPlaceholder ? selected.label : ''
+  const inputValue = !searchable
+    ? selected?.label ?? ''
+    : open
+      ? query
+      : selected && !selected.asPlaceholder
+        ? selected.label
+        : ''
   const shownPlaceholder = selected ? selected.label : placeholder
   const darkPlaceholder = selected && (selected.asPlaceholder || open)
 
@@ -122,13 +131,14 @@ export default function Combobox({
           setHighlight(0)
         }}
         onKeyDown={onKeyDown}
+        readOnly={!searchable}
         // Tabbing (or clicking) away closes the list. Option and scrollbar
         // mousedowns are prevented below, so they never blur the input.
         onBlur={() => setOpen(false)}
         className={`w-full rounded-md border border-gray-300 py-2 pr-9 text-sm ${
           // With an icon, the text sits 1px lower so it lines up with it (same height overall).
           selected?.icon ? 'pl-9 pb-[7px] pt-[9px]' : 'pl-3'
-        } ${subtle ? 'text-gray-600' : ''} ${
+        } ${searchable ? '' : 'pick-field cursor-pointer select-none caret-transparent'} ${subtle ? 'text-gray-600' : ''} ${
           darkPlaceholder ? (subtle ? 'placeholder:text-gray-600' : 'placeholder:text-gray-700') : ''
         }`}
       />

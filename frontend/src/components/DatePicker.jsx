@@ -78,7 +78,8 @@ export default function DatePicker({ value, onChange, onBlur, placeholder = 'YYY
         onClick={() => setOpen(true)}
         placeholder={placeholder}
         aria-label={ariaLabel}
-        className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 w-full pr-8 outline-none focus:border-gray-400"
+        data-open={open}
+        className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 w-full pr-8 outline-none"
       />
       <button
         type="button"

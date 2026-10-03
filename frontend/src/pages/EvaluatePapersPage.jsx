@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { X } from 'lucide-react'
+import Checkbox from '../components/Checkbox'
 import Combobox from '../components/Combobox'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
@@ -26,6 +27,8 @@ export default function EvaluatePapersPage() {
   // they're actually looking for, which can (and often should) differ from
   // whatever question retrieved the dataset in the first place.
   const [gradingPrompt, setGradingPrompt] = useState('')
+  // Retracted papers are not scored (and paid for) unless the user asks for them.
+  const [includeRetracted, setIncludeRetracted] = useState(false)
   // NEW_PROMPT (write the ideal research paper contents below) or a saved prompt's id.
   const [promptChoice, setPromptChoice] = useState(NEW_PROMPT)
   const [prompts, setPrompts] = useState([])
@@ -111,6 +114,7 @@ export default function EvaluatePapersPage() {
           ...(isNewPrompt ? { grading_prompt: gradingPrompt.trim() } : { prompt_id: promptChoice }),
           ai_api: choice.ai_api,
           ai_model: choice.ai_model,
+          include_retracted: includeRetracted,
         },
         { signal: controller.signal }
       )
@@ -216,6 +220,15 @@ export default function EvaluatePapersPage() {
                 <p className="text-sm text-gray-400">No API key configured yet.</p>
               )}
             </div>
+          </div>
+
+          <div>
+            <Checkbox checked={includeRetracted} onChange={setIncludeRetracted}>
+              Include retracted papers
+            </Checkbox>
+            <p className="mt-1 pl-[26px] text-xs text-gray-400">
+              Papers a source says were retracted are left out of the evaluation unless this is checked.
+            </p>
           </div>
 
           {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}

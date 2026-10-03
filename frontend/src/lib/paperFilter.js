@@ -2,6 +2,7 @@ export const EMPTY_PAPER_FILTER = {
   query: '',
   missingAbstractOnly: false,
   newOnly: false, // only papers the latest check for new papers added (dataset page)
+  hideRetracted: false,
   yearFrom: '',
   yearTo: '',
   minCitations: '',
@@ -29,6 +30,7 @@ export function isPaperFilterActive(filter) {
     Boolean(filter.query.trim()) ||
     filter.missingAbstractOnly ||
     filter.newOnly ||
+    filter.hideRetracted ||
     toNumber(filter.yearFrom) !== null ||
     toNumber(filter.yearTo) !== null ||
     toNumber(filter.minCitations) !== null ||
@@ -48,6 +50,7 @@ export function filterPapers(papers, filter) {
   return papers.filter((paper) => {
     if (filter.missingAbstractOnly && (paper.abstract || '').trim()) return false
     if (filter.newOnly && !paper.is_new) return false
+    if (filter.hideRetracted && paper.is_retracted) return false
     if (filter.readState === 'read' && !paper.read) return false
     if (filter.readState === 'unread' && paper.read) return false
     // Papers without a result yet have no relevance, which counts as neutral.

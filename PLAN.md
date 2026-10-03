@@ -338,6 +338,10 @@ not built.
   (see Architecture).
 - Backend (pytest) and frontend (Vitest) test suites.
 - Light/Dark/System theme, and a Settings switch to hide PubMed from Discover Papers.
+- Retractions and paper types: sources report whether a paper was retracted and what kind of work
+  it is; errata, retraction notices, front matter and commentary are skipped at search time, a
+  retracted paper is badged (with a Hide retracted filter), and evaluations leave retracted
+  papers out unless asked, saying how many.
 - Check for new papers: a dataset can be searched again for papers that appeared since, with
   no AI cost, adding only the new ones (marked New). See "Stale datasets" under Open questions.
 

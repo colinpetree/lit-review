@@ -121,6 +121,8 @@ BAD_REQUESTS = [
     ("post", "/api/analysis-runs", {"dataset_ids": [1], "prompt_id": "1"}),
     ("post", "/api/analysis-runs", {"dataset_ids": [1], "prompt_id": True}),
     ("post", "/api/analysis-runs", {"dataset_ids": [1], "prompt_id": [1]}),
+    ("post", "/api/analysis-runs", {"dataset_ids": [1], "prompt_id": 1, "include_retracted": "yes"}),
+    ("post", "/api/analysis-runs", {"dataset_ids": [1], "prompt_id": 1, "include_retracted": 1}),
     ("post", "/api/analysis-runs", {"dataset_ids": [1], "grading_prompt": 5}),
     ("post", "/api/analysis-runs", {"dataset_ids": [1], "grading_prompt": "g" * 4001}),
     ("post", "/api/analysis-runs", {"dataset_ids": [1], "grading_prompt": "g", "ai_api": ["anthropic"]}),

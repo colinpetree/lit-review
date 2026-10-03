@@ -62,6 +62,15 @@ PUBMED_DEPTH = 10_000
 PUBMED_FETCH_BATCH = 200
 
 
+# Kinds of work that are not research papers: front and back matter, corrections,
+# retraction notices and commentary on another paper. Skipped when a search is read, so
+# they are not scored (and paid for) as if they were papers. A retracted paper itself is
+# kept (see `is_retracted`): the user decides about it. Each source reports these in
+# its own words, mapped to these names by its reader. The retraction type is OpenAlex's
+# newer taxonomy and is unverified against the live API.
+SKIP_WORK_TYPES = {"paratext", "erratum", "retraction", "comment"}
+
+
 class SearchResult(list):
     """The papers one search found (a plain list, so it can be used as one) and
     how complete they are.
@@ -158,7 +167,7 @@ def _filtered(search):
             to_date = today
         found = search(query, from_date, to_date)
         return SearchResult(
-            (r for r in found if _in_range(r, from_date, to_date)),
+            (r for r in found if _in_range(r, from_date, to_date) and r.get("work_type") not in SKIP_WORK_TYPES),
             total=getattr(found, "total", None),
             fetched=getattr(found, "fetched", len(found)),
             capped=getattr(found, "capped", None),
@@ -284,7 +293,15 @@ def _scopus_paper(entry):
         # A free key returns only the first author.
         "authors": [creator] if creator else [],
         "is_review": entry.get("subtypeDescription") == "Review",
+        # Scopus's document type, mapped to the common names (an erratum is skipped; a
+        # "Retracted" document is the retracted paper itself). Its words are unverified
+        # against the live API.
+        "is_retracted": True if entry.get("subtypeDescription") == "Retracted" else None,
+        "work_type": _SCOPUS_TYPES.get(entry.get("subtypeDescription")),
     }
+
+
+_SCOPUS_TYPES = {"Erratum": "erratum", "Review": "review", "Article": "article", "Retracted": "article"}
 
 
 def _scopus_page(scopus_query, key, start):
@@ -377,6 +394,14 @@ def _pubmed_date(article):
     return year, f"{year:04d}-01-01", "year"
 
 
+# PubMed publication types that are not research papers, as the common names above.
+_PUBMED_SKIPPED_TYPES = {
+    "Retraction of Publication": "retraction",
+    "Published Erratum": "erratum",
+    "Comment": "comment",
+}
+
+
 def _pubmed_result(article):
     pmid = article.findtext(".//MedlineCitation/PMID")
     title = _text(article.find(".//Article/ArticleTitle"))
@@ -401,6 +426,9 @@ def _pubmed_result(article):
             authors.append(name or collective)
     year, date, date_precision = _pubmed_date(article)
     types = [_text(t) for t in article.findall(".//Article/PublicationTypeList/PublicationType")]
+    work_type = next((_PUBMED_SKIPPED_TYPES[t] for t in types if t in _PUBMED_SKIPPED_TYPES), None)
+    if work_type is None and types:
+        work_type = types[0].lower()
     return {
         "source": "pubmed",
         "id": pmid.strip(),
@@ -417,6 +445,10 @@ def _pubmed_result(article):
         "venue": _text(article.find(".//Article/Journal/Title")) or None,
         "authors": authors,
         "is_review": "Review" in types,
+        # "Retracted Publication" marks the retracted paper itself; the retraction notice
+        # is a different record ("Retraction of Publication"), which is skipped.
+        "is_retracted": "Retracted Publication" in types,
+        "work_type": work_type,
     }
 
 

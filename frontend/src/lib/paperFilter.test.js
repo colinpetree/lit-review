@@ -20,6 +20,23 @@ const papers = [
 
 const ids = (list) => list.map((p) => p.id)
 
+describe('retracted papers', () => {
+  const mixed = [
+    { id: 1, title: 'Sound', authors: [], is_retracted: false },
+    { id: 2, title: 'Withdrawn', authors: [], is_retracted: true },
+    { id: 3, title: 'Unknown', authors: [] },
+  ]
+
+  it('are shown unless hidden', () => {
+    expect(ids(filterPapers(mixed, filter()))).toEqual([1, 2, 3])
+  })
+
+  it('can be hidden, leaving papers whose status is unknown', () => {
+    expect(ids(filterPapers(mixed, filter({ hideRetracted: true })))).toEqual([1, 3])
+    expect(isPaperFilterActive(filter({ hideRetracted: true }))).toBe(true)
+  })
+})
+
 describe('new papers', () => {
   const marked = [
     { id: 1, title: 'Old', authors: [], is_new: false },

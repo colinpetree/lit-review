@@ -157,6 +157,25 @@ export default function PaperFilterBar({
                 </div>
               ) : null}
               <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 text-sm text-gray-700">
+                <span id="hide-retracted-label">Hide retracted papers</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={filter.hideRetracted}
+                  aria-labelledby="hide-retracted-label"
+                  onClick={() => onChange({ ...filter, hideRetracted: !filter.hideRetracted })}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                    filter.hideRetracted ? 'bg-blue-600' : 'bg-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                      filter.hideRetracted ? 'translate-x-4' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 text-sm text-gray-700">
                 <span id="missing-abstract-label">Papers missing abstracts</span>
                 <button
                   type="button"

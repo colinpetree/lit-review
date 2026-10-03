@@ -268,6 +268,15 @@ against real copies on spare ports works well.
   marks `is_new` on the papers whose stamp equals `last_refresh.at`, so only the latest check's
   batch shows the "New" badge and filter. It shares the search lock and kept-searches cache
   (`("refresh", id)` key; a second click gets a 409). Nothing runs on a schedule.
+  **Retractions and non-research types.** Each source reports `is_retracted` (OpenAlex outright,
+  PubMed from the "Retracted Publication" type, Scopus from its "Retracted" document type;
+  Semantic Scholar says nothing, so NULL) and `work_type`, stored on `paper`. Kinds that are not
+  papers (`search_sources.SKIP_WORK_TYPES`: paratext, erratum, retraction notice, comment) are
+  dropped by `_filtered` so they are not scored and paid for, while a retracted paper itself is
+  kept and badged. A retraction learned later sticks (`db._update_known_paper` never clears it),
+  and rows from before are NULL (treated as not retracted) until a search finds them again.
+  OpenAlex's "retraction" type and Scopus's "Erratum"/"Retracted" strings are unverified
+  against the live APIs.
 - `abstracts.py` - looks up a missing abstract by DOI: Elsevier (Scopus `META_ABS`) and
   Springer Nature first, when the user has saved a key and the DOI prefix matches, then
   Europe PMC, then Semantic Scholar. Accepts only abstracts of `llm.MIN_ABSTRACT_CHARS`+.
@@ -312,7 +321,8 @@ against real copies on spare ports works well.
   `SCHEMA_VERSION` bump, which makes the next launch keep a one-time copy
   (`lit_review.db.pre-upgrade-<old>-to-<new>`, never deleted by the app) before migrating; a
   database stamped higher than the code (`DatabaseTooNew`) is refused. (Version 3 added
-  `dataset.last_refresh`.) Foreign keys are enforced.
+  `dataset.last_refresh`; 4 added `paper.is_retracted`, `paper.work_type` and
+  `analysis_run.include_retracted`.) Foreign keys are enforced.
   Papers without a DOI match on `paper.title_key` (`title_match.title_key`: markup, accents, case
   and punctuation ignored, `+` and `#` kept) plus year; it is stored, so a change to that rule
   needs a version bump and re-backfill. `get_or_create_papers` inserts a whole search in one
@@ -353,6 +363,12 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   reopens it (`db.reopen_run`) and scores only those; on a `running` run with none left it just
   marks it completed. A run's cost includes the query expansion of each dataset it uses, so a
   shared dataset's expansion counts in every run that uses it (the UI says so).
+- A run leaves **retracted papers out** unless created with `include_retracted` (stored on the
+  run, so resuming applies the same rule; runs from before the option keep scoring everything).
+  What a run scores is defined once, in `db._included_papers_sql`, which the Results counts, the
+  papers scored and what is left to score all use: never copy that SQL. A scored paper that is
+  later found to be retracted keeps its result. The run page says how many were left out
+  (`retracted_left_out`), so they are never omitted silently.
 - Runs are resumable. The client repeatedly POSTs `/api/analysis-runs/<id>/process`, and
   each call scores one chunk (`SCORE_CHUNK_SIZE`=20) of still-unscored papers until the
   run's status is `completed`. `frontend/src/lib/driveAnalysisRun.js` is that loop.

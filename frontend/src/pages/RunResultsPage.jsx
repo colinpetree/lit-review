@@ -234,6 +234,16 @@ export default function RunResultsPage() {
           </div>
         ) : null}
 
+        {run.retracted_left_out > 0 ? (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm font-medium text-gray-500">Retracted papers</p>
+            <p className="text-sm text-gray-800">
+              {run.retracted_left_out} retracted paper{run.retracted_left_out === 1 ? ' was' : 's were'} left out of
+              this evaluation.
+            </p>
+          </div>
+        ) : null}
+
         {run.remaining > 0 ? (
           <button
             type="button"

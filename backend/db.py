@@ -33,9 +33,10 @@ _LOCK = threading.Lock()
 # Bumped when the schema changes in a way an older copy of the app could not read.
 # 1 = everything up to the title_key column and the indexes.
 # 2 = dataset.retrieval (how complete each search was).
-# 3 = dataset.last_refresh (the latest "check for new papers"). A database stamped
-# higher than this was made by a newer version and is not opened.
-SCHEMA_VERSION = 3
+# 3 = dataset.last_refresh (the latest "check for new papers").
+# 4 = paper.is_retracted, paper.work_type and analysis_run.include_retracted. A database
+# stamped higher than this was made by a newer version and is not opened.
+SCHEMA_VERSION = 4
 
 _INIT_LOCK = threading.Lock()
 _ready_for = None  # the DB_PATH that has been created, migrated and tuned
@@ -205,6 +206,13 @@ def _migrate(conn):
     if "read_at" not in existing_columns:
         conn.execute("ALTER TABLE paper ADD COLUMN read_at TEXT")
         conn.commit()
+    # Whether the source says the paper was retracted (NULL = it does not say), and what
+    # kind of work it is (the source's own word: "article", "review", ...). Rows from before
+    # are NULL until a search finds the paper again.
+    for column, ddl in (("is_retracted", "INTEGER"), ("work_type", "TEXT")):
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE paper ADD COLUMN {column} {ddl}")
+            conn.commit()
     # The title reduced to what identifies the paper across sources
     # (title_match.title_key), the dedupe key for papers without a DOI.
     if "title_key" not in existing_columns:
@@ -277,11 +285,15 @@ def _migrate(conn):
     # name: the run's own, unique (among live runs) and renamable title.
     # name_auto: still the placeholder from a run that created its own prompt,
     # so the AI-generated prompt title replaces it unless the user renamed first.
+    # include_retracted: whether the run scores retracted papers (new runs leave them
+    # out unless asked). Runs from before it existed scored everything, so they keep
+    # doing so (DEFAULT 1); a new run always sets it.
     for column, ddl in (
         ("prompt_id", "INTEGER"),
         ("examples_snapshot", "TEXT"),
         ("name", "TEXT"),
         ("name_auto", "INTEGER NOT NULL DEFAULT 0"),
+        ("include_retracted", "INTEGER NOT NULL DEFAULT 1"),
     ):
         if column not in run_columns:
             conn.execute(f"ALTER TABLE analysis_run ADD COLUMN {column} {ddl}")
@@ -451,14 +463,23 @@ def _backfill_abstract_if_blank(conn, paper_id, existing_abstract, new_abstract)
         conn.execute("UPDATE paper SET abstract = ? WHERE id = ?", (new_abstract, paper_id))
 
 
-def _raise_citation_count(conn, paper_id, new_count):
-    """A paper seen again carries a newer citation count, which only ever grows. A
-    source that has none (PubMed reports 0) must never lower what another reported."""
+def _update_known_paper(conn, paper_id, result):
+    """What a paper seen again can add to the row already stored. A citation count only
+    ever grows, and a source that has none (PubMed reports 0) must never lower what
+    another reported. A retraction is never undone by a source that does not know of it,
+    and the kind of work is filled in only if it was not known."""
+    new_count = result.get("citation_count")
     if isinstance(new_count, int) and not isinstance(new_count, bool) and new_count > 0:
         conn.execute(
             "UPDATE paper SET citation_count = ? WHERE id = ? AND ? > COALESCE(citation_count, 0)",
             (new_count, paper_id, new_count),
         )
+    if result.get("is_retracted") is True:
+        conn.execute("UPDATE paper SET is_retracted = 1 WHERE id = ? AND COALESCE(is_retracted, 0) = 0", (paper_id,))
+    elif result.get("is_retracted") is False:
+        conn.execute("UPDATE paper SET is_retracted = 0 WHERE id = ? AND is_retracted IS NULL", (paper_id,))
+    if result.get("work_type"):
+        conn.execute("UPDATE paper SET work_type = ? WHERE id = ? AND work_type IS NULL", (result["work_type"], paper_id))
 
 
 def _get_or_create_paper(conn, result):
@@ -476,15 +497,15 @@ def _get_or_create_paper(conn, result):
         ).fetchone()
     if row:
         _backfill_abstract_if_blank(conn, row["id"], row["abstract"], result.get("abstract"))
-        _raise_citation_count(conn, row["id"], result.get("citation_count"))
+        _update_known_paper(conn, row["id"], result)
         return row["id"]
 
     cur = conn.execute(
         """
         INSERT INTO paper
             (source, source_id, doi, title, title_key, abstract, year, publication_date,
-             citation_count, venue, authors, url, is_review, first_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             citation_count, venue, authors, url, is_review, is_retracted, work_type, first_seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (source, source_id) DO NOTHING
         """,
         (
@@ -501,6 +522,8 @@ def _get_or_create_paper(conn, result):
             json.dumps(result.get("authors") or []),
             safe_url(result.get("url")),
             int(bool(result.get("is_review"))),
+            None if result.get("is_retracted") is None else int(bool(result["is_retracted"])),
+            result.get("work_type") or None,
             _now(),
         ),
     )
@@ -514,7 +537,7 @@ def _get_or_create_paper(conn, result):
         (result.get("source", "openalex"), result["id"]),
     ).fetchone()
     _backfill_abstract_if_blank(conn, row["id"], row["abstract"], result.get("abstract"))
-    _raise_citation_count(conn, row["id"], result.get("citation_count"))
+    _update_known_paper(conn, row["id"], result)
     return row["id"]
 
 
@@ -564,6 +587,10 @@ def _paper_row_to_dict(row):
         "authors": json.loads(row["authors"]),
         "is_review": bool(row["is_review"]),
     }
+    # Left out (not False) when the row lacks the column, like the flags below.
+    if "is_retracted" in row.keys():
+        paper["is_retracted"] = bool(row["is_retracted"])
+        paper["work_type"] = row["work_type"]
     # A per-dataset flag, so only set for rows read through dataset_paper. Left
     # out otherwise (not False), so a paper edit's response can't overwrite the
     # page's existing excluded state when merged into it.
@@ -963,7 +990,7 @@ def _scoring_examples(conn, prompt_id):
     return [dict(row) for row in rows]
 
 
-def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id=None):
+def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id=None, include_retracted=False):
     """A run can span several datasets - scores the union of their papers in
     one pass. dataset_ids must be non-empty (validated by the caller).
 
@@ -971,7 +998,8 @@ def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id
     run's grading_prompt (a snapshot) and its current examples are snapshotted
     too. Without one, a new prompt is created from grading_prompt in the same
     transaction, with a placeholder name and title_pending set so the first
-    scoring call supplies a real title."""
+    scoring call supplies a real title. Retracted papers are left out of the run unless
+    include_retracted (kept on the run, so resuming it applies the same rule)."""
     with _LOCK, closing(_connect()) as conn:
         now = _now()
         # The run's name starts as its prompt's. For a new prompt that is only a
@@ -1001,12 +1029,12 @@ def create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id
             """
             INSERT INTO analysis_run
                 (grading_prompt, ai_api, ai_model, status, created_at, prompt_id, examples_snapshot,
-                 name, name_auto)
-            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)
+                 name, name_auto, include_retracted)
+            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
             """,
             (
                 grading_prompt, ai_api, ai_model, now, prompt_id, json.dumps(examples),
-                _unique_run_name(conn, prompt_name), name_auto,
+                _unique_run_name(conn, prompt_name), name_auto, int(bool(include_retracted)),
             ),
         )
         run_id = cur.lastrowid
@@ -1042,28 +1070,18 @@ def list_all_runs():
     Results list page."""
     with closing(_connect()) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT run.id, run.name, run.grading_prompt, run.ai_api, run.ai_model, run.status,
                    run.created_at, run.completed_at, pr.name AS prompt_name,
                    json_group_array(json_object('name', d.name, 'created_at', d.created_at)) AS datasets,
                    (SELECT COUNT(*) FROM (
-                        SELECT dp.paper_id
-                        FROM dataset_paper dp
-                        JOIN analysis_run_dataset rd ON rd.dataset_id = dp.dataset_id
-                        WHERE rd.run_id = run.id
-                        GROUP BY dp.paper_id
-                        HAVING SUM(CASE WHEN dp.excluded_at IS NULL THEN 1 ELSE 0 END) > 0
+                        {_included_papers_sql("run.id", "run.include_retracted")}
                    )) AS paper_count,
                    -- Included papers with no result yet: what "Incomplete" means. Not the
                    -- run's status, which can lag (still "running" after the last unscored
                    -- papers were excluded) or be stale (a "completed" run whose papers came back).
                    (SELECT COUNT(*) FROM (
-                        SELECT dp.paper_id
-                        FROM dataset_paper dp
-                        JOIN analysis_run_dataset rd ON rd.dataset_id = dp.dataset_id
-                        WHERE rd.run_id = run.id
-                        GROUP BY dp.paper_id
-                        HAVING SUM(CASE WHEN dp.excluded_at IS NULL THEN 1 ELSE 0 END) > 0
+                        {_included_papers_sql("run.id", "run.include_retracted")}
                    ) included
                    LEFT JOIN analysis_result ar ON ar.run_id = run.id AND ar.paper_id = included.paper_id
                    WHERE ar.id IS NULL) AS unscored_count,
@@ -1283,23 +1301,50 @@ def get_run_results(run_id):
         return results
 
 
-def _run_papers_subquery(run_id):
-    """A run's candidate paper ids: the union of every linked dataset's
-    non-excluded papers, deduped (a paper can appear in more than one
-    selected dataset) - included if at least one of its dataset_paper rows
-    among the run's datasets isn't excluded (excluded via dataset A but
-    present via dataset B still counts as included)."""
-    return (
-        """
+def _included_papers_sql(run_id_sql, include_retracted_sql):
+    """SQL selecting a run's candidate paper ids: the union of every linked dataset's
+    non-excluded papers, deduped (a paper can appear in more than one selected dataset) -
+    included if at least one of its dataset_paper rows among the run's datasets isn't
+    excluded (excluded via dataset A but present via dataset B still counts as included).
+    A retracted paper is left out unless the run includes them. The one definition of what
+    a run scores: the Results counts, the papers scored, and what is left to score all
+    use it, so they cannot disagree. The arguments are SQL expressions for the run's id
+    and its include_retracted flag (a placeholder, or a column of an outer query)."""
+    return f"""
         SELECT dp.paper_id
         FROM dataset_paper dp
-        JOIN analysis_run_dataset ard ON ard.dataset_id = dp.dataset_id
-        WHERE ard.run_id = ?
+        JOIN analysis_run_dataset rd ON rd.dataset_id = dp.dataset_id
+        JOIN paper pp ON pp.id = dp.paper_id
+        WHERE rd.run_id = {run_id_sql}
+          AND ({include_retracted_sql} = 1 OR COALESCE(pp.is_retracted, 0) = 0)
         GROUP BY dp.paper_id
         HAVING SUM(CASE WHEN dp.excluded_at IS NULL THEN 1 ELSE 0 END) > 0
-        """,
-        (run_id,),
+    """
+
+
+def _run_papers_subquery(run_id):
+    """(sql, params) for a run's candidate paper ids (see _included_papers_sql)."""
+    return (
+        _included_papers_sql("?", "(SELECT include_retracted FROM analysis_run WHERE id = ?)"),
+        (run_id, run_id),
     )
+
+
+def count_retracted_left_out(run_id):
+    """How many retracted papers this run's datasets hold that it does not score (0 if the
+    run includes them), so the Results page can say so rather than leave them out silently."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM ({_included_papers_sql("?", "1")}) wanted
+            JOIN paper p ON p.id = wanted.paper_id
+            WHERE COALESCE(p.is_retracted, 0) = 1
+              AND (SELECT include_retracted FROM analysis_run WHERE id = ?) = 0
+            """,
+            (run_id, run_id),
+        ).fetchone()
+        return row["total"]
 
 
 def get_run_candidate_papers(run_id):

@@ -963,6 +963,10 @@ def create_analysis_run():
     dataset_ids = body.get("dataset_ids")
     grading_prompt = _str(body, "grading_prompt", MAX_PROMPT_DESCRIPTION_CHARS)
     prompt_id = body.get("prompt_id")
+    # Retracted papers are not scored (and paid for) unless the user asks for them.
+    include_retracted = body.get("include_retracted", False)
+    if not isinstance(include_retracted, bool):
+        raise InvalidRequest("'include_retracted' must be true or false")
 
     if not isinstance(dataset_ids, list) or not dataset_ids:
         return jsonify({"error": "missing or empty 'dataset_ids'"}), 400
@@ -987,7 +991,9 @@ def create_analysis_run():
         if db.get_dataset(dataset_id) is None:
             return jsonify({"error": f"dataset {dataset_id} not found"}), 400
 
-    run_id = db.create_analysis_run(dataset_ids, grading_prompt, ai_api, ai_model, prompt_id)
+    run_id = db.create_analysis_run(
+        dataset_ids, grading_prompt, ai_api, ai_model, prompt_id, include_retracted=include_retracted
+    )
     return jsonify(_run_to_dict(db.get_analysis_run(run_id)))
 
 
@@ -1012,6 +1018,9 @@ def _run_to_dict(run_row):
     run["results"] = db.get_run_results(run["id"])
     run["candidate_papers"] = db.get_run_candidate_papers(run["id"])
     run["remaining"] = db.count_unscored_papers(run["id"])
+    run["include_retracted"] = bool(run["include_retracted"])
+    # Retracted papers this run's datasets hold but it does not score, so the page can say so.
+    run["retracted_left_out"] = db.count_retracted_left_out(run["id"])
     run["cost"] = round(db.get_run_cost(run["id"]), 6)
     return run
 

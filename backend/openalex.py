@@ -65,6 +65,9 @@ def _work_to_result(work):
             for authorship in work.get("authorships") or []
         ],
         "is_review": work.get("type") == "review",
+        # OpenAlex says outright whether a work was retracted, and what kind of work it is.
+        "is_retracted": bool(work.get("is_retracted")),
+        "work_type": work.get("type"),
     }
 
 

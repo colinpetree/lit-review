@@ -218,6 +218,11 @@ export default function PaperCard({
           )}
         </h3>
         <div className="flex shrink-0 items-center gap-2">
+          {result.is_retracted ? (
+            <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/40 dark:text-red-300">
+              Retracted
+            </span>
+          ) : null}
           {result.is_new ? (
             <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
               New

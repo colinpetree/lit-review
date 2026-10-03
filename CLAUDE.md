@@ -275,7 +275,9 @@ against real copies on spare ports works well.
   citation count is raised, never lowered). It searches a **narrowed window** (`_refresh_window`:
   from 45 days before the last check, or before the dataset was made, to the original end date),
   because the whole range again returns the same most-relevant papers and a new one rarely makes
-  the cut; the overlap covers late indexing and PubMed's issue dates. A search whose end date is
+  the cut; the overlap covers late indexing and PubMed's issue dates. A check reads up to
+  `search_sources.REFRESH_SEARCH_LIMIT` (2,500) hits per search, not the dataset's own limit:
+  sources cannot skip known papers, so a small limit would be spent on them and push new ones out. A search whose end date is
   past is refused with a message. The check is recorded in `dataset.last_refresh` (JSON: `at`, the
   dates, `new_count`, and the same per-search `retrieval` entries, so a check that hit the ceiling
   says so). New papers are stamped with that check's time in `dataset_paper.added_at`, and the API

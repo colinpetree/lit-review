@@ -50,6 +50,12 @@ from source_http import (
 # ("100 of 18,400"), so the user knows to narrow the question or the dates.
 DEFAULT_SEARCH_LIMIT = 100
 SEARCH_LIMIT_CHOICES = (50, 100, 200, 500)
+# A "Check for new papers" reads a narrow window of recent dates, but most of what a source
+# returns for it is already in the dataset (the overlap, and papers it already had), and the
+# sources cannot be told to skip those. Reading by relevance with the dataset's own small
+# limit would spend it on known papers and drop genuinely new ones, so a check reads far
+# deeper. Known papers cost nothing (no AI call); only new ones are added.
+REFRESH_SEARCH_LIMIT = 2500
 # Semantic Scholar's search will not read past its first 1,000 results (offset plus
 # limit), and returns 100 per request.
 SEMANTIC_SCHOLAR_PAGE = 100

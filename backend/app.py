@@ -757,8 +757,8 @@ def refresh_dataset(dataset_id):
         return jsonify({"error": str(exc)}), 400
     queries = llm.clean_queries([q for q in dataset_row["expanded_queries"] if isinstance(q, str)])
     from_date, to_date = _refresh_window(dataset_row, datetime.date.today())
-    # The same number of most relevant papers per search the dataset was made with.
-    limit = dataset_row.get("search_limit") or search_sources.DEFAULT_SEARCH_LIMIT
+    # Not the dataset's own limit: see REFRESH_SEARCH_LIMIT.
+    limit = search_sources.REFRESH_SEARCH_LIMIT
 
     with _exclusive("search", ("refresh", dataset_id)) as acquired:
         if not acquired:

@@ -9,6 +9,7 @@ import app as app_module
 import db
 import llm
 import openalex
+import search_sources
 from app import InvalidRequest, _refresh_window
 from source_http import SourceError
 
@@ -149,13 +150,14 @@ class TestRefreshRoute:
         assert not any(p["is_new"] for p in body["dataset"]["papers"])
 
     def test_a_check_that_hit_the_limit_says_so(self, client, source):
-        dataset_id = make_dataset(papers=(1,), search_limit=50)
-        source["papers"], source["total"] = [work(i) for i in range(100, 150)], 400
+        dataset_id = make_dataset(papers=(1,))
+        limit = search_sources.REFRESH_SEARCH_LIMIT
+        source["papers"], source["total"] = [work(i) for i in range(100, 100 + limit)], limit * 4
         refresh = self.refresh(client, dataset_id).get_json()["dataset"]["last_refresh"]
-        assert "50 most relevant were kept" in refresh["retrieval"][0]["capped"]
+        assert f"{limit:,} most relevant were kept" in refresh["retrieval"][0]["capped"]
         assert refresh["retrieval"][0]["capped_by"] == "limit"
 
-    def test_the_check_keeps_as_many_papers_per_search_as_the_dataset_was_made_with(self, client, monkeypatch):
+    def test_the_check_reads_deeper_than_the_datasets_own_limit(self, client, monkeypatch):
         asked = []
 
         def search_all(query, **kwargs):
@@ -163,10 +165,17 @@ class TestRefreshRoute:
             return [], 0
 
         monkeypatch.setattr(openalex, "search_all", search_all)
-        for limit in (200, None):
+        for limit in (50, 200, None):
             self.refresh(client, make_dataset(search_limit=limit, queries=(f"q{limit}",)))
-        # A dataset from before the limit was a choice is checked at the default.
-        assert asked == [200, 100]
+        # Known papers would otherwise use up a small limit and push new ones out.
+        assert asked == [search_sources.REFRESH_SEARCH_LIMIT] * 3
+
+    def test_known_papers_do_not_use_up_the_limit_that_new_ones_need(self, client, source):
+        dataset_id = make_dataset(papers=tuple(range(1, 61)), search_limit=50)
+        source["papers"] = [work(i) for i in range(1, 66)]  # 60 already held, 5 new
+        body = self.refresh(client, dataset_id).get_json()
+        assert body["new_count"] == 5
+        assert body["dataset"]["last_refresh"]["retrieval"][0]["capped"] is None
 
     def test_a_search_that_ended_in_the_past_is_refused_with_the_reason(self, client, source):
         dataset_id = make_dataset(to_date="2020-12-31")

@@ -107,17 +107,20 @@ function DatasetDetailsCard({ dataset, onRenamed }) {
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-1.5">
-        <p className="text-sm font-medium text-gray-500">Created</p>
-        <p className="text-sm text-gray-800">{formatDateTime(dataset.created_at)}</p>
-      </div>
-
-      {dataset.last_refresh ? (
+      {/* Updated (the latest check for new papers) sits to the left of Created, which
+          always stays: creation is never replaced by a later check. */}
+      <div className="flex flex-wrap gap-x-10 gap-y-5">
+        {dataset.last_refresh ? (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-sm font-medium text-gray-500">Updated</p>
+            <p className="text-sm text-gray-800">{formatDateTime(dataset.last_refresh.at)}</p>
+          </div>
+        ) : null}
         <div className="flex flex-col gap-1.5">
-          <p className="text-sm font-medium text-gray-500">Last checked for new papers</p>
-          <p className="text-sm text-gray-800">{formatDateTime(dataset.last_refresh.at)}</p>
+          <p className="text-sm font-medium text-gray-500">Created</p>
+          <p className="text-sm text-gray-800">{formatDateTime(dataset.created_at)}</p>
         </div>
-      ) : null}
+      </div>
     </Card>
   )
 }

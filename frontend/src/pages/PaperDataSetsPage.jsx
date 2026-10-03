@@ -83,6 +83,9 @@ export default function PaperDataSetsPage() {
                   {formatDateTime(d.created_at) ? (
                     <p className="text-sm text-gray-400">created {formatDateTime(d.created_at)}</p>
                   ) : null}
+                  {formatDateTime(d.updated_at) ? (
+                    <p className="text-sm text-gray-400">updated {formatDateTime(d.updated_at)}</p>
+                  ) : null}
                   <ModelBadge aiApi={d.ai_api} aiModel={d.ai_model} className="mt-1 text-sm text-gray-300" />
                 </Card>
               </Link>

@@ -859,6 +859,11 @@ def list_datasets():
         rows = conn.execute(
             """
             SELECT d.id, d.name, d.verbose_query, d.from_year, d.to_year, d.created_at,
+                   -- When the dataset was last checked for new papers (NULL if never, or if
+                   -- the record is unreadable: json_extract raises on malformed JSON, which
+                   -- would fail the whole list over one bad row).
+                   CASE WHEN json_valid(d.last_refresh) THEN json_extract(d.last_refresh, '$.at') END
+                       AS updated_at,
                    COUNT(dp.paper_id) AS paper_count,
                    MIN(p.year) AS oldest_year,
                    MAX(p.year) AS newest_year,

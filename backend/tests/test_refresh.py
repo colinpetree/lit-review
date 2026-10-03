@@ -194,6 +194,30 @@ class TestRefreshRoute:
         self.refresh(client, dataset_id)
         assert [q for q, _, _ in source["asked"]] == ["a", "b" * llm.MAX_QUERY_CHARS]
 
+    def test_the_dataset_list_shows_when_it_was_updated_and_creation_is_kept(self, client, source):
+        dataset_id = make_dataset()
+        row = client.get("/api/datasets").get_json()["datasets"][0]
+        assert row["updated_at"] is None and row["created_at"]
+        created = row["created_at"]
+        self.refresh(client, dataset_id)
+        row = client.get("/api/datasets").get_json()["datasets"][0]
+        last = db.get_dataset(dataset_id)["last_refresh"]["at"]
+        assert (row["updated_at"], row["created_at"]) == (last, created)
+        assert client.get(f"/api/datasets/{dataset_id}").get_json()["created_at"] == created
+
+    def test_one_unreadable_record_does_not_break_the_list_or_the_page(self, client, source):
+        good, bad = make_dataset(), make_dataset(papers=(3,), queries=("other",))
+        self.refresh(client, good)
+        with closing(db._connect()) as conn:
+            conn.execute("UPDATE dataset SET last_refresh = 'not json {' WHERE id = ?", (bad,))
+            conn.commit()
+        response = client.get("/api/datasets")
+        assert response.status_code == 200
+        updated = {row["id"]: row["updated_at"] for row in response.get_json()["datasets"]}
+        assert updated[good] is not None and updated[bad] is None
+        page = client.get(f"/api/datasets/{bad}")
+        assert page.status_code == 200 and page.get_json()["last_refresh"] is None
+
     def test_the_dataset_list_and_page_still_load(self, client, source):
         dataset_id = make_dataset()
         self.refresh(client, dataset_id)

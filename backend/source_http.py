@@ -8,6 +8,7 @@ the user. Callers either stop using that source for the rest of the run
 """
 
 import html
+import logging
 import re
 import threading
 import time
@@ -18,6 +19,8 @@ import requests
 import credentials
 from title_match import INLINE_TAG_RE
 
+log = logging.getLogger(__name__)
+
 REQUEST_TIMEOUT = 20
 USER_AGENT = "lit-review/0.1 (local research tool)"
 
@@ -25,6 +28,9 @@ USER_AGENT = "lit-review/0.1 (local research tool)"
 # shared with everyone else; a saved key raises it.
 _SEMANTIC_SCHOLAR_MIN_INTERVAL = 1.1
 _last_semantic_scholar_call = 0.0
+# Lookups run side by side (see app._look_up_batch), so the spacing is kept under a lock:
+# without it every thread would measure from the same last call and send at once.
+_SEMANTIC_SCHOLAR_LOCK = threading.Lock()
 
 
 class SourceError(Exception):
@@ -36,20 +42,27 @@ class SourceUnavailable(SourceError):
     dropped connection), so asking again a moment later can work."""
 
 
+class SourceTimeout(SourceUnavailable):
+    """The source took too long to answer. A server that could not answer in time will
+    seldom do better a moment later, and asking again only adds to its load, so a caller
+    that has other sources to try (the abstract lookup) does not ask again."""
+
+
 # A long search reads many pages. One passing problem partway through must not throw
 # away the pages already read, so each page is asked for again a few times.
 PAGE_ATTEMPTS = 3
 PAGE_RETRY_SECONDS = 2
 
 
-def retry_unavailable(fetch):
+def retry_unavailable(fetch, retry_timeouts=True):
     """The result of fetch(), asked again (after a growing wait) when it raises
-    SourceUnavailable, up to PAGE_ATTEMPTS times. Any other error is raised at once."""
+    SourceUnavailable, up to PAGE_ATTEMPTS times. Any other error is raised at once, and
+    so is a SourceTimeout when retry_timeouts is off."""
     for attempt in range(PAGE_ATTEMPTS):
         try:
             return fetch()
-        except SourceUnavailable:
-            if attempt == PAGE_ATTEMPTS - 1:
+        except SourceUnavailable as exc:
+            if attempt == PAGE_ATTEMPTS - 1 or (isinstance(exc, SourceTimeout) and not retry_timeouts):
                 raise
             time.sleep(PAGE_RETRY_SECONDS * (attempt + 1))
 
@@ -124,12 +137,27 @@ def clean_title(title):
     return re.sub(r"\s+", " ", html.unescape(INLINE_TAG_RE.sub("", title))).strip()
 
 
+def _why(exc):
+    """A few words on why a request failed, for the message the user sees."""
+    if isinstance(exc, requests.exceptions.SSLError):
+        return "a secure connection could not be made"
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "it took too long to answer"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return "the connection failed or was closed"
+    return "the request failed"
+
+
 def get(source_label, url, **kwargs):
     headers = {"User-Agent": USER_AGENT, **kwargs.pop("headers", {})}
     try:
         return requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT, **kwargs)
     except requests.RequestException as exc:
-        raise SourceUnavailable(f"Could not reach {source_label}.") from exc
+        # Kept in the log (without any key in the address) so the real cause can be found.
+        log.warning("%s request failed (%s): %s", source_label, type(exc).__name__, redact(exc))
+        # A timeout is its own kind, so a caller can choose not to ask again.
+        kind = SourceTimeout if isinstance(exc, requests.exceptions.Timeout) else SourceUnavailable
+        raise kind(f"Could not reach {source_label} ({_why(exc)}).") from exc
 
 
 def json_of(response, source_label):
@@ -171,21 +199,28 @@ SEMANTIC_SCHOLAR_KEY_REJECTED = (
 )
 
 
-def _semanticscholar_request(url, params, key):
-    """One Semantic Scholar GET, with `key` (or none), spaced out to its rate
-    limit when there's no key and retried once on a 429. Raises SourceError if
-    it stays rate limited."""
+def _semanticscholar_pace():
+    """Wait until the minimum interval has passed since the last request to Semantic
+    Scholar was sent, by whichever thread sent it. Requests from lookups running at the
+    same time queue up one interval apart instead of all going at once."""
     global _last_semantic_scholar_call
-    headers = {}
-    if key:
-        headers["x-api-key"] = key
-    else:
+    with _SEMANTIC_SCHOLAR_LOCK:
         wait = _SEMANTIC_SCHOLAR_MIN_INTERVAL - (time.monotonic() - _last_semantic_scholar_call)
         if wait > 0:
             time.sleep(wait)
+        _last_semantic_scholar_call = time.monotonic()
+
+
+def _semanticscholar_request(url, params, key):
+    """One Semantic Scholar GET, with `key` (or none), spaced out to its rate
+    limit (see _semanticscholar_pace) and retried once on a 429. Raises SourceError
+    if it stays rate limited."""
+    headers = {}
+    if key:
+        headers["x-api-key"] = key
 
     for attempt in range(2):
-        _last_semantic_scholar_call = time.monotonic()
+        _semanticscholar_pace()
         response = get("Semantic Scholar", url, params=params, headers=headers)
         if response.status_code != 429:
             return response

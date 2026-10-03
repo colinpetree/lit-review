@@ -34,9 +34,11 @@ _LOCK = threading.Lock()
 # 1 = everything up to the title_key column and the indexes.
 # 2 = dataset.retrieval (how complete each search was).
 # 3 = dataset.last_refresh (the latest "check for new papers").
-# 4 = paper.is_retracted, paper.work_type and analysis_run.include_retracted. A database
-# stamped higher than this was made by a newer version and is not opened.
-SCHEMA_VERSION = 4
+# 4 = paper.is_retracted, paper.work_type and analysis_run.include_retracted.
+# 5 = dataset.search_limit.
+# 6 = paper.abstract_answered. A database stamped higher than this was made by a newer
+# version and is not opened.
+SCHEMA_VERSION = 6
 
 _INIT_LOCK = threading.Lock()
 _ready_for = None  # the DB_PATH that has been created, migrated and tuned
@@ -198,6 +200,12 @@ def _migrate(conn):
         conn.commit()
     # When an abstract lookup last completed for a paper without finding one,
     # so the automatic lookup on opening a dataset doesn't retry it every time.
+    # Which abstract sources have already answered "no abstract here" for this paper (JSON
+    # list of source ids), so a lookup that could not reach every source later asks only the
+    # ones that never answered. abstract_checked_at is set once all of them have.
+    if "abstract_answered" not in existing_columns:
+        conn.execute("ALTER TABLE paper ADD COLUMN abstract_answered TEXT")
+        conn.commit()
     if "abstract_checked_at" not in existing_columns:
         conn.execute("ALTER TABLE paper ADD COLUMN abstract_checked_at TEXT")
         conn.commit()
@@ -248,6 +256,12 @@ def _migrate(conn):
     # NULL on datasets from before it was recorded.
     if "retrieval" not in dataset_columns:
         conn.execute("ALTER TABLE dataset ADD COLUMN retrieval TEXT")
+        conn.commit()
+
+    # How many of the most relevant papers each search kept (NULL on datasets from before
+    # it was a choice).
+    if "search_limit" not in dataset_columns:
+        conn.execute("ALTER TABLE dataset ADD COLUMN search_limit INTEGER")
         conn.commit()
 
     # The latest "check for new papers" (JSON: when, the dates searched, how many papers
@@ -690,6 +704,43 @@ def mark_abstract_checked(paper_id):
         conn.commit()
 
 
+def get_abstract_answers(paper_ids):
+    """{paper_id: set of abstract source ids that already answered "no abstract" for it}
+    for the papers that have any."""
+    answers = {}
+    with closing(_connect()) as conn:
+        for start in range(0, len(paper_ids), 500):
+            batch = list(paper_ids[start : start + 500])
+            marks = ",".join("?" * len(batch))
+            for row in conn.execute(
+                f"SELECT id, abstract_answered FROM paper WHERE id IN ({marks}) AND abstract_answered IS NOT NULL",
+                batch,
+            ):
+                try:
+                    sources = json.loads(row["abstract_answered"])
+                except ValueError:
+                    continue
+                if isinstance(sources, list) and sources:
+                    answers[row["id"]] = {s for s in sources if isinstance(s, str)}
+    return answers
+
+
+def add_abstract_answers(paper_id, sources):
+    """Remember that these abstract sources answered "no abstract" for the paper (added to
+    those already recorded)."""
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute("SELECT abstract_answered FROM paper WHERE id = ?", (paper_id,)).fetchone()
+        if row is None:
+            return
+        try:
+            known = set(json.loads(row["abstract_answered"] or "[]"))
+        except (ValueError, TypeError):
+            known = set()
+        merged = sorted(known | set(sources))
+        conn.execute("UPDATE paper SET abstract_answered = ? WHERE id = ?", (json.dumps(merged), paper_id))
+        conn.commit()
+
+
 def clear_abstract_checked():
     """Forget which papers an abstract lookup already gave up on, so the next
     lookup tries them all again. Called when a new lookup API key is saved,
@@ -724,7 +775,14 @@ def _dataset_sources(raw):
 
 
 def create_dataset(
-    verbose_query, expanded_queries, from_date=None, to_date=None, name=None, sources=None, retrieval=None
+    verbose_query,
+    expanded_queries,
+    from_date=None,
+    to_date=None,
+    name=None,
+    sources=None,
+    retrieval=None,
+    search_limit=None,
 ):
     """from_date and to_date are the search's "YYYY-MM-DD" publication date bounds. name is the short title (AI-written at expansion time); without one, the
     first few words of the topic stand in. sources are the paper source ids it
@@ -732,21 +790,23 @@ def create_dataset(
     (a JSON-serializable list, see app.create_dataset)."""
     with _LOCK, closing(_connect()) as conn:
         dataset_id = _insert_dataset(
-            conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval
+            conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval, search_limit
         )
         conn.commit()
         return dataset_id
 
 
-def _insert_dataset(conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval):
+def _insert_dataset(
+    conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval, search_limit
+):
     """The dataset row, on an open connection, without committing."""
     name = (name or "").strip() or _placeholder_title(verbose_query)
     cur = conn.execute(
         """
         INSERT INTO dataset
             (name, verbose_query, from_year, to_year, from_date, to_date, expanded_queries, sources,
-             retrieval, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             retrieval, search_limit, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name,
@@ -758,6 +818,7 @@ def _insert_dataset(conn, verbose_query, expanded_queries, from_date, to_date, n
             json.dumps(expanded_queries),
             json.dumps(sources or ["openalex"]),
             json.dumps(retrieval) if retrieval is not None else None,
+            search_limit,
             _now(),
         ),
     )
@@ -774,6 +835,7 @@ def save_retrieved_dataset(
     name=None,
     sources=None,
     retrieval=None,
+    search_limit=None,
 ):
     """Save a finished retrieval as one unit: the dataset, the cost of the query
     expansion that produced it, its papers (in the shape openalex._work_to_result()
@@ -782,7 +844,7 @@ def save_retrieved_dataset(
     and a retry starts clean. Returns the dataset id."""
     with _LOCK, closing(_connect()) as conn:
         dataset_id = _insert_dataset(
-            conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval
+            conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval, search_limit
         )
         _insert_llm_call(conn, "query_expansion", usage.provider, usage.model, usage, dataset_id=dataset_id)
         paper_ids = [_get_or_create_paper(conn, candidate) for candidate in candidates]
@@ -829,12 +891,14 @@ def add_papers_to_dataset(dataset_id, paper_ids):
         conn.commit()
 
 
-def find_dataset(verbose_query, from_date=None, to_date=None, sources=None):
+def find_dataset(verbose_query, from_date=None, to_date=None, sources=None, search_limit=None, legacy_limit=None):
     """Look up an existing dataset with the same question + date filters +
     paper sources, so resubmitting an identical search reuses it instead of
     re-running expansion/retrieval (see PLAN.md's reuse-first rule for
     POST /api/datasets). The same topic searched in different sources is a
-    different paper pool, so it isn't reused."""
+    different paper pool, so it isn't reused. Neither is the same topic searched with a
+    different search limit; a dataset from before the limit was a choice (NULL) counts as
+    having legacy_limit."""
     wanted = sorted(sources or ["openalex"])
     with closing(_connect()) as conn:
         rows = conn.execute(
@@ -844,9 +908,10 @@ def find_dataset(verbose_query, from_date=None, to_date=None, sources=None):
               AND deleted_at IS NULL
               AND (from_date IS ? OR from_date = ?)
               AND (to_date IS ? OR to_date = ?)
+              AND COALESCE(search_limit, ?) IS ?
             ORDER BY created_at DESC
             """,
-            (verbose_query, from_date, from_date, to_date, to_date),
+            (verbose_query, from_date, from_date, to_date, to_date, legacy_limit, search_limit),
         ).fetchall()
         for row in rows:
             if sorted(_dataset_sources(row["sources"])) == wanted:

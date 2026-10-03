@@ -141,12 +141,22 @@ def expand_query(research_question, ai_api, model, n=4):
         ai_api,
         model,
         system=(
-            f"You expand a researcher's free-text research question into at most {n} "
-            "literal keyword search queries for a scholarly database (OpenAlex). "
-            "Each query should be a short phrase using terminology a paper's title or "
-            "abstract would actually contain - not a rephrasing of the question itself. "
-            "Vary vocabulary/synonyms across queries to broaden recall. Also return a "
-            "`title`: a 2-4 word title that names the topic."
+            "You turn a researcher's free-text research question into NARROW keyword search "
+            "queries for scholarly databases (OpenAlex, PubMed, Scopus, Semantic Scholar). "
+            "The goal is a small, focused set of papers that closely match the question, not "
+            "every paper in the broad field: the databases rank results by relevance and only "
+            "the top results of each query are kept, so each query must be specific enough "
+            "that its top results are on topic. "
+            f"Write at most {n} queries, fewer if the question is narrow. Each query is a "
+            "short phrase of about 3 to 7 words that names the specific topic using terms a "
+            "paper's title or abstract would contain. Put the key concepts of the question "
+            "together in one query (for example the material, the method and the application) "
+            "instead of searching one broad term, and never use a bare generic word or field "
+            "name (such as 'energy', 'cancer' or 'machine learning') as a query. Different "
+            "queries should approach the same question from different specific angles or "
+            "wordings, not be broader or shorter versions of each other. Do not use boolean "
+            "operators, quotation marks or wildcards. Also return a `title`: a 2-4 word "
+            "title that names the topic."
         ),
         user=research_question,
         schema={

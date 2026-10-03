@@ -29,10 +29,17 @@ def work(i, **extra):
     }
 
 
-def make_dataset(papers=(1, 2), from_date=None, to_date=None, queries=("coral reef",)):
+def make_dataset(papers=(1, 2), from_date=None, to_date=None, queries=("coral reef",), search_limit=None):
     usage = llm.Usage(10, 5, model="claude-haiku-4-5", provider="anthropic")
     dataset_id = db.save_retrieved_dataset(
-        "coral reefs", list(queries), [work(i) for i in papers], usage, from_date=from_date, to_date=to_date, name="Coral"
+        "coral reefs",
+        list(queries),
+        [work(i) for i in papers],
+        usage,
+        from_date=from_date,
+        to_date=to_date,
+        name="Coral",
+        search_limit=search_limit,
     )
     return dataset_id
 
@@ -141,12 +148,25 @@ class TestRefreshRoute:
         assert body["dataset"]["last_refresh"]["new_count"] == 0
         assert not any(p["is_new"] for p in body["dataset"]["papers"])
 
-    def test_a_check_that_hit_the_ceiling_says_so(self, client, source, monkeypatch):
-        monkeypatch.setattr("search_sources.MAX_RESULTS_PER_SEARCH", 1)
-        dataset_id = make_dataset(papers=(1,))
-        source["papers"], source["total"] = [work(2)], 40
+    def test_a_check_that_hit_the_limit_says_so(self, client, source):
+        dataset_id = make_dataset(papers=(1,), search_limit=50)
+        source["papers"], source["total"] = [work(i) for i in range(100, 150)], 400
         refresh = self.refresh(client, dataset_id).get_json()["dataset"]["last_refresh"]
-        assert "narrow the question" in refresh["retrieval"][0]["capped"]
+        assert "50 most relevant were kept" in refresh["retrieval"][0]["capped"]
+        assert refresh["retrieval"][0]["capped_by"] == "limit"
+
+    def test_the_check_keeps_as_many_papers_per_search_as_the_dataset_was_made_with(self, client, monkeypatch):
+        asked = []
+
+        def search_all(query, **kwargs):
+            asked.append(kwargs["max_results"])
+            return [], 0
+
+        monkeypatch.setattr(openalex, "search_all", search_all)
+        for limit in (200, None):
+            self.refresh(client, make_dataset(search_limit=limit, queries=(f"q{limit}",)))
+        # A dataset from before the limit was a choice is checked at the default.
+        assert asked == [200, 100]
 
     def test_a_search_that_ended_in_the_past_is_refused_with_the_reason(self, client, source):
         dataset_id = make_dataset(to_date="2020-12-31")

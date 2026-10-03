@@ -141,12 +141,14 @@ def search_all(query, from_date=None, to_date=None, max_results=10_000):
     (cursor paging, which has no depth limit) until they are all fetched or
     max_results have been. Returns (results, total): total is how many works
     OpenAlex says match, so a caller can tell when it stopped short."""
-    params = _search_params(query, MAX_PER_PAGE, from_date, to_date)
+    # A page no bigger than what is wanted: a search keeping 50 papers asks for 50.
+    params = _search_params(query, min(MAX_PER_PAGE, max_results), from_date, to_date)
     params["cursor"] = "*"
     results = []
     total = None
     seen_cursors = set()
     while len(results) < max_results:
+        params["per_page"] = min(MAX_PER_PAGE, max_results - len(results))
         data = _fetch_page(params)
         meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
         if isinstance(meta.get("count"), int):

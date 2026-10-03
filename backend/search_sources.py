@@ -22,6 +22,7 @@ abstracts" button fills them in.
 import calendar
 import datetime
 import functools
+import inspect
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -41,13 +42,14 @@ from source_http import (
     semanticscholar_get,
 )
 
-# A search reads every hit, page by page, because a literature search that stops at
-# the first page leaves papers unfound. This ceiling per search per source stops a
-# question too broad to be a useful search (a single common word can match millions
-# of papers). It is not a limit on a review: hitting it is reported on the dataset,
-# the user narrows the question or the dates, and several narrower datasets can be
-# scored together in one evaluation.
-MAX_RESULTS_PER_SEARCH = 2_500
+# A search keeps the most relevant papers of each query from each source, up to a limit
+# the user chooses. A dataset is meant to be a narrow dive on one topic (the AI turns the
+# question into specific queries), and datasets can be pooled when evaluating, so the
+# way to cover more is several narrower datasets, not one that pulls in thousands of
+# loosely related papers. When a query matches more than the limit, the dataset says so
+# ("100 of 18,400"), so the user knows to narrow the question or the dates.
+DEFAULT_SEARCH_LIMIT = 100
+SEARCH_LIMIT_CHOICES = (50, 100, 200, 500)
 # Semantic Scholar's search will not read past its first 1,000 results (offset plus
 # limit), and returns 100 per request.
 SEMANTIC_SCHOLAR_PAGE = 100
@@ -78,7 +80,7 @@ class SearchResult(list):
     total   how many papers the source says match the search (None if it does not say)
     fetched how many it returned to us, before the exact date check dropped some
     capped  None if everything that matched was fetched, else a sentence saying
-            why some were not (a limit of the source's, or MAX_RESULTS_PER_SEARCH)
+            why some were not (the search limit, or a limit of the source's)
     """
 
     def __init__(self, papers=(), total=None, fetched=None, capped=None):
@@ -88,18 +90,18 @@ class SearchResult(list):
         self.capped = capped
 
 
-def _capped_reason(total, fetched, source_limit, source_label):
-    """Why fewer papers were fetched than matched, or None if all were."""
+def _capped_reason(total, fetched, source_limit, source_label, limit):
+    """Why fewer papers were fetched than matched, or None if all were. `limit` is the
+    most relevant papers the user asked to keep per search, and `source_limit` how far
+    the source itself will read (None if it has no such limit)."""
     if total is None or fetched >= total:
         return None
-    ceiling = MAX_RESULTS_PER_SEARCH
-    if source_limit is not None and fetched >= source_limit:
+    if source_limit is not None and source_limit < limit and fetched >= source_limit:
         return f"{source_label} will not return more than {source_limit:,} papers for one search."
-    if fetched >= ceiling:
-        return (
-            f"Stopped at {ceiling:,} papers for this search. To get the rest, narrow the question or the "
-            "dates and combine the datasets when you evaluate."
-        )
+    if fetched >= limit:
+        # Only the fact: what to do about it is said once, where the page shows these, not
+        # repeated in the note of every search that was stopped by the limit.
+        return f"{source_label} matched {total:,} papers; the {limit:,} most relevant were kept."
     return f"{source_label} returned only {fetched:,} of the {total:,} papers it reports."
 
 
@@ -107,9 +109,10 @@ def _capped_reason(total, fetched, source_limit, source_label):
 class SearchSource:
     id: str
     label: str
-    # search(query, from_date, to_date): the dates are "YYYY-MM-DD" or None. Returns a
-    # SearchResult (a list of the papers, with how complete it is).
-    search: Callable[[str, Optional[str], Optional[str]], list]
+    # search(query, from_date, to_date, limit): the dates are "YYYY-MM-DD" or None and
+    # limit is how many of the most relevant papers to keep. Returns a SearchResult (a list
+    # of the papers, with how complete it is).
+    search: Callable[..., list]
     # Credential provider a key must be saved under (None = no key needed).
     required_credential: Optional[str] = None
 
@@ -160,12 +163,14 @@ def _filtered(search):
     in-press records some sources give a coming year or issue date). An end the
     user typed is honored, even a future one, and so is a future start with no end."""
 
+    takes_limit = "limit" in inspect.signature(search).parameters
+
     @functools.wraps(search)
-    def wrapper(query, from_date, to_date):
+    def wrapper(query, from_date, to_date, limit=DEFAULT_SEARCH_LIMIT):
         today = datetime.date.today().isoformat()
         if not to_date and (not from_date or from_date <= today):
             to_date = today
-        found = search(query, from_date, to_date)
+        found = search(query, from_date, to_date, limit) if takes_limit else search(query, from_date, to_date)
         return SearchResult(
             (r for r in found if _in_range(r, from_date, to_date) and r.get("work_type") not in SKIP_WORK_TYPES),
             total=getattr(found, "total", None),
@@ -181,12 +186,10 @@ def _year_of(date):
 
 
 @_filtered
-def _search_openalex(query, from_date, to_date):
-    results, total = openalex.search_all(
-        query, from_date=from_date, to_date=to_date, max_results=MAX_RESULTS_PER_SEARCH
-    )
+def _search_openalex(query, from_date, to_date, limit=DEFAULT_SEARCH_LIMIT):
+    results, total = openalex.search_all(query, from_date=from_date, to_date=to_date, max_results=limit)
     return SearchResult(
-        results, total=total, capped=_capped_reason(total, len(results), None, "OpenAlex")
+        results, total=total, capped=_capped_reason(total, len(results), None, "OpenAlex", limit)
     )
 
 
@@ -230,10 +233,10 @@ def _semanticscholar_paper(item):
 
 
 @_filtered
-def _search_semanticscholar(query, from_date, to_date):
+def _search_semanticscholar(query, from_date, to_date, limit=DEFAULT_SEARCH_LIMIT):
     params = {
         "query": query,
-        "limit": SEMANTIC_SCHOLAR_PAGE,
+        "limit": min(SEMANTIC_SCHOLAR_PAGE, limit),
         "offset": 0,
         "fields": "title,abstract,year,publicationDate,citationCount,externalIds,venue,authors,url,publicationTypes",
     }
@@ -243,7 +246,8 @@ def _search_semanticscholar(query, from_date, to_date):
     results = []
     total = None
     fetched = 0
-    while fetched < min(SEMANTIC_SCHOLAR_DEPTH, MAX_RESULTS_PER_SEARCH):
+    while fetched < min(SEMANTIC_SCHOLAR_DEPTH, limit):
+        params["limit"] = min(SEMANTIC_SCHOLAR_PAGE, limit - fetched)
         body = retry_unavailable(lambda: _semanticscholar_page(params))
         if body is None:
             break
@@ -253,14 +257,14 @@ def _search_semanticscholar(query, from_date, to_date):
         fetched += len(page)
         results.extend(_semanticscholar_paper(item) for item in page if item.get("title") and item.get("paperId"))
         # A short page, or none, is the last one.
-        if len(page) < SEMANTIC_SCHOLAR_PAGE or (total is not None and fetched >= total):
+        if len(page) < params["limit"] or (total is not None and fetched >= total):
             break
         params["offset"] = fetched
     return SearchResult(
         results,
         total=total,
         fetched=fetched,
-        capped=_capped_reason(total, fetched, SEMANTIC_SCHOLAR_DEPTH, "Semantic Scholar"),
+        capped=_capped_reason(total, fetched, SEMANTIC_SCHOLAR_DEPTH, "Semantic Scholar", limit),
     )
 
 
@@ -327,13 +331,13 @@ def _scopus_page(scopus_query, key, start):
 
 
 @_filtered
-def _search_scopus(query, from_date, to_date):
+def _search_scopus(query, from_date, to_date, limit=DEFAULT_SEARCH_LIMIT):
     scopus_query = _scopus_query(query, from_date, to_date)
     key = credentials.get_key("elsevier")
     results = []
     total = None
     fetched = 0
-    while fetched < min(SCOPUS_DEPTH, MAX_RESULTS_PER_SEARCH):
+    while fetched < min(SCOPUS_DEPTH, limit):
         body = retry_unavailable(lambda: _scopus_page(scopus_query, key, fetched))
         if body is None:
             break
@@ -354,7 +358,7 @@ def _search_scopus(query, from_date, to_date):
         results,
         total=total,
         fetched=fetched,
-        capped=_capped_reason(total, fetched, SCOPUS_DEPTH, "Scopus"),
+        capped=_capped_reason(total, fetched, SCOPUS_DEPTH, "Scopus", limit),
     )
 
 
@@ -452,10 +456,10 @@ def _pubmed_result(article):
     }
 
 
-def _pubmed_ids(term, from_date, to_date):
-    """(ids, total): the PubMed ids that match, most relevant first (up to
-    PUBMED_DEPTH of them), and how many PubMed says match."""
-    retmax = min(PUBMED_DEPTH, MAX_RESULTS_PER_SEARCH)
+def _pubmed_ids(term, from_date, to_date, limit=DEFAULT_SEARCH_LIMIT):
+    """(ids, total): the PubMed ids that match, most relevant first (up to `limit` of
+    them, and PubMed lists at most PUBMED_DEPTH), and how many PubMed says match."""
+    retmax = min(PUBMED_DEPTH, limit)
     params = {"db": "pubmed", "term": term, "retmax": retmax, "retmode": "json", "sort": "relevance"}
     if from_date or to_date:
         params.update(
@@ -480,7 +484,7 @@ def _pubmed_ids(term, from_date, to_date):
         raise SourceError("PubMed returned an unreadable response.")
     if data.get("ERROR"):
         raise SourceError(f"PubMed could not run this search: {data['ERROR']}")
-    ids = (data.get("idlist") or [])[:MAX_RESULTS_PER_SEARCH]
+    ids = (data.get("idlist") or [])[:limit]
     count = data.get("count")
     total = int(count) if isinstance(count, str) and count.isdigit() else None
     return ids, total
@@ -507,10 +511,10 @@ def _pubmed_articles(ids):
 
 
 @_filtered
-def _search_pubmed(query, from_date, to_date):
+def _search_pubmed(query, from_date, to_date, limit=DEFAULT_SEARCH_LIMIT):
     # Square brackets are PubMed field tags ("[Author]"), which a topic never needs.
     term = re.sub(r"[\[\]]", " ", query).strip()
-    ids, total = retry_unavailable(lambda: _pubmed_ids(term, from_date, to_date))
+    ids, total = retry_unavailable(lambda: _pubmed_ids(term, from_date, to_date, limit))
     results = []
     for start in range(0, len(ids), PUBMED_FETCH_BATCH):
         batch = ids[start : start + PUBMED_FETCH_BATCH]
@@ -523,7 +527,7 @@ def _search_pubmed(query, from_date, to_date):
         results,
         total=total,
         fetched=len(ids),
-        capped=_capped_reason(total, len(ids), PUBMED_DEPTH, "PubMed"),
+        capped=_capped_reason(total, len(ids), PUBMED_DEPTH, "PubMed", limit),
     )
 
 

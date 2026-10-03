@@ -3,11 +3,12 @@ import { X } from 'lucide-react'
 
 // Centered dialog with a backdrop, an X in the top right, and Escape / backdrop
 // click to close. While `busy` (a request in flight) it can't be dismissed.
+// wide is for dialogs that hold a list or table.
 // closeOnBackdrop={false} is for dialogs with text fields, where a stray click
 // outside would throw away what was typed. Otherwise a backdrop click only
 // closes when the press started on the backdrop too, so dragging to select text
 // and releasing outside the dialog doesn't close it.
-export default function Modal({ title, onClose, busy = false, closeOnBackdrop = true, children }) {
+export default function Modal({ title, onClose, busy = false, closeOnBackdrop = true, wide = false, children }) {
   const pressStartedOnBackdrop = useRef(false)
 
   useEffect(() => {
@@ -32,7 +33,7 @@ export default function Modal({ title, onClose, busy = false, closeOnBackdrop = 
       <div
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-md rounded-lg bg-surface p-6 shadow-xl"
+        className={`relative w-full rounded-lg bg-surface p-6 shadow-xl ${wide ? 'max-w-2xl' : 'max-w-md'}`}
         onClick={(e) => e.stopPropagation()}
       >
         <button

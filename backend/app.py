@@ -13,6 +13,7 @@ import time
 import traceback
 import uuid
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Timer
@@ -52,9 +53,11 @@ CREDENTIAL_PROVIDERS = SUPPORTED_PROVIDERS | {"openalex", "elsevier", "springern
 # makes an earlier "no abstract found" worth retrying.
 LOOKUP_KEY_PROVIDERS = {"elsevier", "springernature", "semanticscholar"}
 
-# Papers looked up per request. Semantic Scholar's unauthenticated limit is
-# about one call a second, so this keeps a request to roughly ten seconds.
-FIND_ABSTRACTS_CHUNK_SIZE = 8
+# Papers looked up per request, all at the same time (see _look_up_batch), so a slow
+# source delays its own paper and not the other nine. Semantic Scholar's limit is about
+# one call a second however many are waiting (its requests queue, see source_http), so
+# a request takes roughly this many seconds at the least.
+FIND_ABSTRACTS_CHUNK_SIZE = 10
 
 # Sized to control cost/latency per LLM call without hitting output-token
 # limits (each candidate needs a full rationale in the response) - see
@@ -334,6 +337,18 @@ def _clean_queries(raw):
     return queries
 
 
+def _search_limit(body):
+    """How many of the most relevant papers each search keeps: one of
+    search_sources.SEARCH_LIMIT_CHOICES, the default if not given."""
+    value = body.get("search_limit")
+    if value is None:
+        return search_sources.DEFAULT_SEARCH_LIMIT
+    if isinstance(value, bool) or not isinstance(value, int) or value not in search_sources.SEARCH_LIMIT_CHOICES:
+        choices = ", ".join(str(c) for c in search_sources.SEARCH_LIMIT_CHOICES)
+        raise InvalidRequest(f"'search_limit' must be one of {choices}")
+    return value
+
+
 def _optional_year(body, field):
     value = body.get(field)
     if value is None:
@@ -444,6 +459,9 @@ def _dataset_to_dict(dataset_row, papers):
         # How complete each search was (None for a dataset from before it was
         # recorded): see create_dataset.
         "retrieval": dataset_row.get("retrieval"),
+        # How many of the most relevant papers each search kept (None for a dataset from
+        # before this was a choice).
+        "search_limit": dataset_row.get("search_limit"),
         "created_at": dataset_row["created_at"],
         "papers": _mark_new(papers, dataset_row.get("last_refresh")),
         # The latest check for new papers (None if never checked): when, the dates
@@ -488,6 +506,7 @@ def expand_dataset_query():
         from_date, to_date = _optional_range(body)
         ai_api, ai_model = _ai_choice(body)
         sources = search_sources.validate_sources(body.get("sources"))
+        search_limit = _search_limit(body)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -498,7 +517,14 @@ def expand_dataset_query():
     # the same paper pool was already retrieved, not which model happened to
     # expand it.
     if not body.get("force_new"):
-        existing_id = db.find_dataset(question, from_date=from_date, to_date=to_date, sources=sources)
+        existing_id = db.find_dataset(
+            question,
+            from_date=from_date,
+            to_date=to_date,
+            sources=sources,
+            search_limit=search_limit,
+            legacy_limit=search_sources.DEFAULT_SEARCH_LIMIT,
+        )
         if existing_id is not None:
             dataset_row = db.get_dataset(existing_id)
             papers = db.get_dataset_papers(existing_id)
@@ -555,6 +581,7 @@ def create_dataset():
         from_date, to_date = _optional_range(body)
         usage_api, usage_model = _ai_choice({"ai_api": usage.get("ai_api"), "ai_model": usage.get("model")})
         sources = search_sources.validate_sources(body.get("sources"))
+        search_limit = _search_limit(body)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     input_tokens = _token_count(usage.get("input_tokens"), "input_tokens")
@@ -564,18 +591,18 @@ def create_dataset():
     # A long search spends the sources' quotas, so the same search is not run twice at
     # once (a second tab, a double click); the second asker is told, and finds the
     # dataset reused once the first has finished.
-    search_key = (question.lower(), from_date, to_date, tuple(sources), tuple(q.lower() for q in queries))
+    search_key = (question.lower(), from_date, to_date, tuple(sources), tuple(q.lower() for q in queries), search_limit)
     with _exclusive("search", search_key) as acquired:
         if not acquired:
             return jsonify({"error": "This search is already running. Wait for it to finish."}), 409
-        return _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage)
+        return _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage, search_limit)
 
 
 # Searches that finished while a retrieval was still failing, kept for a few minutes so
 # its retry button only re-runs what did not finish (a broad search can be minutes of
 # requests). Dropped when the retrieval succeeds, so a later search of the same
 # question asks the sources again, and after SEARCH_CACHE_SECONDS, so it is never stale.
-# Keyed by (source id, query, from date, to date); the value is (when, SearchResult).
+# Keyed by (source id, query, from date, to date, limit); the value is (when, SearchResult).
 _SEARCH_CACHE = {}
 _SEARCH_CACHE_LOCK = threading.Lock()
 SEARCH_CACHE_SECONDS = 600
@@ -599,7 +626,7 @@ def _remember_search(key, found):
     with _SEARCH_CACHE_LOCK:
         _SEARCH_CACHE[key] = (time.monotonic(), found)
         # The newest is never dropped for its own size (a search is at most
-        # MAX_RESULTS_PER_SEARCH papers), so a retry always keeps the last finished one.
+        # the largest search limit papers), so a retry always keeps the last finished one.
         while len(_SEARCH_CACHE) > 1 and sum(len(f) for _, f in _SEARCH_CACHE.values()) > SEARCH_CACHE_MAX_PAPERS:
             del _SEARCH_CACHE[min(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k][0])]
 
@@ -610,7 +637,7 @@ def _forget_searches(keys):
             _SEARCH_CACHE.pop(key, None)
 
 
-def _run_searches(queries, sources, from_date, to_date):
+def _run_searches(queries, sources, from_date, to_date, limit):
     """Run every query against every selected source. Returns (candidates, retrieval,
     used): the papers (deduplicated), how complete each search was (one entry per source
     and query, kept with the dataset so it can be seen later: `total` is what the source
@@ -625,21 +652,26 @@ def _run_searches(queries, sources, from_date, to_date):
     used = []
     for source_id in sources:
         for q in queries:
-            key = (source_id, q, from_date, to_date)
+            key = (source_id, q, from_date, to_date, limit)
             found = _cached_search(key)
             if found is None:
-                found = search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date)
+                found = search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date, limit)
                 _remember_search(key, found)
             used.append(key)
             result_lists.append(found)
+            fetched = getattr(found, "fetched", len(found))
+            capped = getattr(found, "capped", None)
             retrieval.append(
                 {
                     "source": source_id,
                     "query": q,
                     "total": getattr(found, "total", None),
-                    "fetched": getattr(found, "fetched", len(found)),
+                    "fetched": fetched,
                     "kept": len(found),
-                    "capped": getattr(found, "capped", None),
+                    "capped": capped,
+                    # Why, so the page can tell the user's own limit (narrow the question) from
+                    # a limit of the source's: "limit", "source", or None if nothing was left out.
+                    "capped_by": None if not capped else ("limit" if fetched >= limit else "source"),
                 }
             )
     return openalex.dedupe(result_lists), retrieval, used
@@ -655,11 +687,11 @@ def _search_failure(exc):
     return jsonify({"error": str(exc)}), 502
 
 
-def _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage):
+def _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage, search_limit):
     """Run every query against every selected source and save the dataset (the
     caller holds the search's lock)."""
     try:
-        candidates, retrieval, used = _run_searches(queries, sources, from_date, to_date)
+        candidates, retrieval, used = _run_searches(queries, sources, from_date, to_date, search_limit)
     except (requests.RequestException, SourceError) as exc:
         return _search_failure(exc)
 
@@ -675,6 +707,7 @@ def _retrieve_dataset(question, queries, from_date, to_date, title, sources, exp
         name=title,
         sources=sources,
         retrieval=retrieval,
+        search_limit=search_limit,
     )
     _forget_searches(used)
 
@@ -724,12 +757,14 @@ def refresh_dataset(dataset_id):
         return jsonify({"error": str(exc)}), 400
     queries = llm.clean_queries([q for q in dataset_row["expanded_queries"] if isinstance(q, str)])
     from_date, to_date = _refresh_window(dataset_row, datetime.date.today())
+    # The same number of most relevant papers per search the dataset was made with.
+    limit = dataset_row.get("search_limit") or search_sources.DEFAULT_SEARCH_LIMIT
 
     with _exclusive("search", ("refresh", dataset_id)) as acquired:
         if not acquired:
             return jsonify({"error": "This dataset is already being checked. Wait for it to finish."}), 409
         try:
-            candidates, retrieval, used = _run_searches(queries, sources, from_date, to_date)
+            candidates, retrieval, used = _run_searches(queries, sources, from_date, to_date, limit)
         except (requests.RequestException, SourceError) as exc:
             return _search_failure(exc)
         new_ids = db.save_refresh(
@@ -837,6 +872,42 @@ def find_dataset_abstracts(dataset_id):
         return _find_abstracts_chunk(dataset_id, set(skip_ids), set(skip_sources))
 
 
+def _look_up_batch(batch, skipped, answers):
+    """abstracts.lookup_abstract for every (paper_id, doi, title) in the batch at the same
+    time, so waiting on a slow source costs the time of the slowest paper, not the sum
+    of them all. `answers` is {paper_id: sources that already said "no abstract" for it}.
+    Returns {paper_id: Lookup}. A source that fails is added to `skipped` as soon as its
+    paper finishes, so lookups that start later do not ask it again. A lookup that
+    crashes is logged and counts as unanswered (the paper is left to be tried again)
+    instead of losing the others' results."""
+    results = {}
+    if not batch:
+        return results
+    with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+        futures = {
+            pool.submit(
+                abstracts.lookup_abstract,
+                doi,
+                skipped,
+                title=title,
+                answered_before=frozenset(answers.get(paper_id, ())),
+            ): paper_id
+            for paper_id, doi, title in batch
+        }
+        for future in as_completed(futures):
+            paper_id = futures[future]
+            try:
+                result = future.result()
+            except Exception:  # noqa: BLE001 - one paper's bug must not fail the batch
+                app.logger.error(
+                    "Abstract lookup failed for paper %s:\n%s", paper_id, redact(traceback.format_exc())
+                )
+                result = abstracts.Lookup(None, None, {}, frozenset(), False)
+            results[paper_id] = result
+            skipped.update(result.errors)
+    return results
+
+
 def _find_abstracts_chunk(dataset_id, attempted_before, skipped):
     # Papers a lookup already completed for without finding an abstract are
     # left out, so opening a dataset or clicking the button again doesn't ask
@@ -854,13 +925,20 @@ def _find_abstracts_chunk(dataset_id, attempted_before, skipped):
     source_errors = {}
     filled = []
     checked_ids = []
+    results = _look_up_batch(batch, skipped, db.get_abstract_answers([paper_id for paper_id, _, _ in batch]))
+    # Saved in the batch's own order, on this thread.
     for paper_id, doi, title in batch:
-        abstract, source, errors, answered = abstracts.find_abstract(doi, skipped, title=title)
-        source_errors.update(errors)
-        skipped.update(errors)
-        if abstract and db.set_paper_abstract_if_blank(paper_id, abstract, source):
+        found = results[paper_id]
+        source_errors.update(found.errors)
+        if found.abstract and db.set_paper_abstract_if_blank(paper_id, found.abstract, found.source):
             filled.append(db.get_paper(paper_id))
-        elif answered:
+            continue
+        # Remember which sources said "no abstract", so a later lookup asks only the rest.
+        if found.answered:
+            db.add_abstract_answers(paper_id, found.answered)
+        # Recorded as looked up only once every source that applies has answered: one that
+        # was down or skipped has not been asked, and the paper must be tried again.
+        if found.complete:
             db.mark_abstract_checked(paper_id)
             checked_ids.append(paper_id)
 

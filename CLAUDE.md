@@ -234,24 +234,38 @@ against real copies on spare ports works well.
   duplicates merge. Scopus results have no abstracts (fill with "Find missing abstracts");
   Semantic Scholar without a key is often rate limited. `source_http.py` holds the shared
   HTTP helpers and `SourceError`.
-  **A search reads every hit, not the first page**: the point of the app is leaving no paper
-  unfound, and narrowing a too-broad question is the user's job. OpenAlex is read by cursor
-  (`openalex.search_all`), Semantic Scholar and Scopus by offset, PubMed by one esearch for the
+  **A search keeps the most relevant papers, up to a limit the user chooses**: a dataset is a
+  narrow dive on one topic, and datasets are pooled when evaluating, so covering more means
+  several narrower datasets, not one that pulls in thousands of loosely related papers. The
+  AI writes narrow queries (`llm.expand_query`: specific 3 to 7 word phrases that combine the
+  key concepts, never a bare generic term, no boolean syntax since the sources differ), and each
+  query keeps its top `search_limit` (50, 100 default, 200 or 500; `search_sources.
+  SEARCH_LIMIT_CHOICES`, mirrored in `lib/searchLimit.js`) from each source, ranked by relevance.
+  The limit is stored on the dataset (`dataset.search_limit`, NULL on older ones, treated as the
+  default), is part of reusing an identical search and of the search lock and kept-searches key,
+  and the "check for new papers" uses the dataset's own. **Never read a source to the end**:
+  that once made every search return thousands of papers, because the top-N cut had been what
+  kept datasets narrow. OpenAlex is read by cursor (`openalex.search_all`, pages no bigger than
+  what is still wanted), Semantic Scholar and Scopus by offset, PubMed by one esearch for the
   ids and efetch batches. Each search returns a `SearchResult` (a list, so it still works as
-  one) carrying `total` (what the source says matches), `fetched` (what it returned, before the
-  exact date check) and `capped` (a sentence saying why any were left out, else None). Some
-  sources cannot be read to the end (Semantic Scholar 1,000, Scopus 5,000, PubMed 10,000), and
-  `MAX_RESULTS_PER_SEARCH` (2,500 per search per source) stops a question too broad to be a useful
-  search. It is a nudge, not a wall: the user narrows the question or dates and combines the
-  resulting datasets in one Evaluate run. Both kinds of limit are reported, never hidden.
+  one) carrying `total` (what the source says matches), `fetched` (what it kept, before the
+  exact date check) and `capped` (a sentence saying why any were left out, else None: how many
+  matched and that the N most relevant were kept, or a limit of the source's, Semantic Scholar
+  1,000, Scopus 5,000, PubMed 10,000). Both kinds of limit are reported, never hidden.
   `POST /api/datasets` keeps one entry per source and query in `dataset.retrieval`, shown on the
-  dataset page as "Search completeness". A page that fails for a passing reason (rate limit, 5xx,
-  dropped connection: `source_http.SourceUnavailable`, or the same kinds of `requests` error in
-  `openalex._fetch_page`) is asked again up to `PAGE_ATTEMPTS` times, so one hiccup does not discard
-  the pages already read; a quota that ran out, a rejected key or a rejected query is not retried.
-  Past that the retrieval is still one request that fails as a whole with nothing saved, but the
-  searches that did finish are kept in memory for 10 minutes (`app._SEARCH_CACHE`, at most
-  20,000 papers held, dropped when the retrieval succeeds), so the retry button only re-runs what did not finish. The
+  dataset page as "Search completeness": a one-line summary on the details card and a "Show
+  details" button that opens `SearchCompletenessModal` (papers kept per search, then the
+  "100 of 368" numbers per source and query for the search and for the latest check).
+  Each entry also has `capped_by` ("limit" for the user's own limit, "source" for a source's): the
+  modal adds a note only for a source's own limit (each once), since the numbers already show the
+  user's limit, and the `capped` sentences state only the fact. A page that fails for a passing reason
+  (rate limit, 5xx, dropped connection: `source_http.SourceUnavailable`, or the same kinds of
+  `requests` error in `openalex._fetch_page`) is asked again up to `PAGE_ATTEMPTS` times, so one
+  hiccup does not discard the pages already read; a quota that ran out, a rejected key or a
+  rejected query is not retried. Past that the retrieval is still one request that fails as a
+  whole with nothing saved, but the searches that did finish are kept in memory for 10 minutes
+  (`app._SEARCH_CACHE`, at most 20,000 papers held, dropped when the retrieval succeeds), so the
+  retry button only re-runs what did not finish. The
   same search (question, dates, sources, queries) cannot run twice at once: the second gets a 409.
   A finished retrieval is saved by `db.save_retrieved_dataset` in one transaction (dataset, the
   expansion's cost, papers and membership), so a failed save leaves no empty dataset behind.
@@ -279,17 +293,28 @@ against real copies on spare ports works well.
   against the live APIs.
 - `abstracts.py` - looks up a missing abstract by DOI: Elsevier (Scopus `META_ABS`) and
   Springer Nature first, when the user has saved a key and the DOI prefix matches, then
-  Europe PMC, then Semantic Scholar. Accepts only abstracts of `llm.MIN_ABSTRACT_CHARS`+.
+  Semantic Scholar, then Europe PMC last (it can be slow). Accepts only abstracts of `llm.MIN_ABSTRACT_CHARS`+.
   A source that fails (bad key, quota, or a 5xx/429 reply, via `source_http.raise_if_unavailable`)
-  raises `SourceError` and is skipped for the rest of the run; only a real answer (including 404
+  raises `SourceError` and is skipped for the rest of the run, but a passing problem (a timeout, a
+  dropped connection, a rate limit: `SourceUnavailable`) is asked again up to `PAGE_ATTEMPTS` times
+  per paper first (`retry_unavailable`), so one hiccup does not switch a source off for the rest.
+  A source that is too slow to answer (`SourceTimeout`, a subclass) is not asked again by the
+  lookup (it is skipped for the run and the next source takes over, since retrying a slow server
+  cost a minute per paper); search pages still retry timeouts.
+  `source_http.get` words the cause in the message ("Could not reach Europe PMC (it took too long
+  to answer)") and logs the real exception, without any key; only a real answer (including 404
   "not found") counts as asked, so an outage never marks a paper checked. DOIs go into URL paths
-  through `source_http.quote_doi` (some contain `?`, `#`, `<`). Driven by `POST /api/datasets/<id>/find-abstracts` (one chunk per call, stateless:
+  through `source_http.quote_doi` (some contain `?`, `#`, `<`). Driven by `POST /api/datasets/<id>/find-abstracts` (one chunk of `FIND_ABSTRACTS_CHUNK_SIZE`=10 papers per call, looked up **at the same time** by `app._look_up_batch`, so a slow source delays only its own paper; a lookup that crashes is logged and leaves its paper to be retried, and Semantic Scholar's requests still queue one interval apart under a lock in `source_http` however many are waiting; stateless:
   the client sends back `skip_ids`/`skip_sources`; loop in `frontend/src/lib/findAbstracts.js`).
   Filled abstracts record `paper.abstract_source`. The dataset page starts this lookup
   automatically when it loads; `paper.abstract_checked_at` marks papers a lookup completed
   for without finding an abstract, so neither the automatic run nor the button asks again
   (saving a new Elsevier/Springer/Semantic Scholar key clears the marks, since a new source
-  can be asked). A paper is not marked if every source errored. A looked-up abstract is
+  can be asked). A paper is marked only once **every source that applies has answered** (`abstracts.Lookup.complete`):
+  one that was down, too slow or skipped has not been asked, so the paper stays a candidate. Which sources
+  already said "no abstract" is kept per paper in `paper.abstract_answered` (JSON list, read and
+  extended by `db.get_abstract_answers`/`add_abstract_answers`), so the next lookup asks only the rest;
+  a new key clears the marks but keeps those answers. A looked-up abstract is
   dropped when the paper title the source returns clearly differs from the stored title
   (`title_match.py`; guards against a DOI pointing at a different paper). The DOI is
   deliberately read-only for users, since it is how the same paper is matched across searches. The lookup panel is a
@@ -322,7 +347,8 @@ against real copies on spare ports works well.
   (`lit_review.db.pre-upgrade-<old>-to-<new>`, never deleted by the app) before migrating; a
   database stamped higher than the code (`DatabaseTooNew`) is refused. (Version 3 added
   `dataset.last_refresh`; 4 added `paper.is_retracted`, `paper.work_type` and
-  `analysis_run.include_retracted`.) Foreign keys are enforced.
+  `analysis_run.include_retracted`; 5 added `dataset.search_limit`; 6 added
+  `paper.abstract_answered`.) Foreign keys are enforced.
   Papers without a DOI match on `paper.title_key` (`title_match.title_key`: markup, accents, case
   and punctuation ignored, `+` and `#` kept) plus year; it is stored, so a change to that rule
   needs a version bump and re-backfill. `get_or_create_papers` inserts a whole search in one

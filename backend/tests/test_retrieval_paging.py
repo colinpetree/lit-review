@@ -5,6 +5,7 @@ import pytest
 import db
 import openalex
 import search_sources as ss
+import source_http
 from source_http import SourceError
 
 
@@ -72,11 +73,27 @@ class TestOpenAlexPaging:
             openalex.search_all("coral")
 
 
-class TestCeiling:
-    def test_a_search_is_read_up_to_2500_papers_and_the_message_points_to_combining_datasets(self):
-        assert ss.MAX_RESULTS_PER_SEARCH == 2500
-        reason = ss._capped_reason(9000, 2500, None, "OpenAlex")
-        assert "2,500" in reason and "narrow the question" in reason and "combine the datasets" in reason
+class TestSearchLimit:
+    def test_a_search_keeps_the_100_most_relevant_by_default_and_the_choices_are_fixed(self):
+        assert ss.DEFAULT_SEARCH_LIMIT == 100
+        assert ss.SEARCH_LIMIT_CHOICES == (50, 100, 200, 500)
+
+    def test_the_message_says_how_many_matched_and_how_many_were_kept(self):
+        reason = ss._capped_reason(18_400, 100, None, "OpenAlex", 100)
+        assert reason == "OpenAlex matched 18,400 papers; the 100 most relevant were kept."
+
+    def test_the_advice_is_not_repeated_in_every_note(self):
+        # What to do about it is said once, where the page shows these.
+        reason = ss._capped_reason(18_400, 100, None, "OpenAlex", 100)
+        assert "narrow" not in reason and "combine" not in reason
+
+    def test_nothing_is_capped_when_everything_that_matched_was_kept(self):
+        assert ss._capped_reason(80, 80, None, "OpenAlex", 100) is None
+        assert ss._capped_reason(None, 100, None, "OpenAlex", 100) is None
+
+    def test_a_limit_of_the_source_is_named_when_it_is_the_one_that_stopped_the_search(self):
+        assert "will not return more than 1,000" in ss._capped_reason(5000, 1000, 1000, "Semantic Scholar", 2000)
+        assert "100 most relevant" in ss._capped_reason(5000, 100, 1000, "Semantic Scholar", 100)
 
 
 class TestSourceCompleteness:
@@ -85,12 +102,18 @@ class TestSourceCompleteness:
         found = ss._search_openalex("coral", None, None)
         assert (found.total, found.fetched, found.capped) == (3, 3, None)
 
-    def test_openalex_says_when_the_ceiling_stopped_it(self, monkeypatch):
-        monkeypatch.setattr(ss, "MAX_RESULTS_PER_SEARCH", 3)
-        monkeypatch.setattr(openalex, "search_all", lambda *a, **k: ([work(i) for i in range(3)], 50))
-        found = ss._search_openalex("coral", None, None)
+    def test_openalex_asks_for_only_the_limit_and_says_when_it_stopped_there(self, monkeypatch):
+        asked = []
+
+        def search_all(query, **kwargs):
+            asked.append(kwargs["max_results"])
+            return [work(i) for i in range(3)], 50
+
+        monkeypatch.setattr(openalex, "search_all", search_all)
+        found = ss._search_openalex("coral", None, None, 3)
+        assert asked == [3]
         assert (found.total, found.fetched) == (50, 3)
-        assert "narrow the question" in found.capped
+        assert "3 most relevant were kept" in found.capped
 
     def test_papers_outside_the_dates_are_dropped_but_still_counted_as_fetched(self, monkeypatch):
         papers = [work(1), {**work(2), "publication_year": 1990, "publication_date": "1990-01-01"}]
@@ -125,22 +148,35 @@ class TestSemanticScholarPaging:
 
     def test_pages_of_100_until_everything_is_read(self, monkeypatch):
         calls = self.serve(monkeypatch, 250)
-        found = ss._search_semanticscholar("coral", None, None)
+        found = ss._search_semanticscholar("coral", None, None, 500)
         assert (len(found), found.total, found.capped) == (250, 250, None)
         assert [c["offset"] for c in calls] == [0, 100, 200]
 
-    def test_it_reads_no_further_than_the_depth_semantic_scholar_allows_and_says_so(self, monkeypatch):
+    def test_it_asks_for_no_more_than_the_limit(self, monkeypatch):
         calls = self.serve(monkeypatch, 5000)
-        found = ss._search_semanticscholar("coral", None, None)
-        assert (found.fetched, found.total) == (1000, 5000)
-        assert "1,000" in found.capped
-        assert calls[-1]["offset"] == 900
+        found = ss._search_semanticscholar("coral", None, None, 50)
+        assert [(c["offset"], c["limit"]) for c in calls] == [(0, 50)]
+        assert (found.fetched, found.total) == (50, 5000)
+        assert "50 most relevant" in found.capped
+
+    def test_the_last_page_is_cut_to_the_limit(self, monkeypatch):
+        calls = self.serve(monkeypatch, 5000)
+        ss._search_semanticscholar("coral", None, None, 200)
+        assert [(c["offset"], c["limit"]) for c in calls] == [(0, 100), (100, 100)]
+
+    def test_it_reads_no_further_than_the_depth_semantic_scholar_allows_and_says_so(self, monkeypatch):
+        monkeypatch.setattr(ss, "SEMANTIC_SCHOLAR_DEPTH", 300)
+        calls = self.serve(monkeypatch, 5000)
+        found = ss._search_semanticscholar("coral", None, None, 500)
+        assert (found.fetched, found.total) == (300, 5000)
+        assert "will not return more than 300" in found.capped
+        assert calls[-1]["offset"] == 200
 
     def test_a_400_past_the_first_page_is_the_depth_limit_not_a_failure(self, monkeypatch):
         page = [{"paperId": str(i), "title": "t"} for i in range(100)]
         responses = iter([FakeResponse(200, {"total": 5000, "data": page})])
         monkeypatch.setattr(ss, "semanticscholar_get", lambda url, params, **kw: next(responses, FakeResponse(400)))
-        found = ss._search_semanticscholar("coral", None, None)
+        found = ss._search_semanticscholar("coral", None, None, 500)
         assert (found.fetched, found.total) == (100, 5000)
         assert "100 of the 5,000" in found.capped
 
@@ -148,7 +184,7 @@ class TestSemanticScholarPaging:
         responses = iter([FakeResponse(200, {"total": 300, "data": [{"paperId": str(i), "title": "t"} for i in range(100)]})])
         monkeypatch.setattr(ss, "semanticscholar_get", lambda url, params, **kw: next(responses, FakeResponse(503)))
         with pytest.raises(SourceError, match="503"):
-            ss._search_semanticscholar("coral", None, None)
+            ss._search_semanticscholar("coral", None, None, 500)
 
 
 class TestScopusPaging:
@@ -181,9 +217,16 @@ class TestScopusPaging:
     def test_it_stops_at_the_depth_scopus_allows_and_says_so(self, monkeypatch):
         monkeypatch.setattr(ss, "SCOPUS_DEPTH", 100)
         self.serve(monkeypatch, 500)
-        found = ss._search_scopus("coral", None, None)
+        found = ss._search_scopus("coral", None, None, 500)
         assert (found.fetched, found.total) == (100, 500)
-        assert "100" in found.capped
+        assert "will not return more than 100" in found.capped
+
+    def test_it_stops_at_the_limit(self, monkeypatch):
+        calls = self.serve(monkeypatch, 500)
+        found = ss._search_scopus("coral", None, None, 50)
+        assert [c["start"] for c in calls] == [0, 25]
+        assert (found.fetched, found.total) == (50, 500)
+        assert "50 most relevant" in found.capped
 
 
 def article(pmid):
@@ -212,7 +255,7 @@ class TestPubMedPaging:
     def test_every_id_is_fetched_in_batches_and_kept_in_search_order(self, monkeypatch):
         ids = [str(1000 + i) for i in range(450)]
         calls = self.serve(monkeypatch, ids)
-        found = ss._search_pubmed("coral", None, None)
+        found = ss._search_pubmed("coral", None, None, 500)
         assert [r["id"] for r in found] == ids
         assert [len(batch) for batch in calls["efetch"]] == [200, 200, 50]
         assert len(calls["esearch"]) == 1
@@ -231,13 +274,13 @@ class TestPubMedPaging:
         assert (found.fetched, found.total) == (10, 25_000)
         assert "PubMed will not return more than 10" in found.capped
 
-    def test_the_ceiling_is_applied_to_the_ids(self, monkeypatch):
+    def test_the_limit_is_asked_of_pubmed_and_applied_to_the_ids(self, monkeypatch):
         ids = [str(i) for i in range(1, 21)]
-        self.serve(monkeypatch, ids, total=20)
-        monkeypatch.setattr(ss, "MAX_RESULTS_PER_SEARCH", 5)
-        found = ss._search_pubmed("coral", None, None)
+        calls = self.serve(monkeypatch, ids, total=20)
+        found = ss._search_pubmed("coral", None, None, 5)
+        assert calls["esearch"][0]["retmax"] == 5
         assert (found.fetched, found.total) == (5, 20)
-        assert "narrow the question" in found.capped
+        assert "5 most relevant were kept" in found.capped
 
 
 class TestPassingProblemsAreRetriedPerPage:
@@ -296,6 +339,23 @@ class TestPassingProblemsAreRetriedPerPage:
             openalex.search_all("coral")
         assert len(calls) == 3
 
+    def test_a_search_page_that_times_out_is_still_asked_again(self, monkeypatch):
+        import requests
+
+        entry = {"dc:identifier": "SCOPUS_ID:1", "dc:title": "Paper", "prism:coverDate": "2020-06-01"}
+        ok = FakeResponse(200, {"search-results": {"opensearch:totalResults": "1", "entry": [entry]}})
+        calls = []
+
+        def requests_get(url, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise requests.ReadTimeout("read timed out")
+            return ok
+
+        monkeypatch.setattr(source_http.requests, "get", requests_get)
+        assert len(ss._search_scopus("coral", None, None)) == 1
+        assert len(calls) == 2
+
     def test_openalex_does_not_retry_a_rate_limit_because_that_means_the_budget_is_gone(self, monkeypatch):
         import requests
 
@@ -318,7 +378,7 @@ class TestPassingProblemsAreRetriedPerPage:
             [FakeResponse(200, {"total": 150, "data": page}), FakeResponse(503), FakeResponse(200, {"total": 150, "data": page[:50]})]
         )
         monkeypatch.setattr(ss, "semanticscholar_get", lambda url, params, **kw: next(replies))
-        assert len(ss._search_semanticscholar("coral", None, None)) == 150
+        assert len(ss._search_semanticscholar("coral", None, None, 500)) == 150
 
     def test_scopus_reads_on_after_a_502_but_not_after_a_used_up_quota(self, monkeypatch):
         entry = {"dc:identifier": "SCOPUS_ID:1", "dc:title": "Paper", "prism:coverDate": "2020-06-01"}
@@ -350,7 +410,7 @@ class TestPassingProblemsAreRetriedPerPage:
 
 class TestOneSearchAtATime:
     def search_key(self, question="coral", queries=("coral",)):
-        return (question.lower(), None, None, ("openalex",), tuple(q.lower() for q in queries))
+        return (question.lower(), None, None, ("openalex",), tuple(q.lower() for q in queries), 100)
 
     def test_the_same_search_started_twice_is_refused_while_the_first_runs(self, client, monkeypatch):
         import app as app_module
@@ -522,13 +582,30 @@ class TestRetrievalIsKeptWithTheDataset:
         def search_all(query, **kwargs):
             return [work(i) for i in range(3)], (50 if query == "wide" else 3)
 
+        def search_all(query, **kwargs):
+            if query == "wide":
+                return [work(i) for i in range(kwargs["max_results"])], 400
+            return [work(i) for i in range(3)], 3
+
         monkeypatch.setattr(openalex, "search_all", search_all)
-        monkeypatch.setattr(ss, "MAX_RESULTS_PER_SEARCH", 3)
-        response = client.post("/api/datasets", json={"question": "coral", "queries": ["wide", "narrow"]})
+        response = client.post(
+            "/api/datasets", json={"question": "coral", "queries": ["wide", "narrow"], "search_limit": 50}
+        )
         assert response.status_code == 200, response.get_data(as_text=True)
         rows = {r["query"]: r for r in response.get_json()["retrieval"]}
-        assert rows["narrow"] == {"source": "openalex", "query": "narrow", "total": 3, "fetched": 3, "kept": 3, "capped": None}
-        assert rows["wide"]["total"] == 50 and "narrow the question" in rows["wide"]["capped"]
+        assert rows["narrow"] == {
+            "source": "openalex",
+            "query": "narrow",
+            "total": 3,
+            "fetched": 3,
+            "kept": 3,
+            "capped": None,
+            "capped_by": None,
+        }
+        assert (rows["wide"]["total"], rows["wide"]["fetched"]) == (400, 50)
+        assert rows["wide"]["capped"] == "OpenAlex matched 400 papers; the 50 most relevant were kept."
+        # Which limit stopped it, so the page can say what to do about it once.
+        assert (rows["wide"]["capped_by"], rows["narrow"]["capped_by"]) == ("limit", None)
         # And it is still there when the dataset is opened again.
         again = client.get(f"/api/datasets/{response.get_json()['id']}").get_json()
         assert again["retrieval"] == response.get_json()["retrieval"]

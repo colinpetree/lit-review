@@ -13,6 +13,8 @@ import { postJson } from '../lib/api'
 import { DEFAULT_SOURCES, PAPER_SOURCES } from '../lib/paperSources'
 import { MODELS_BY_PROVIDER } from '../lib/models'
 import { loadDiscoverSettings, saveDiscoverSettings } from '../lib/discoverSettings'
+import { SEARCH_LIMIT_OPTIONS, normalizeSearchLimit } from '../lib/searchLimit'
+import Combobox from '../components/Combobox'
 import { dateBounds, dateRangeError } from '../lib/dateRange'
 
 // A source is offered (and used) only when it is enabled: it needs no API key or
@@ -27,7 +29,7 @@ const isSourceAvailable = (source, providers, pubmedEnabled) =>
 // fresh out of Discover Papers should show no scores at all.
 const STAGE_LABELS = {
   query: 'Processing query…',
-  retrieval: 'Retrieving every matching paper from the databases. A broad topic can take a minute or two…',
+  retrieval: 'Searching the paper databases…',
 }
 
 export default function DiscoverPapersPage() {
@@ -42,6 +44,8 @@ export default function DiscoverPapersPage() {
   const [question, setQuestion] = useState('')
   const [sources, setSources] = useState(remembered.sources?.length ? remembered.sources : DEFAULT_SOURCES)
   const [sourcesEdited, setSourcesEdited] = useState(false)
+  // How many of the most relevant papers each search keeps (per query and source).
+  const [searchLimit, setSearchLimit] = useState(() => normalizeSearchLimit(remembered.searchLimit))
   // Each end of the publication dates is typed as a year or a full date.
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
@@ -91,7 +95,7 @@ export default function DiscoverPapersPage() {
     }
     const { from, to } = dateBounds(fromDate, toDate)
 
-    saveDiscoverSettings({ sources: activeSources, aiChoice: choice })
+    saveDiscoverSettings({ sources: activeSources, searchLimit, aiChoice: choice })
 
     activeRequestRef.current?.abort()
     const controller = new AbortController()
@@ -112,6 +116,7 @@ export default function DiscoverPapersPage() {
           ai_api: choice.ai_api,
           ai_model: choice.ai_model,
           sources: activeSources,
+          search_limit: searchLimit,
         },
         { signal: controller.signal }
       )
@@ -130,6 +135,7 @@ export default function DiscoverPapersPage() {
         from_date: from ?? undefined,
         to_date: to ?? undefined,
         sources: activeSources,
+        search_limit: searchLimit,
       }
 
       let dataset
@@ -156,7 +162,7 @@ export default function DiscoverPapersPage() {
   const retryRetrieval = async () => {
     if (!pendingRetrieval || activeSources.length === 0) return
 
-    saveDiscoverSettings({ sources: activeSources, aiChoice: choice })
+    saveDiscoverSettings({ sources: activeSources, searchLimit, aiChoice: choice })
 
     activeRequestRef.current?.abort()
     const controller = new AbortController()
@@ -239,6 +245,22 @@ export default function DiscoverPapersPage() {
                 </Checkbox>
               ))}
             </div>
+          </div>
+
+          <div>
+            <span className="block text-sm font-medium text-gray-700">Papers kept per search</span>
+            <div className="mt-1 max-w-xs">
+              <Combobox
+                options={SEARCH_LIMIT_OPTIONS}
+                value={searchLimit}
+                onChange={setSearchLimit}
+                placeholder="Papers kept per search"
+              />
+            </div>
+            <p className="mt-1 text-xs text-gray-400">
+              Each search keeps this many of the most relevant papers from each source. Keep the topic narrow:
+              you can combine several datasets when you evaluate.
+            </p>
           </div>
 
           <div>

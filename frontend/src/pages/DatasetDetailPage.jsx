@@ -12,58 +12,35 @@ import { fetchJson, patchJson, postJson } from '../lib/api'
 import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
-import { groupBySource, hitsText, summarizeRetrieval } from '../lib/retrieval'
+import { summarizeRetrieval } from '../lib/retrieval'
+import SearchCompletenessModal from '../components/SearchCompletenessModal'
 
 // Whether every paper the sources reported for the searches was retrieved, with the
 // numbers per source and search behind it. A search that stopped short says why,
 // so the user knows to narrow it rather than assume nothing was missed.
-function RetrievalCompleteness({ retrieval }) {
+function RetrievalCompleteness({ retrieval, onShowDetails }) {
   const summary = summarizeRetrieval(retrieval)
   if (!summary) return null
   return (
     <div className="flex flex-col gap-1.5">
       <p className="text-sm font-medium text-gray-500">Search completeness</p>
       {summary.complete ? (
-        <p className="text-sm text-gray-800">Every paper the sources reported for these searches was retrieved.</p>
-      ) : (
-        <div className="text-sm text-amber-700 dark:text-amber-400">
-          <p>Some searches did not retrieve every paper they matched.</p>
-          {summary.reasons.map((reason) => (
-            <p key={reason} className="mt-1">
-              {reason}
-            </p>
-          ))}
-        </div>
-      )}
-      <details className="text-sm text-gray-600">
-        <summary className="cursor-pointer select-none text-gray-500 hover:text-gray-700">Papers per search</summary>
-        <div className="mt-2 flex flex-col gap-3">
-          {groupBySource(retrieval).map(({ source, entries }) => (
-            <div key={source}>
-              <p className="font-medium text-gray-700">{sourceLabel(source)}</p>
-              <ul className="mt-1 flex flex-col gap-0.5">
-                {entries.map((entry) => (
-                  <li key={entry.query} className="flex justify-between gap-4">
-                    <span className="min-w-0 truncate" title={entry.query}>
-                      {entry.query}
-                    </span>
-                    <span className={`shrink-0 ${entry.capped ? 'text-amber-700 dark:text-amber-400' : ''}`}>
-                      {hitsText(entry)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </details>
+        <p className="text-sm text-gray-800">Every paper the sources reported for these searches was kept.</p>
+      ) : null}
+      <button
+        type="button"
+        onClick={onShowDetails}
+        className="self-start text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+      >
+        Show details
+      </button>
     </div>
   )
 }
 
 // The dataset's title (renamed from its dots menu, like an analysis run's) and
 // the details it was retrieved with (all fixed).
-function DatasetDetailsCard({ dataset, onRenamed }) {
+function DatasetDetailsCard({ dataset, onRenamed, onShowCompleteness }) {
   return (
     <Card className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-4">
@@ -93,7 +70,7 @@ function DatasetDetailsCard({ dataset, onRenamed }) {
         </div>
       </div>
 
-      <RetrievalCompleteness retrieval={dataset.retrieval} />
+      <RetrievalCompleteness retrieval={dataset.retrieval} onShowDetails={onShowCompleteness} />
 
       {dataset.expansion ? (
         <div className="flex flex-col gap-1.5">
@@ -156,6 +133,8 @@ export default function DatasetDetailPage() {
   const viewedIdRef = useRef(id)
   const [refreshError, setRefreshError] = useState(null)
   const [refreshedNotice, setRefreshedNotice] = useState(null)
+  // The Search completeness dialog (the numbers behind the summary on the details card).
+  const [showCompleteness, setShowCompleteness] = useState(false)
   const loadedId = dataset?.id
 
   // Looks up missing abstracts. The lookup itself runs in lib/findAbstracts so
@@ -212,6 +191,7 @@ export default function DatasetDetailPage() {
     setToggleError(null)
     setRefreshError(null)
     setRefreshedNotice(null)
+    setShowCompleteness(false)
     setFilter(EMPTY_PAPER_FILTER)
     setLookup(null)
     setDataset(null)
@@ -338,6 +318,7 @@ export default function DatasetDetailPage() {
         <DatasetDetailsCard
           dataset={dataset}
           onRenamed={(name) => setDataset((prev) => ({ ...prev, name }))}
+          onShowCompleteness={() => setShowCompleteness(true)}
         />
 
         <div className="mt-6 flex items-center justify-between gap-4">
@@ -367,7 +348,7 @@ export default function DatasetDetailPage() {
 
         {refreshing ? (
           <div className="mt-3">
-            <StageIndicator label="Checking the paper sources for new papers. A broad search can take a minute or two…" />
+            <StageIndicator label="Checking the paper sources for new papers…" />
           </div>
         ) : null}
         {refreshError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{refreshError}</p> : null}
@@ -379,14 +360,19 @@ export default function DatasetDetailPage() {
           </p>
         ) : null}
         {incompleteCheck ? (
-          <div className="mt-2 text-sm text-amber-700 dark:text-amber-400">
-            <p>The last check did not retrieve every paper it matched.</p>
-            {incompleteCheck.reasons.map((reason) => (
-              <p key={reason} className="mt-1">
-                {reason}
-              </p>
-            ))}
-          </div>
+          <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+            The last check matched more papers than were kept.{' '}
+            <button
+              type="button"
+              onClick={() => setShowCompleteness(true)}
+              className="underline underline-offset-2 hover:no-underline"
+            >
+              Show details
+            </button>
+          </p>
+        ) : null}
+        {showCompleteness ? (
+          <SearchCompletenessModal dataset={dataset} onClose={() => setShowCompleteness(false)} />
         ) : null}
 
         {/* On a wide window this sits just outside the right edge of the

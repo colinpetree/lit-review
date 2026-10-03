@@ -13,7 +13,7 @@ export default function Sidebar() {
       <div className="border-b border-stone-200 px-3 py-4">
         <span className="flex items-center gap-2.5 px-3 text-sm font-semibold text-stone-700">
           <GraduationCap size={18} />
-          Lit Review Assistant
+          Lit Review
         </span>
       </div>
       <nav className="mt-3 flex-1 overflow-auto px-3 space-y-1">

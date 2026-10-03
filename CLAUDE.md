@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Lit Review Assistant: a local-only tool for any STEM graduate student or researcher to
+Lit Review: a local-only tool for any STEM graduate student or researcher to
 search scholarly databases (currently OpenAlex) and use an LLM to rank/filter results
 against a research question. It serves both active literature review and periodically
 checking a field for new publications. Test data/candidates deliberately span multiple

@@ -1,4 +1,4 @@
-# Lit Review Assistant — Project Plan
+# Lit Review — Project Plan
 
 ## Problem
 

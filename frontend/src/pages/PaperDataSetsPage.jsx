@@ -6,7 +6,7 @@ import ListFilterBar from '../components/ListFilterBar'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import DeleteMenu from '../components/DeleteMenu'
 import ModelBadge from '../components/ModelBadge'
-import { deleteJson } from '../lib/api'
+import { deleteJson, fetchJson } from '../lib/api'
 import { formatDateTime, formatYearRange } from '../lib/format'
 
 export default function PaperDataSetsPage() {
@@ -16,8 +16,7 @@ export default function PaperDataSetsPage() {
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
 
   useEffect(() => {
-    fetch('/api/datasets')
-      .then((res) => res.json())
+    fetchJson('/api/datasets')
       .then((data) => setDatasets(data.datasets ?? []))
       .catch((err) => setError(err.message))
   }, [])

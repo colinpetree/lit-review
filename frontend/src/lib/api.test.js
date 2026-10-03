@@ -18,6 +18,14 @@ describe('fetchJson', () => {
     await expect(fetchJson('/x')).rejects.toThrow('Nope')
   })
 
+  it('puts the HTTP status on the error so callers can treat some failures specially', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond({ error: 'busy' }, 409)))
+    const error = await fetchJson('/x').catch((e) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect(error.status).toBe(409)
+    expect(error.message).toBe('busy')
+  })
+
   it('falls back to the status when the error has no message', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond({}, 500)))
     await expect(fetchJson('/x')).rejects.toThrow('Request failed (500)')

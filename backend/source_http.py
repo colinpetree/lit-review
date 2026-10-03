@@ -10,7 +10,7 @@ the user. Callers either stop using that source for the rest of the run
 import re
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -32,6 +32,25 @@ class SourceError(Exception):
 def normalize_doi(doi):
     """Bare lowercase DOI, from either a bare DOI or a https://doi.org/ URL."""
     return re.sub(r"^https?://(dx\.)?doi\.org/", "", (doi or "").strip(), flags=re.I).lower()
+
+
+def quote_doi(doi):
+    """A bare DOI made safe to put in a URL path. Some DOIs hold characters that
+    mean something in a URL (older Wiley DOIs have <, > and #; some have ?), which
+    would otherwise cut the path short or start a query string, so the lookup
+    would ask about the wrong DOI and answer "not found"."""
+    return quote(normalize_doi(doi), safe="/()")
+
+
+def raise_if_unavailable(source_label, response):
+    """Raise SourceError if the reply says the source is having trouble (a
+    server error, or a rate limit not already handled), as opposed to a
+    well-formed answer such as "no such paper". A lookup that ran into trouble
+    must not be recorded as "asked and not found", or the paper would never be
+    tried again."""
+    status = response.status_code
+    if status == 429 or status >= 500:
+        raise SourceError(f"{source_label} is having trouble right now (HTTP {status}). Try again later.")
 
 
 def doi_url(doi):

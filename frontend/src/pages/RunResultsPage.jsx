@@ -6,7 +6,7 @@ import PaperFilterBar from '../components/PaperFilterBar'
 import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
 import { fetchJson, patchJson, postJson } from '../lib/api'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
-import { datasetLabels, formatDateTime } from '../lib/format'
+import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
 import RunMenu from '../components/RunMenu'
 
@@ -218,7 +218,13 @@ export default function RunResultsPage() {
 
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-500">AI model</p>
-          <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} className="text-sm text-gray-800" />
+          <ModelBadge
+            aiApi={run.ai_api}
+            aiModel={run.ai_model}
+            cost={run.cost}
+            costNote={RUN_COST_NOTE}
+            className="text-sm text-gray-800"
+          />
         </div>
 
         {runDate ? (
@@ -235,7 +241,12 @@ export default function RunResultsPage() {
             disabled={resuming}
             className="self-start rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
           >
-            {resuming ? `Scoring… ${run.remaining} remaining` : `Resume scoring (${run.remaining} unscored)`}
+            {resuming
+              ? `Scoring… ${run.remaining} remaining`
+              : run.status === 'completed'
+                ? // Papers came back (or were added) after the run finished.
+                  `Score ${run.remaining} new paper${run.remaining === 1 ? '' : 's'}`
+                : `Resume scoring (${run.remaining} unscored)`}
           </button>
         ) : null}
       </Card>

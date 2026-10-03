@@ -99,6 +99,100 @@ responses are `no-store`. Anything that logs an exception from an outside API mu
 puts the whole URL in its error text). Links to papers must pass `source_http.safe_url` on the
 way in (only http/https) and `isHttpUrl` (`lib/format.js`) on the way out.
 
+**One slow job per run or dataset.** `POST /api/analysis-runs/<id>/process` and
+`POST /api/datasets/<id>/find-abstracts` hold an `_exclusive(kind, id)` lock (non-blocking) for
+the whole call; a second request for the same run or dataset gets **409** at once. Stopping a
+request in the browser does not stop the server's call to the AI model, so without this a quick
+Stop then Resume, or a second tab, scores the same papers twice and pays twice. Any new route
+that does slow billable work should use it. Clients treat 409 as "busy, not failed":
+`driveAnalysisRun` waits 2 s and retries (up to 30 times, honoring Abort) and `startLookup` ends
+quietly; `lib/api.js` puts the HTTP status on thrown errors as `error.status` for this.
+
+**One app per user, and only that user.** Loopback is shared by every account on the computer,
+so the port alone is not private: another signed-in user could open your copy (your datasets, AI
+jobs on your API keys). So each copy requires a secret, and each user gets their own copy.
+
+*Access (`access.py`, `require_session` in `app.py`, `lib/session.js` + `lib/api.js`).* A random
+secret is created once and kept in `access.token` in the user-data dir (written atomically). The
+boundary is the user's own profile folder: that file and the browser's own copy of the secret are as
+private as the account's files are, and keeping a profile private is the machine owner's job, so
+the app does **not** touch file permissions (it once did, with `icacls` and `whoami` on Windows;
+that was removed because it only mattered on a profile open to other accounts, where the browser's
+own storage is open too, and it was the source of a startup crash on account names with accented
+letters). On macOS and Linux the files come out owner-only anyway, since `mkstemp` makes them that
+way. The thing the OS does *not* separate is the network port: the operating system keeps accounts'
+files apart but not their ports, so another signed-in user could otherwise open this app on
+127.0.0.1, which is what the secret is for. The app opens the browser on
+`http://127.0.0.1:PORT/#token=...`. The part after the `#` is never sent to any server, so it is in
+no request, log, or Referer. `main.jsx` calls `captureTokenFromLocation()` first: it keeps the secret
+in that page's `localStorage` (and in memory, if storage is blocked) and strips it from the address
+bar. Every API call goes through `apiFetch` in `lib/api.js`, which sends `Authorization: Bearer
+<secret>`; never call `fetch` directly for the API. `require_session` refuses (401) any `/api/*`
+request without it except `/api/health` (compared in constant time); the page itself (HTML, scripts)
+holds nothing private and is open. It fails closed: with no secret configured
+(`app.config["ACCESS_TOKEN"]`, set only by `main()`) every API call except health is 503. A 401
+anywhere sets a global "not connected" flag (`lib/session.js`), and `AppLayout` shows one banner
+for it, with the same words as the server's error (a test compares them).
+
+**It is a header, not a cookie, on purpose.** Browsers match cookies by host name only, never by
+port, so a cookie for this app would be sent to every other web server the user's browser visits on
+127.0.0.1, which could then use it (verified, and the reason for the redesign); and a cookie is
+attached by the browser to requests other sites make. `localStorage` is kept apart per address *and
+port*, and a header is only ever set by the page's own script, so neither leaks and nothing rides on
+another site's request. Nothing ever sets a cookie (a test asserts it) and a cookie never
+authenticates (a test asserts that too). Verified in real headless Chrome: the link signs in, a
+reload stays signed in, another port in the same browser does not get the secret, and an unrelated
+local web server sees no secret, cookie or authorization header. Tests use the `client` fixture,
+which sends the header; `anonymous` (in `test_auth.py`) is a stranger. Dev server: the Flask
+console prints the private link; open it with `127.0.0.1:5175` replaced by `localhost:5173` (the Vite
+dev origin) once, and the dev server's page keeps the secret for its own origin; the proxy forwards
+the header.
+
+*One copy per user (`main()`).* In layers, because each alone has a hole:
+1. **A lock file** (`single_instance.py`, `filelock`, `instance.lock`), taken first. The OS gives it
+   to exactly one process and drops it when that process ends for any reason, so a crash or kill
+   leaves nothing stale. It closes the race between two launches at the same moment, which both
+   see a free port before either has bound one. A copy that loses it calls
+   `hand_over_to_running_copy`: it reads `instance.json` (the running copy's port and id, written
+   after it binds), waits up to 15 s for that copy to answer as that id, opens the browser on it
+   with the private link, and exits. It asks about that copy by id, not about the default port, so
+   it can never open someone else's. A copy from before records existed holds the lock but writes no
+   record and asks for no secret: if there is still no record after `LEGACY_GRACE_SECONDS` and the
+   default port answers as Lit Review *without an instance id* (only such an older copy does), that
+   is the copy and it is opened as it is, instead of waiting out the full time and failing.
+2. **A port per copy** (`start_server`): from 5175 up to 20 ports. A port with anything listening
+   is skipped, including another user's copy of this app (it needs its owner's secret, so it is no
+   use here); a port that cannot be bound is skipped too, which handles two users launching at the
+   same moment and both choosing the same one. So two people signed in at once each get their own
+   copy. A copy from before the lock existed is just another copy to step over.
+3. **`SingleOwnerServer`**: Werkzeug sets `SO_REUSEADDR`, and on Windows that lets a second server
+   bind a port another is listening on with no error (a silent second copy). On Windows it binds
+   with `SO_EXCLUSIVEADDRUSE` instead and reports `PortTaken`; elsewhere `SO_REUSEADDR` is kept
+   (it does not allow a second listener, and lets the app restart at once). Never use `app.run`.
+
+*Finding out whether a port is held (`check_port`).* By connecting with a 0.25 s timeout
+(`PORT_CONNECT_SECONDS`), not by waiting for a refusal (on Windows a closed loopback port takes 1 to
+2 s to refuse, which slowed every launch) and not by binding (a bind cannot see a program on all
+interfaces or dual-stack IPv6, verified on Windows). A held port is probed with a raw socket on
+purpose, not `urllib`: it must not follow redirects, ignore proxy settings, give up after 3 s in
+total (a per-read timeout restarts with every byte, so a slow program would hold startup forever)
+and read at most 64 KB. `GET /api/health` returns `{"app": "lit-review", "instance": <id>}`;
+`probe_port` returns `(state, reply)` and `check_port(port, instance=...)` is "ours" only for that
+copy.
+
+*A data folder that cannot be used* (blocked, read-only, full disk, damaged database) is found at
+launch by `db.ensure_ready()` and the lock/secret writes, and explained plainly
+(`_data_folder_problem`, exit 1), not as a traceback or as errors on the first request.
+
+Tests that start real copies (`tests/test_app_instances.py`, about 80 s) use the test-only switches
+`LIT_REVIEW_PORT` (a spare port, never 5175), `LIT_REVIEW_NO_BROWSER=1` (print "Would open <url>"
+instead of opening a browser) and the data/config dir overrides, via `tests/procutil.py` (`Copy`
+kills the whole process tree, since the venv's `python.exe` on Windows is a launcher for the real
+interpreter). Two data folders stand for two users. Never reload the `app` module in a test: it
+swaps in new copies of its classes under every other test. For a real browser check, headless
+Chrome (`--headless=new --dump-dom --virtual-time-budget=...`) with a throwaway `--user-data-dir`
+against real copies on spare ports works well.
+
 ### Backend modules
 
 - `app.py` - all routes. `/api/datasets/*`,
@@ -128,8 +222,10 @@ way in (only http/https) and `isHttpUrl` (`lib/format.js`) on the way out.
 - `abstracts.py` - looks up a missing abstract by DOI: Elsevier (Scopus `META_ABS`) and
   Springer Nature first, when the user has saved a key and the DOI prefix matches, then
   Europe PMC, then Semantic Scholar. Accepts only abstracts of `llm.MIN_ABSTRACT_CHARS`+.
-  A source that fails (bad key, quota) raises `SourceError` and is skipped for the rest of
-  the run. Driven by `POST /api/datasets/<id>/find-abstracts` (one chunk per call, stateless:
+  A source that fails (bad key, quota, or a 5xx/429 reply, via `source_http.raise_if_unavailable`)
+  raises `SourceError` and is skipped for the rest of the run; only a real answer (including 404
+  "not found") counts as asked, so an outage never marks a paper checked. DOIs go into URL paths
+  through `source_http.quote_doi` (some contain `?`, `#`, `<`). Driven by `POST /api/datasets/<id>/find-abstracts` (one chunk per call, stateless:
   the client sends back `skip_ids`/`skip_sources`; loop in `frontend/src/lib/findAbstracts.js`).
   Filled abstracts record `paper.abstract_source`. The dataset page starts this lookup
   automatically when it loads; `paper.abstract_checked_at` marks papers a lookup completed
@@ -162,6 +258,8 @@ way in (only http/https) and `isHttpUrl` (`lib/format.js`) on the way out.
   changes to existing tables go through the idempotent ALTER-based `_migrate`, since
   `CREATE TABLE IF NOT EXISTS` won't alter an existing table and user data must never
   need deleting.
+- `access.py`, `single_instance.py` - who may use a running copy and how a second launch finds it
+  (see "One app per user" above); small and self-contained.
 - `credentials.py` - API keys (the three AI providers plus openalex, elsevier, springernature,
   semanticscholar; allowed names are `CREDENTIAL_PROVIDERS` in `app.py`) in a Fernet-encrypted file in the
   platformdirs config dir, guarded by thread and file locks. Deliberately not the OS
@@ -189,7 +287,13 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   detail page with its cost, and as `ai_api`/`ai_model` on the list for the card preview).
 - An `analysis_run` scores one or more datasets with a grading prompt and model, and
   writes one `analysis_result` (score + rationale) per paper. `llm_call` logs token usage
-  and USD for every LLM call.
+  and USD for every LLM call. A run's `status` is a convenience, not the truth: what is left to
+  do is "included papers with no result" (`count_unscored_papers`, and `unscored_count` in
+  `list_all_runs`, which is what the Results list's "Incomplete" label uses). `/process` on a
+  `completed` run with unscored papers (an excluded paper restored, a dataset that gained papers)
+  reopens it (`db.reopen_run`) and scores only those; on a `running` run with none left it just
+  marks it completed. A run's cost includes the query expansion of each dataset it uses, so a
+  shared dataset's expansion counts in every run that uses it (the UI says so).
 - Runs are resumable. The client repeatedly POSTs `/api/analysis-runs/<id>/process`, and
   each call scores one chunk (`SCORE_CHUNK_SIZE`=20) of still-unscored papers until the
   run's status is `completed`. `frontend/src/lib/driveAnalysisRun.js` is that loop.

@@ -311,6 +311,15 @@ def _connect():
     return conn
 
 
+def ensure_ready():
+    """Create the data folder and database now (and bring an older database up to
+    date), so a folder that cannot be used fails here, at launch, where it can be
+    explained, instead of as an error on the first request. Raises OSError or
+    sqlite3.Error."""
+    with closing(_connect()):
+        pass
+
+
 def _dedupe_key(result):
     if result.get("doi"):
         return ("doi", result["doi"].lower())
@@ -827,6 +836,19 @@ def list_all_runs():
                         GROUP BY dp.paper_id
                         HAVING SUM(CASE WHEN dp.excluded_at IS NULL THEN 1 ELSE 0 END) > 0
                    )) AS paper_count,
+                   -- Included papers with no result yet: what "Incomplete" means. Not the
+                   -- run's status, which can lag (still "running" after the last unscored
+                   -- papers were excluded) or be stale (a "completed" run whose papers came back).
+                   (SELECT COUNT(*) FROM (
+                        SELECT dp.paper_id
+                        FROM dataset_paper dp
+                        JOIN analysis_run_dataset rd ON rd.dataset_id = dp.dataset_id
+                        WHERE rd.run_id = run.id
+                        GROUP BY dp.paper_id
+                        HAVING SUM(CASE WHEN dp.excluded_at IS NULL THEN 1 ELSE 0 END) > 0
+                   ) included
+                   LEFT JOIN analysis_result ar ON ar.run_id = run.id AND ar.paper_id = included.paper_id
+                   WHERE ar.id IS NULL) AS unscored_count,
                    (SELECT COALESCE(SUM(usd), 0) FROM llm_call WHERE run_id = run.id)
                    + (SELECT COALESCE(SUM(usd), 0) FROM llm_call
                         WHERE run_id IS NULL
@@ -1164,6 +1186,17 @@ def mark_run_completed(run_id):
         conn.execute(
             "UPDATE analysis_run SET status = 'completed', completed_at = ? WHERE id = ?",
             (_now(), run_id),
+        )
+        conn.commit()
+
+
+def reopen_run(run_id):
+    """Put a finished run back to "running" because it has unscored papers again.
+    Does nothing for a run that is not completed."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE analysis_run SET status = 'running', completed_at = NULL WHERE id = ? AND status = 'completed'",
+            (run_id,),
         )
         conn.commit()
 

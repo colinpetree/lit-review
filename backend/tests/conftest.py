@@ -10,6 +10,9 @@ import credentials
 import db
 import llm
 
+# The secret every test's copy of the app is configured with.
+TEST_TOKEN = "test-secret-" + "x" * 40
+
 
 @pytest.fixture(autouse=True)
 def isolated_data(tmp_path, monkeypatch):
@@ -81,13 +84,28 @@ def block_network(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
 
 
+@pytest.fixture(autouse=True)
+def session_token(monkeypatch):
+    """The API refuses everything without its secret (see require_session), so
+    every test runs with one configured; `client` below presents it."""
+    import app as app_module
+
+    monkeypatch.setitem(app_module.app.config, "ACCESS_TOKEN", TEST_TOKEN)
+    return TEST_TOKEN
+
+
 @pytest.fixture
 def client(monkeypatch):
-    """A Flask test client that sends the Host the real app is served on."""
+    """A Flask test client that sends the Host the real app is served on and the
+    secret as an Authorization header, as the page the app opens does."""
     import app as app_module
     from flask.testing import FlaskClient
 
     class LocalClient(FlaskClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {TEST_TOKEN}"
+
         def open(self, *args, **kwargs):
             kwargs.setdefault("base_url", f"http://127.0.0.1:{app_module.PORT}")
             return super().open(*args, **kwargs)

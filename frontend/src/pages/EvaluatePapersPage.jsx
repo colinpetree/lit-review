@@ -9,7 +9,7 @@ import AiModelSelect, { hasConfiguredProvider, defaultAiChoice, usableAiChoice }
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import PromptCombobox, { NEW_PROMPT } from '../components/PromptCombobox'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
-import { postJson } from '../lib/api'
+import { fetchJson, postJson } from '../lib/api'
 import { driveAnalysisRun } from '../lib/driveAnalysisRun'
 import { formatDateTime } from '../lib/format'
 import { loadEvaluateAiChoice, saveEvaluateAiChoice } from '../lib/evaluateSettings'
@@ -42,8 +42,7 @@ export default function EvaluatePapersPage() {
   const activeRequestRef = useRef(null)
 
   useEffect(() => {
-    fetch('/api/datasets')
-      .then((res) => res.json())
+    fetchJson('/api/datasets')
       .then((data) => {
         const list = data.datasets ?? []
         setDatasets(list)
@@ -53,8 +52,7 @@ export default function EvaluatePapersPage() {
         setSelected((prev) => new Set([...prev].filter((id) => ids.has(id))))
       })
       .catch((err) => setError(err.message))
-    fetch('/api/prompts')
-      .then((res) => res.json())
+    fetchJson('/api/prompts')
       .then((data) => setPrompts(data.prompts ?? []))
       .catch((err) => setError(err.message))
   }, [])

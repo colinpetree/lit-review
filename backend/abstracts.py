@@ -18,7 +18,16 @@ from typing import Callable, NamedTuple, Optional
 
 import credentials
 from llm import MIN_ABSTRACT_CHARS
-from source_http import SourceError, clean_text, get, json_of, normalize_doi, semanticscholar_get
+from source_http import (
+    SourceError,
+    clean_text,
+    get,
+    json_of,
+    normalize_doi,
+    quote_doi,
+    raise_if_unavailable,
+    semanticscholar_get,
+)
 from title_match import titles_match
 
 log = logging.getLogger(__name__)
@@ -45,13 +54,19 @@ class Source:
     prefixes: Optional[tuple] = None
 
 
+def _query_safe(doi):
+    """A DOI for use inside a quoted search expression: quotes and backslashes
+    would end the expression early (and no real DOI needs them)."""
+    return doi.replace('"', "").replace("\\", "")
+
+
 def _elsevier(doi):
     # Scopus Abstract Retrieval with the META_ABS view returns the abstract
     # with a free non-commercial key; the ScienceDirect article endpoint and
     # the plain META view do not.
     response = get(
         "Elsevier",
-        f"https://api.elsevier.com/content/abstract/doi/{doi}",
+        f"https://api.elsevier.com/content/abstract/doi/{quote_doi(doi)}",
         params={"view": "META_ABS"},
         headers={"X-ELS-APIKey": credentials.get_key("elsevier"), "Accept": "application/json"},
     )
@@ -61,6 +76,7 @@ def _elsevier(doi):
         raise SourceError("Elsevier rejected the API key or your access level.")
     if response.status_code == 429:
         raise SourceError("Elsevier's usage quota for this key has been reached.")
+    raise_if_unavailable("Elsevier", response)
     if response.status_code != 200:
         return None
     coredata = (json_of(response, "Elsevier").get("abstracts-retrieval-response") or {}).get("coredata") or {}
@@ -71,12 +87,13 @@ def _springer(doi):
     response = get(
         "Springer Nature",
         "https://api.springernature.com/meta/v2/json",
-        params={"q": f"doi:{doi}", "api_key": credentials.get_key("springernature")},
+        params={"q": f"doi:{_query_safe(doi)}", "api_key": credentials.get_key("springernature")},
     )
     if response.status_code in (401, 403):
         raise SourceError("Springer Nature rejected the API key.")
     if response.status_code == 429:
         raise SourceError("Springer Nature's usage limit for this key has been reached.")
+    raise_if_unavailable("Springer Nature", response)
     if response.status_code != 200:
         return None
     records = json_of(response, "Springer Nature").get("records") or []
@@ -89,8 +106,9 @@ def _europepmc(doi):
     response = get(
         "Europe PMC",
         "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-        params={"query": f'DOI:"{doi}"', "resultType": "core", "format": "json", "pageSize": 1},
+        params={"query": f'DOI:"{_query_safe(doi)}"', "resultType": "core", "format": "json", "pageSize": 1},
     )
+    raise_if_unavailable("Europe PMC", response)
     if response.status_code != 200:
         return None
     results = (json_of(response, "Europe PMC").get("resultList") or {}).get("result") or []
@@ -103,10 +121,11 @@ def _europepmc(doi):
 def _semanticscholar(doi):
     # A lapsed key falls back to a keyless request: a lookup still works that way.
     response = semanticscholar_get(
-        f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}",
+        f"https://api.semanticscholar.org/graph/v1/paper/DOI:{quote_doi(doi)}",
         {"fields": "abstract,title"},
         keyless_fallback=True,
     )
+    raise_if_unavailable("Semantic Scholar", response)
     if response.status_code != 200:
         return None
     data = json_of(response, "Semantic Scholar")

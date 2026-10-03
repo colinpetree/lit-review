@@ -89,6 +89,41 @@ describe('startLookup', () => {
     await vi.waitFor(() => expect(getLookup(42)).toBeNull())
   })
 
+  it('ends quietly, with no error, when another tab is already looking up this dataset (409)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond({ error: 'A lookup is already running.' }, 409)))
+    const finished = new Promise((resolve) => {
+      subscribeLookup(44, (state) => {
+        if (!state.running) resolve(state)
+      })
+    })
+
+    startLookup(44)
+
+    const state = await finished
+    expect(state.running).toBe(false)
+    expect(state.error).toBeUndefined()
+    await vi.waitFor(() => expect(getLookup(44)).toBeNull())
+  })
+
+  it('keeps what it found so far if a later chunk is refused with a 409', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(respond(chunk({ attempted: [1], filled: [{ id: 1 }], remaining: 1 })))
+      .mockResolvedValueOnce(respond({ error: 'A lookup is already running.' }, 409))
+    vi.stubGlobal('fetch', fetchMock)
+    const finished = new Promise((resolve) => {
+      subscribeLookup(45, (state) => {
+        if (!state.running) resolve(state)
+      })
+    })
+
+    startLookup(45)
+
+    const state = await finished
+    expect(state.error).toBeUndefined()
+    expect(state.filledPapers).toHaveLength(1)
+  })
+
   it('reports a failure instead of throwing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond({ error: 'boom' }, 500)))
     const finished = new Promise((resolve) => {

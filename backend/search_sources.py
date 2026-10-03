@@ -122,8 +122,13 @@ def _search_semanticscholar(query, from_date, to_date):
         # Narrowed by year here; _filtered applies the exact dates.
         params["year"] = f"{_year_of(from_date) or ''}-{_year_of(to_date) or ''}"
     response = semanticscholar_get("https://api.semanticscholar.org/graph/v1/paper/search", params)
-    if response.status_code in (400, 404):
+    # A 404 is "nothing found". A 400 means Semantic Scholar rejected the query
+    # itself, which must not be read as "no results": the dataset would silently
+    # lack a source the user asked for.
+    if response.status_code == 404:
         return []
+    if response.status_code == 400:
+        raise SourceError("Semantic Scholar could not run this search (it rejected the query).")
     if response.status_code != 200:
         raise SourceError(f"Semantic Scholar returned an error (HTTP {response.status_code}).")
 

@@ -1,21 +1,35 @@
 import datetime
+import errno
+import hmac
+import json
 import mimetypes
+import os
 import re
+import socket
+import sqlite3
+import sys
+import threading
+import time
+import uuid
 import webbrowser
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Timer
 from urllib.parse import urlparse
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
+from werkzeug.serving import ThreadedWSGIServer
 from werkzeug.utils import safe_join
 
 import abstracts
+import access
 import credentials
 import db
 import llm
 import openalex
 import search_sources
+import single_instance
 from source_http import SourceError, redact, safe_url
 
 SUPPORTED_PROVIDERS = set(llm.PROVIDERS)
@@ -49,7 +63,9 @@ SCORE_CHUNK_SIZE = 20
 MAX_DATASET_NAME_CHARS = 120
 
 STATIC_DIR = Path(__file__).parent / "static"
-PORT = 5175
+# LIT_REVIEW_PORT is for tests only, so launching real copies never touches the
+# port a real app is using. The Vite dev proxy (vite.config.js) assumes 5175.
+PORT = int(os.environ.get("LIT_REVIEW_PORT") or 5175)
 
 # Python's mimetypes (and the Windows registry it reads) may not know .webp or
 # the web font types, in which case send_from_directory serves them as
@@ -97,6 +113,89 @@ def add_security_headers(response):
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+# One piece of slow, billable or quota-spending work per run (or dataset) at a
+# time. Stopping a request in the browser does not stop the server's call to the
+# AI model, so without this a quick Stop then Resume, or a second tab, would
+# score the same papers twice and pay twice.
+_BUSY_LOCKS = {}
+_BUSY_GUARD = threading.Lock()
+
+
+@contextmanager
+def _exclusive(kind, item_id):
+    """Yields True holding the lock for (kind, item_id), or False at once, without
+    waiting, if something else holds it."""
+    with _BUSY_GUARD:
+        lock = _BUSY_LOCKS.setdefault((kind, item_id), threading.Lock())
+    if not lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        lock.release()
+
+
+# Who may use this copy. The port is shared by every account on the computer, so
+# the API requires a secret that only its own user can read (see access.py). The
+# browser page keeps it and sends it as an Authorization header on every API call.
+# It is not a cookie, because browsers send a cookie to every server on the same
+# host name whatever its port, so any other local web server could collect it.
+# The page itself (the HTML and scripts) holds nothing private and is open.
+#
+# Names this running copy in /api/health, so a second launch by the same user can
+# tell its own copy from another user's on the same port.
+INSTANCE_ID = uuid.uuid4().hex
+# Set by main() once the secret is loaded. While it is unset every API call except
+# the health check is refused, so a copy that was not started through main() fails
+# closed instead of serving everyone.
+app.config["ACCESS_TOKEN"] = None
+OPEN_PATHS = {"/api/health"}
+
+NOT_CONNECTED_MESSAGE = (
+    "This browser is not connected to Lit Review. Open Lit Review again from its icon "
+    "(it opens a connected browser window) to reconnect."
+)
+
+
+def _same_secret(supplied, token):
+    # Bytes, so whatever text a client sends compares without raising, and constant
+    # time, so the secret cannot be guessed a character at a time.
+    return hmac.compare_digest(supplied.encode("utf-8", "replace"), token.encode("utf-8"))
+
+
+def _bearer_token():
+    """The secret from "Authorization: Bearer <secret>", or "" if there is none. Only
+    that header counts: not a cookie (which a browser sends by itself on any request
+    another site makes), and not the address."""
+    scheme, _, value = request.headers.get("Authorization", "").partition(" ")
+    return value.strip() if scheme.lower() == "bearer" else ""
+
+
+def _refuse_access(status):
+    message = NOT_CONNECTED_MESSAGE if status == 401 else "Lit Review is not ready yet."
+    return jsonify({"error": message}), status
+
+
+@app.before_request
+def require_session():
+    if not request.path.startswith("/api/") or request.path in OPEN_PATHS:
+        return None
+    token = app.config.get("ACCESS_TOKEN")
+    if not token:
+        return _refuse_access(503)
+    if not _same_secret(_bearer_token(), token):
+        return _refuse_access(401)
+    return None
+
+
+@app.get("/api/health")
+def health():
+    """Lets a second launch tell that this port is already Lit Review, and which
+    copy (`instance`) it is. Open to everyone, so it carries nothing private."""
+    return jsonify({"app": "lit-review", "instance": INSTANCE_ID})
 
 
 @app.get("/api/settings/api-key")
@@ -462,11 +561,17 @@ def find_dataset_abstracts(dataset_id):
     ):
         return jsonify({"error": "'skip_sources' must be a list of known source ids"}), 400
 
+    with _exclusive("lookup", dataset_id) as acquired:
+        if not acquired:
+            return jsonify({"error": "A lookup is already running for this dataset."}), 409
+        return _find_abstracts_chunk(dataset_id, set(skip_ids), set(skip_sources))
+
+
+def _find_abstracts_chunk(dataset_id, attempted_before, skipped):
     # Papers a lookup already completed for without finding an abstract are
     # left out, so opening a dataset or clicking the button again doesn't ask
     # the same sources the same question. Saving a new API key clears those
     # marks (see set_api_key), since a new source can be asked.
-    attempted_before = set(skip_ids)
     missing = db.get_dataset_papers_missing_abstract(dataset_id)
     no_doi = sum(1 for _, doi, _, _ in missing if not abstracts.normalize_doi(doi))
     candidates = [
@@ -476,7 +581,6 @@ def find_dataset_abstracts(dataset_id):
     ]
     batch = candidates[:FIND_ABSTRACTS_CHUNK_SIZE]
 
-    skipped = set(skip_sources)
     source_errors = {}
     filled = []
     checked_ids = []
@@ -647,18 +751,34 @@ def get_analysis_run(run_id):
 
 @app.post("/api/analysis-runs/<int:run_id>/process")
 def process_analysis_run(run_id):
+    with _exclusive("run", run_id) as acquired:
+        if not acquired:
+            return jsonify({"error": "This run is already being scored. Wait for it to finish."}), 409
+        return _process_run_chunk(run_id)
+
+
+def _process_run_chunk(run_id):
+    """Score one chunk of the run's unscored papers (the caller holds the run's
+    lock, so the unscored set can't be taken by a second request meanwhile)."""
     run_row = db.get_analysis_run(run_id)
     if not run_row:
         return jsonify({"error": "analysis run not found"}), 404
 
-    if run_row["status"] == "completed":
-        return jsonify({**_run_to_dict(run_row), "processed": 0})
-
     chunk = db.get_unscored_papers(run_id, SCORE_CHUNK_SIZE)
     if not chunk:
-        db.mark_run_completed(run_id)
-        run_row = db.get_analysis_run(run_id)
+        # Nothing left to score. A run still marked "running" is finished: its
+        # last unscored papers may all have been excluded since it started.
+        if run_row["status"] != "completed":
+            db.mark_run_completed(run_id)
+            run_row = db.get_analysis_run(run_id)
         return jsonify({**_run_to_dict(run_row), "processed": 0})
+
+    if run_row["status"] == "completed":
+        # Papers have come back since the run finished (an excluded one was
+        # restored, or a dataset gained papers): the run is in progress again
+        # until they are scored. Its prompt, examples and earlier scores stand.
+        db.reopen_run(run_id)
+        run_row = db.get_analysis_run(run_id)
 
     # Only a prompt created by this run (from Evaluate) is still waiting for an
     # AI title; existing prompts never ask for one.
@@ -823,14 +943,275 @@ def serve_frontend(path="index.html"):
     return send_from_directory(STATIC_DIR, "index.html")
 
 
-def _open_browser():
-    webbrowser.open(f"http://127.0.0.1:{PORT}")
+def _open_browser(port=None, token=None):
+    """Open the browser on the app: through the private link when there is a secret
+    (the page reads it from the address and keeps it), else on the plain address."""
+    url = access.launch_url(port or PORT, token)
+    if os.environ.get("LIT_REVIEW_NO_BROWSER"):  # tests: say so instead of opening one
+        print(f"Would open {url}")
+        return
+    webbrowser.open(url)
+
+
+# The whole probe of a busy port, not each read: a per-read timeout starts again
+# with every byte, so a program that streams or drips data would hold it forever.
+HEALTH_PROBE_SECONDS = 3
+# Long enough for a listener to accept a loopback connection (milliseconds, with
+# a wide margin), short enough that a free port costs a launch almost nothing.
+PORT_CONNECT_SECONDS = 0.25
+HEALTH_PROBE_MAX_BYTES = 65536
+
+
+def _health_reply(data):
+    """The JSON object in `data` (the raw bytes a server sent back) if it is a 200
+    whose body says this is Lit Review, else None. Anything else, including a
+    program that does not speak HTTP at all, is not."""
+    head, separator, body = data.partition(b"\r\n\r\n")
+    if not separator:
+        return None
+    status = head.split(b"\r\n", 1)[0].split(None, 2)
+    if len(status) < 2 or not status[0].startswith(b"HTTP/") or status[1] != b"200":
+        return None
+    try:
+        reply = json.loads(body)
+    except ValueError:  # not JSON, or not UTF-8
+        return None
+    if isinstance(reply, dict) and reply.get("app") == "lit-review":
+        return reply
+    return None
+
+
+def _is_our_health_reply(data):
+    return _health_reply(data) is not None
+
+
+def probe_port(port):
+    """What is listening on 127.0.0.1:port, as (state, reply): (None, None) if
+    nothing, ("other", None) if something that is not Lit Review, or ("ours", reply)
+    with the JSON the app answered to GET /api/health.
+
+    Whether anything listens is decided by connecting, with a short timeout:
+    a listener accepts a loopback connection in a few milliseconds (even one on
+    all interfaces or dual-stack IPv6, which binding the port to test it would
+    miss). A port with nothing on it is the normal case on every launch, and on
+    Windows a closed loopback port takes 1 to 2 seconds to refuse, so waiting for
+    the refusal would slow every start; the short timeout bounds it instead.
+
+    A held port is then probed with a raw socket on purpose, not urllib: the
+    probe must talk only to the one address it was given (urllib follows
+    redirects wherever a program sends it, and honors proxy settings), must give
+    up after HEALTH_PROBE_SECONDS in total, and must read a bounded amount,
+    whatever the program on the port does."""
+    deadline = time.monotonic() + HEALTH_PROBE_SECONDS
+    try:
+        sock = socket.create_connection(("127.0.0.1", port), timeout=PORT_CONNECT_SECONDS)
+    except OSError:
+        # Nothing accepted in time: a free port (the normal case), or something
+        # that holds it without accepting connections (a socket bound and never
+        # listened on). Either way there is no running app to hand over to.
+        return None, None
+    try:
+        with sock:
+            sock.sendall(
+                f"GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n".encode()
+            )
+            data = b""
+            while len(data) < HEALTH_PROBE_MAX_BYTES:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "other", None
+                sock.settimeout(remaining)
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+    except OSError:  # refused, reset, or timed out mid-read
+        return "other", None
+    reply = _health_reply(data)
+    if reply is None:
+        return "other", None
+    return "ours", reply
+
+
+def check_port(port, instance=None):
+    """What is already listening on 127.0.0.1:port: None if nothing, "ours" if it
+    answers GET /api/health as Lit Review, else "other". With `instance`, "ours"
+    means that particular running copy (its id in the answer), so a copy of the
+    app belonging to another user on the same port is "other"."""
+    state, reply = probe_port(port)
+    if state == "ours" and instance is not None and reply.get("instance") != instance:
+        return "other"
+    return state
+
+
+class PortTaken(Exception):
+    """The port is already in use (so the next one can be tried)."""
+
+
+class SingleOwnerServer(ThreadedWSGIServer):
+    """Werkzeug's threaded server, refusing a port that is already in use.
+
+    On Windows, SO_REUSEADDR (which Werkzeug sets) lets a second server bind a
+    port another one is listening on, with no error at all, so the exclusive
+    flag is used there instead: the bind fails. That is reported as PortTaken,
+    not as Werkzeug's own "port is in use" message and exit, so that startup can
+    carry on with the next port when two copies, each looking for a free port
+    at the same moment, pick the same one. Elsewhere SO_REUSEADDR does not allow
+    a second listener, and keeping it lets the app restart straight after it
+    stops. Threaded matters since dataset creation and analysis-run processing
+    can each take several seconds (LLM + OpenAlex calls): without it nothing
+    else, not even a static asset, could be served meanwhile."""
+
+    allow_reuse_address = not hasattr(socket, "SO_EXCLUSIVEADDRUSE")
+
+    def server_bind(self):
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)  # Windows only
+        if exclusive is not None:
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        try:
+            super().server_bind()
+        except OSError as exc:
+            # Windows reports a port held by an exclusive socket as "access denied"
+            # (WSAEACCES, 10013), and one held by an ordinary socket as 10048: both
+            # are the same situation as "address in use".
+            if exc.errno == errno.EADDRINUSE or getattr(exc, "winerror", None) in (10013, 10048):
+                raise PortTaken(f"port {self.server_address[1]} is in use") from exc
+            raise
+
+
+# How long a second launch waits for the first to start answering, when the
+# first holds the lock but has not bound its port yet (importing takes a moment).
+RUNNING_COPY_WAIT_SECONDS = 15
+# How long a second launch waits for a record before deciding the other copy is an
+# older version that never writes one (a new copy writes it within a second or two).
+LEGACY_GRACE_SECONDS = 4
+# How many ports, from the default up, a copy may try when the default is taken
+# (by another user's copy of this app, or by another program).
+PORT_FALLBACK_COUNT = 20
+
+
+def start_server(start=None, count=PORT_FALLBACK_COUNT):
+    """A server bound to the first usable port from `start` (the default port), trying
+    `count` in a row, or None if they are all taken. A port is skipped if anything
+    listens on it (another user's copy of this app is as taken as any other: it
+    needs its owner's secret, so it is no use to this user) and also if it cannot
+    be bound, which is what happens when another copy, looking for a port at the
+    same moment, chose the same one first."""
+    if start is None:
+        start = PORT
+    for port in range(start, start + count):
+        if check_port(port) is not None:
+            continue
+        try:
+            return SingleOwnerServer("127.0.0.1", port, app)
+        except PortTaken:
+            continue
+    return None
+
+
+def hand_over_to_running_copy(state_dir, wait_seconds=RUNNING_COPY_WAIT_SECONDS):
+    """This user's other copy holds the lock. Open the browser on it, signed in,
+    without starting a second app, once it answers; wait for it if it is still
+    starting. Which copy it is, and where, comes from the record it wrote (not
+    from the default port: it may be on another). Returns the exit code.
+
+    A copy from before records existed holds the lock too but never writes one, and
+    never asks for a secret. If there is still no record after a few seconds and
+    the default port answers as Lit Review without an instance id (only such an
+    older copy does that), that is the copy: open it as it is."""
+    started = time.monotonic()
+    deadline = started + wait_seconds
+    while True:
+        record = access.read_instance(state_dir)
+        if record and check_port(record["port"], instance=record["id"]) == "ours":
+            token = access.load_or_create_token(state_dir)
+            print(f"Lit Review is already running. Opening it at http://127.0.0.1:{record['port']}")
+            _open_browser(record["port"], token)
+            return 0
+        if record is None and time.monotonic() - started >= LEGACY_GRACE_SECONDS:
+            state, reply = probe_port(PORT)
+            if state == "ours" and "instance" not in reply:
+                print(
+                    f"An older version of Lit Review is already running. Opening it at http://127.0.0.1:{PORT}\n"
+                    "(Close it and start Lit Review again to use the latest version.)"
+                )
+                _open_browser(PORT)
+                return 0
+        if time.monotonic() >= deadline:
+            print(
+                "Another copy of Lit Review is running but is not answering. "
+                "Close it and start Lit Review again.",
+                file=sys.stderr,
+            )
+            return 1
+        time.sleep(0.25)
+
+
+def _data_folder_problem(folder, exc):
+    reason = getattr(exc, "strerror", None) or str(exc)
+    print(
+        "Lit Review cannot use its data folder:\n"
+        f"  {folder}\n"
+        f"{reason}\n"
+        "Make sure that folder can be written to and the disk is not full, then start Lit Review again.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def main():
+    """Start the app, unless this user already has a copy running, in which case
+    open the browser on that one and exit. Returns the exit code."""
+    state_dir = db.DB_PATH.parent
+    try:
+        # Held until the process ends (kept in a local that lives as long as main).
+        instance_lock = single_instance.acquire(state_dir / "instance.lock")
+    except single_instance.AlreadyRunning:
+        return hand_over_to_running_copy(state_dir)
+    except OSError as exc:
+        return _data_folder_problem(state_dir, exc)
+
+    try:
+        # Everything that touches the data folder happens here, so a folder that
+        # cannot be used is reported plainly at launch instead of as errors later.
+        db.ensure_ready()
+        token = access.load_or_create_token(state_dir)
+    except (OSError, sqlite3.Error) as exc:
+        return _data_folder_problem(state_dir, exc)
+
+    # Ports taken by another user's copy (or another program) are skipped, so two
+    # people signed in at once each get their own copy. It binds before the
+    # browser is asked to open.
+    server = start_server()
+    if server is None:
+        print(
+            f"Lit Review could not find a free port from {PORT} to {PORT + PORT_FALLBACK_COUNT - 1}. "
+            "Close some programs and start Lit Review again.",
+            file=sys.stderr,
+        )
+        return 1
+    port = server.server_port
+    app.config["ACCESS_TOKEN"] = token
+    ALLOWED_HOSTS.update({f"127.0.0.1:{port}", f"localhost:{port}"})
+
+    try:
+        access.write_instance(state_dir, port, INSTANCE_ID)
+    except OSError as exc:
+        server.server_close()
+        return _data_folder_problem(state_dir, exc)
+    Timer(1, _open_browser, args=(port, token)).start()
+    print(f"Lit Review is running at http://127.0.0.1:{port}  (press Ctrl+C to stop)")
+    print(f"If your browser does not open, use this private link (only you can use it):\n  {access.launch_url(port, token)}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        access.clear_instance(state_dir, INSTANCE_ID)
+        instance_lock.release()
+    return 0
 
 
 if __name__ == "__main__":
-    Timer(1, _open_browser).start()
-    # threaded=True matters since dataset creation and analysis-run processing
-    # can each take several seconds (LLM + OpenAlex calls) - without it, the
-    # dev server can't serve any other request (even static assets) while
-    # one is running.
-    app.run(host="127.0.0.1", port=PORT, debug=False, threaded=True)
+    sys.exit(main())

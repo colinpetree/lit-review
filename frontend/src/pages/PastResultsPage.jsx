@@ -5,8 +5,8 @@ import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import RunMenu from '../components/RunMenu'
-import { deleteJson } from '../lib/api'
-import { datasetLabels, formatDateTime } from '../lib/format'
+import { deleteJson, fetchJson } from '../lib/api'
+import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
 
 export default function PastResultsPage() {
@@ -16,8 +16,7 @@ export default function PastResultsPage() {
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
 
   useEffect(() => {
-    fetch('/api/analysis-runs')
-      .then((res) => res.json())
+    fetchJson('/api/analysis-runs')
       .then((data) => setRuns(data.runs ?? []))
       .catch((err) => setError(err.message))
   }, [])
@@ -84,10 +83,11 @@ export default function PastResultsPage() {
                 <div className="mt-1 flex items-center justify-between gap-x-2 text-sm text-gray-400">
                   <div className="flex flex-wrap items-center gap-x-2">
                     <span>{formatDateTime(run.completed_at || run.created_at)} ·</span>
-                    <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} />
+                    <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} costNote={RUN_COST_NOTE} />
                   </div>
-                  {/* Only a run that stopped before scoring every paper gets a label; finished is the normal case. */}
-                  {run.status !== 'completed' ? (
+                  {/* Only a run with papers still unscored gets a label; finished is the normal case. This
+                      counts the papers, not the status, which can lag (excluded since) or be stale (restored). */}
+                  {run.unscored_count > 0 ? (
                     <span className="shrink-0 font-medium text-amber-600 dark:text-amber-400">Incomplete</span>
                   ) : null}
                 </div>

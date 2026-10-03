@@ -97,6 +97,10 @@ export function startLookup(datasetId) {
     })
   })
     .then((result) => publish({ ...result, filled: [], checked: [], running: false }))
-    .catch((err) => publish({ running: false, error: err.message }))
+    .catch((err) =>
+      // 409: another tab is already looking up this dataset. Not an error to
+      // show; this one just has nothing to do.
+      publish(err.status === 409 ? { running: false } : { running: false, error: err.message })
+    )
     .finally(() => lookups.delete(datasetId))
 }

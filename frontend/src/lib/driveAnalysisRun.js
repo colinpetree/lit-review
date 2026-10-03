@@ -13,12 +13,43 @@ export function mergeRunResults(run) {
   return { ...run, results: merged }
 }
 
+// The server scores one chunk of a run at a time (409 = busy). Stopping a
+// request in the browser does not stop the server's call to the AI model, so
+// after Stop then Resume the old chunk is often still running: wait for it
+// instead of failing, for about a minute.
+const BUSY_RETRY_MS = 2000
+const BUSY_MAX_RETRIES = 30
+
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 // Repeatedly processes one scoring chunk at a time until the run is
 // completed, calling onUpdate after every chunk with the merged run object.
-export async function driveAnalysisRun(runId, signal, onUpdate) {
+export async function driveAnalysisRun(runId, signal, onUpdate, { busyRetryMs = BUSY_RETRY_MS } = {}) {
   let run
+  let busyRetries = 0
   for (;;) {
-    run = await postJson(`/api/analysis-runs/${runId}/process`, {}, { signal })
+    try {
+      run = await postJson(`/api/analysis-runs/${runId}/process`, {}, { signal })
+    } catch (err) {
+      if (err.status !== 409 || busyRetries >= BUSY_MAX_RETRIES) throw err
+      busyRetries += 1
+      await sleep(busyRetryMs, signal)
+      continue
+    }
+    busyRetries = 0
     onUpdate(mergeRunResults(run))
     if (run.status === 'completed') break
   }

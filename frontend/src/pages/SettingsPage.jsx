@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
+import { fetchJson, postJson } from '../lib/api'
 import { useTheme } from '../lib/theme'
 import Combobox from '../components/Combobox'
 import EditableCardHeader from '../components/EditableCardHeader'
@@ -266,8 +267,7 @@ export default function SettingsPage() {
   const [keyStatus, setKeyStatus] = useState(null)
 
   const refreshKeys = () => {
-    fetch('/api/settings/api-key')
-      .then((res) => res.json())
+    fetchJson('/api/settings/api-key')
       .then(setKeyStatus)
       .catch(() => setKeyStatus({}))
   }
@@ -275,18 +275,12 @@ export default function SettingsPage() {
   useEffect(refreshKeys, [])
 
   const saveKey = async (provider, apiKey) => {
-    const res = await fetch('/api/settings/api-key', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, api_key: apiKey }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
+    await postJson('/api/settings/api-key', { provider, api_key: apiKey })
     refreshKeys()
   }
 
   const deleteKey = async (provider) => {
-    await fetch('/api/settings/api-key', {
+    await fetchJson('/api/settings/api-key', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider }),

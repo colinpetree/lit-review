@@ -11,6 +11,10 @@ function formatNewest(newestYear, newestPublicationDate) {
   return newestYear ? `${newestYear}` : null
 }
 
+// A run's cost is its scoring plus the query expansion of every dataset it uses,
+// so a dataset shared by several runs counts its expansion in each of them.
+export const RUN_COST_NOTE = 'Scoring, plus the query expansion of each dataset used'
+
 // Only web addresses are turned into links: a paper's url comes from outside
 // APIs or was typed in, and a javascript: or data: link must never be opened.
 export function isHttpUrl(value) {

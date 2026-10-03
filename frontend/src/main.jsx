@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import './index.css'
+import { captureTokenFromLocation } from './lib/session'
 import AppLayout from './components/AppLayout'
 import DiscoverPapersPage from './pages/DiscoverPapersPage'
 import PaperDataSetsPage from './pages/PaperDataSetsPage'
@@ -12,6 +13,10 @@ import PromptDetailPage from './pages/PromptDetailPage'
 import PastResultsPage from './pages/PastResultsPage'
 import RunResultsPage from './pages/RunResultsPage'
 import SettingsPage from './pages/SettingsPage'
+
+// The app opens this page with its secret after the # in the address. Take it, and
+// remove it from the address bar, before anything is shown or any call is made.
+captureTokenFromLocation()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

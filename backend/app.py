@@ -414,6 +414,13 @@ def _openalex_error_response(exc):
     return jsonify({"error": f"OpenAlex rejected the request (HTTP {status})."}), 502
 
 
+def _mark_new(papers, last_refresh):
+    """The papers, each with `is_new`: whether it joined the dataset in its latest check
+    for new papers (they are stamped with that check's time)."""
+    at = (last_refresh or {}).get("at")
+    return [{**paper, "is_new": bool(at) and paper.get("added_at") == at} for paper in papers]
+
+
 def _dataset_to_dict(dataset_row, papers):
     # Deliberately no run/score info here - a dataset is pure retrieval
     # (PLAN.md's Paper/Dataset model), never joined to any analysis_run for
@@ -438,7 +445,10 @@ def _dataset_to_dict(dataset_row, papers):
         # recorded): see create_dataset.
         "retrieval": dataset_row.get("retrieval"),
         "created_at": dataset_row["created_at"],
-        "papers": papers,
+        "papers": _mark_new(papers, dataset_row.get("last_refresh")),
+        # The latest check for new papers (None if never checked): when, the dates
+        # searched, how many papers were new, and how complete the searches were.
+        "last_refresh": dataset_row.get("last_refresh"),
         # The actual publication-year spread of what got retrieved (not to
         # be confused with from_year/to_year, the search filter constraints)
         # - lets the user eyeball whether a dataset looks stale and worth
@@ -600,48 +610,58 @@ def _forget_searches(keys):
             _SEARCH_CACHE.pop(key, None)
 
 
-def _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage):
-    """Run every query against every selected source and save the dataset (the
-    caller holds the search's lock)."""
-    # Every selected source is searched with every query. All of them have to
-    # succeed: a source that fails (rate limit, rejected key) fails the whole
-    # retrieval, with nothing saved, so the retry button is always safe and a
-    # dataset never silently lacks a source the user asked for. The searches that
-    # did finish are kept briefly (see _SEARCH_CACHE), so a retry does not repeat them.
+def _run_searches(queries, sources, from_date, to_date):
+    """Run every query against every selected source. Returns (candidates, retrieval,
+    used): the papers (deduplicated), how complete each search was (one entry per source
+    and query, kept with the dataset so it can be seen later: `total` is what the source
+    says matches, `fetched` what it returned, `capped` why any were left out), and the
+    cache keys used (see _forget_searches). All of them have to succeed: a source that
+    fails (rate limit, rejected key) fails the whole retrieval, with nothing saved, so
+    the retry button is always safe and a dataset never silently lacks a source the user
+    asked for. The searches that did finish are kept briefly (see _SEARCH_CACHE), so a
+    retry does not repeat them. Raises requests.RequestException or SourceError."""
     result_lists = []
     retrieval = []
     used = []
-    try:
-        for source_id in sources:
-            for q in queries:
-                key = (source_id, q, from_date, to_date)
-                found = _cached_search(key)
-                if found is None:
-                    found = search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date)
-                    _remember_search(key, found)
-                used.append(key)
-                result_lists.append(found)
-                # Kept with the dataset, so how complete each search was can be seen
-                # later: `total` is what the source says matches, `fetched` what it
-                # returned, `capped` why any were left out.
-                retrieval.append(
-                    {
-                        "source": source_id,
-                        "query": q,
-                        "total": getattr(found, "total", None),
-                        "fetched": getattr(found, "fetched", len(found)),
-                        "kept": len(found),
-                        "capped": getattr(found, "capped", None),
-                    }
-                )
-        candidates = openalex.dedupe(result_lists)
-    except requests.HTTPError as exc:
+    for source_id in sources:
+        for q in queries:
+            key = (source_id, q, from_date, to_date)
+            found = _cached_search(key)
+            if found is None:
+                found = search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date)
+                _remember_search(key, found)
+            used.append(key)
+            result_lists.append(found)
+            retrieval.append(
+                {
+                    "source": source_id,
+                    "query": q,
+                    "total": getattr(found, "total", None),
+                    "fetched": getattr(found, "fetched", len(found)),
+                    "kept": len(found),
+                    "capped": getattr(found, "capped", None),
+                }
+            )
+    return openalex.dedupe(result_lists), retrieval, used
+
+
+def _search_failure(exc):
+    """The response for a search that failed (an exception from _run_searches)."""
+    if isinstance(exc, requests.HTTPError):
         return _openalex_error_response(exc)
-    except requests.RequestException as exc:
+    if isinstance(exc, requests.RequestException):
         app.logger.warning("OpenAlex request failed: %s", redact(exc))
         return jsonify({"error": "Failed to reach OpenAlex. Please try again."}), 502
-    except SourceError as exc:
-        return jsonify({"error": str(exc)}), 502
+    return jsonify({"error": str(exc)}), 502
+
+
+def _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage):
+    """Run every query against every selected source and save the dataset (the
+    caller holds the search's lock)."""
+    try:
+        candidates, retrieval, used = _run_searches(queries, sources, from_date, to_date)
+    except (requests.RequestException, SourceError) as exc:
+        return _search_failure(exc)
 
     # One transaction: a failure here leaves no half-made dataset, and the finished
     # searches stay kept (see _SEARCH_CACHE) so the retry does not repeat them.
@@ -661,6 +681,63 @@ def _retrieve_dataset(question, queries, from_date, to_date, title, sources, exp
     dataset_row = db.get_dataset(dataset_id)
     papers = db.get_dataset_papers(dataset_id)
     return jsonify(_dataset_to_dict(dataset_row, papers))
+
+
+# A refresh searches from this long before the last check, not from it: sources index
+# papers late and PubMed dates some by their print issue, so a paper that appeared just
+# before the last check can show up only now. Papers already held are absorbed.
+REFRESH_OVERLAP_DAYS = 45
+
+
+def _refresh_window(dataset_row, today):
+    """(from_date, to_date) to search for papers that have appeared since the dataset was
+    last searched. Raises InvalidRequest if the search ended in the past, since nothing
+    newer can fall inside it.
+
+    Searching the whole original range again would return the same most-relevant
+    papers, and on a broad topic the new ones would rarely make the cut, so the window
+    is narrowed to the time since the last search (less the overlap above)."""
+    to_date = dataset_row["to_date"]
+    if to_date and to_date < today.isoformat():
+        raise InvalidRequest(
+            f"This search ends on {to_date}, so no newer papers can appear. "
+            "Start a new search with a later end date."
+        )
+    last = dataset_row.get("last_refresh") or {}
+    searched_on = datetime.date.fromisoformat((last.get("at") or dataset_row["created_at"])[:10])
+    since = (searched_on - datetime.timedelta(days=REFRESH_OVERLAP_DAYS)).isoformat()
+    return max(dataset_row["from_date"] or "", since), to_date
+
+
+@app.post("/api/datasets/<int:dataset_id>/refresh")
+def refresh_dataset(dataset_id):
+    """Check the dataset's sources again for papers that have appeared since it was
+    last searched, and add only the new ones (nothing is spent on the AI: the saved
+    queries are reused). Papers already in the dataset, with their excluded and read
+    states, are untouched."""
+    dataset_row = db.get_dataset(dataset_id)
+    if dataset_row is None:
+        return jsonify({"error": "dataset not found"}), 404
+    try:
+        sources = search_sources.validate_sources(dataset_row["sources"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    queries = llm.clean_queries([q for q in dataset_row["expanded_queries"] if isinstance(q, str)])
+    from_date, to_date = _refresh_window(dataset_row, datetime.date.today())
+
+    with _exclusive("search", ("refresh", dataset_id)) as acquired:
+        if not acquired:
+            return jsonify({"error": "This dataset is already being checked. Wait for it to finish."}), 409
+        try:
+            candidates, retrieval, used = _run_searches(queries, sources, from_date, to_date)
+        except (requests.RequestException, SourceError) as exc:
+            return _search_failure(exc)
+        new_ids = db.save_refresh(
+            dataset_id, candidates, {"from_date": from_date, "to_date": to_date, "retrieval": retrieval}
+        )
+        _forget_searches(used)
+        dataset = _dataset_to_dict(db.get_dataset(dataset_id), db.get_dataset_papers(dataset_id, include_excluded=True))
+        return jsonify({"new_count": len(new_ids), "dataset": dataset})
 
 
 @app.get("/api/datasets")

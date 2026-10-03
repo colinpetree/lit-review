@@ -218,6 +218,11 @@ export default function PaperCard({
           )}
         </h3>
         <div className="flex shrink-0 items-center gap-2">
+          {result.is_new ? (
+            <span className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
+              New
+            </span>
+          ) : null}
           {result.excluded ? (
             <span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
               Excluded

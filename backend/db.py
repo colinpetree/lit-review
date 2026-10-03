@@ -32,9 +32,10 @@ _LOCK = threading.Lock()
 
 # Bumped when the schema changes in a way an older copy of the app could not read.
 # 1 = everything up to the title_key column and the indexes.
-# 2 = dataset.retrieval (how complete each search was). A database stamped
+# 2 = dataset.retrieval (how complete each search was).
+# 3 = dataset.last_refresh (the latest "check for new papers"). A database stamped
 # higher than this was made by a newer version and is not opened.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _INIT_LOCK = threading.Lock()
 _ready_for = None  # the DB_PATH that has been created, migrated and tuned
@@ -241,6 +242,12 @@ def _migrate(conn):
         conn.execute("ALTER TABLE dataset ADD COLUMN retrieval TEXT")
         conn.commit()
 
+    # The latest "check for new papers" (JSON: when, the dates searched, how many papers
+    # were new, and how complete the searches were). NULL if the dataset was never checked.
+    if "last_refresh" not in dataset_columns:
+        conn.execute("ALTER TABLE dataset ADD COLUMN last_refresh TEXT")
+        conn.commit()
+
     # The search's publication date bounds ("YYYY-MM-DD"), replacing the bare
     # years in from_year/to_year (still filled in, as the year of each bound).
     # Datasets from before get a bound from their year: Jan 1 / Dec 31.
@@ -444,6 +451,16 @@ def _backfill_abstract_if_blank(conn, paper_id, existing_abstract, new_abstract)
         conn.execute("UPDATE paper SET abstract = ? WHERE id = ?", (new_abstract, paper_id))
 
 
+def _raise_citation_count(conn, paper_id, new_count):
+    """A paper seen again carries a newer citation count, which only ever grows. A
+    source that has none (PubMed reports 0) must never lower what another reported."""
+    if isinstance(new_count, int) and not isinstance(new_count, bool) and new_count > 0:
+        conn.execute(
+            "UPDATE paper SET citation_count = ? WHERE id = ? AND ? > COALESCE(citation_count, 0)",
+            (new_count, paper_id, new_count),
+        )
+
+
 def _get_or_create_paper(conn, result):
     """One paper's lookup-then-insert on an open connection, without committing
     (see get_or_create_papers, which holds _LOCK and commits once)."""
@@ -459,6 +476,7 @@ def _get_or_create_paper(conn, result):
         ).fetchone()
     if row:
         _backfill_abstract_if_blank(conn, row["id"], row["abstract"], result.get("abstract"))
+        _raise_citation_count(conn, row["id"], result.get("citation_count"))
         return row["id"]
 
     cur = conn.execute(
@@ -496,6 +514,7 @@ def _get_or_create_paper(conn, result):
         (result.get("source", "openalex"), result["id"]),
     ).fetchone()
     _backfill_abstract_if_blank(conn, row["id"], row["abstract"], result.get("abstract"))
+    _raise_citation_count(conn, row["id"], result.get("citation_count"))
     return row["id"]
 
 
@@ -550,6 +569,9 @@ def _paper_row_to_dict(row):
     # page's existing excluded state when merged into it.
     if "excluded_at" in row.keys():
         paper["excluded"] = bool(row["excluded_at"])
+    # When the paper joined this dataset (read through dataset_paper only).
+    if "added_at" in row.keys():
+        paper["added_at"] = row["added_at"]
     # Whether an abstract lookup has already completed for this paper. Left out
     # (not False) when the row doesn't carry the column, for the same reason.
     if "abstract_checked_at" in row.keys():
@@ -750,6 +772,30 @@ def _insert_dataset_papers(conn, dataset_id, paper_ids):
     )
 
 
+def save_refresh(dataset_id, candidates, refresh):
+    """Add what a "check for new papers" found to the dataset, as one unit: the papers
+    (in the shape openalex._work_to_result() returns), their membership, and the
+    dataset's `last_refresh` record (`refresh` is a JSON-serializable dict; the time,
+    which new papers are stamped with too, and the number of new papers are added to
+    it). A paper already in the dataset is left exactly as it is (excluded and read
+    states included). Returns the ids of the papers that were new to the dataset."""
+    with _LOCK, closing(_connect()) as conn:
+        now = _now()
+        new_ids = []
+        for candidate in candidates:
+            paper_id = _get_or_create_paper(conn, candidate)
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO dataset_paper (dataset_id, paper_id, added_at) VALUES (?, ?, ?)",
+                (dataset_id, paper_id, now),
+            )
+            if cur.rowcount:
+                new_ids.append(paper_id)
+        record = {**refresh, "at": now, "new_count": len(new_ids)}
+        conn.execute("UPDATE dataset SET last_refresh = ? WHERE id = ?", (json.dumps(record), dataset_id))
+        conn.commit()
+        return new_ids
+
+
 def add_papers_to_dataset(dataset_id, paper_ids):
     with _LOCK, closing(_connect()) as conn:
         _insert_dataset_papers(conn, dataset_id, paper_ids)
@@ -818,16 +864,17 @@ def get_dataset(dataset_id, include_deleted=False):
         d = dict(row)
         d["expanded_queries"] = json.loads(d["expanded_queries"])
         d["sources"] = _dataset_sources(d.get("sources"))
-        try:
-            d["retrieval"] = json.loads(d["retrieval"]) if d.get("retrieval") else None
-        except ValueError:
-            d["retrieval"] = None
+        for column in ("retrieval", "last_refresh"):
+            try:
+                d[column] = json.loads(d[column]) if d.get(column) else None
+            except ValueError:
+                d[column] = None
         return d
 
 
 def get_dataset_papers(dataset_id, include_excluded=False):
     query = """
-        SELECT p.*, dp.paper_id, dp.excluded_at
+        SELECT p.*, dp.paper_id, dp.excluded_at, dp.added_at
         FROM dataset_paper dp
         JOIN paper p ON p.id = dp.paper_id
         WHERE dp.dataset_id = ?

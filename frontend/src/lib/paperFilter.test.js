@@ -20,6 +20,27 @@ const papers = [
 
 const ids = (list) => list.map((p) => p.id)
 
+describe('new papers', () => {
+  const marked = [
+    { id: 1, title: 'Old', authors: [], is_new: false },
+    { id: 2, title: 'Fresh', authors: [], is_new: true },
+    { id: 3, title: 'Unmarked', authors: [] },
+  ]
+
+  it('keeps only the papers the latest check added', () => {
+    expect(ids(filterPapers(marked, filter({ newOnly: true })))).toEqual([2])
+  })
+
+  it('counts as an active filter and combines with the others', () => {
+    expect(isPaperFilterActive(filter({ newOnly: true }))).toBe(true)
+    expect(ids(filterPapers(marked, filter({ newOnly: true, query: 'old' })))).toEqual([])
+  })
+
+  it('shows everything when off', () => {
+    expect(ids(filterPapers(marked, filter()))).toEqual([1, 2, 3])
+  })
+})
+
 describe('isPaperFilterActive', () => {
   it('is false for the empty filter and for blank inputs', () => {
     expect(isPaperFilterActive(EMPTY_PAPER_FILTER)).toBe(false)

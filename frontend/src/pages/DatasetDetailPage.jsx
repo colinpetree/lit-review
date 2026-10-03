@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { PageShell, Card, BackLink } from '../components/ui'
-import Spinner from '../components/Spinner'
+import Spinner, { StageIndicator } from '../components/Spinner'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
 import { DEFAULT_PAPER_SORT, EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive, sortPapers } from '../lib/paperFilter'
 import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
-import { fetchJson, patchJson } from '../lib/api'
+import { fetchJson, patchJson, postJson } from '../lib/api'
 import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
@@ -111,6 +111,13 @@ function DatasetDetailsCard({ dataset, onRenamed }) {
         <p className="text-sm font-medium text-gray-500">Created</p>
         <p className="text-sm text-gray-800">{formatDateTime(dataset.created_at)}</p>
       </div>
+
+      {dataset.last_refresh ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-gray-500">Last checked for new papers</p>
+          <p className="text-sm text-gray-800">{formatDateTime(dataset.last_refresh.at)}</p>
+        </div>
+      ) : null}
     </Card>
   )
 }
@@ -140,6 +147,12 @@ export default function DatasetDetailPage() {
   // null until an abstract lookup has run on this dataset.
   const [lookup, setLookup] = useState(null)
   const autoLookupRef = useRef(null)
+  // A check for new papers: which dataset one is running for (it can outlast the user's
+  // stay on this page, which is reused when they open another dataset), and what it said.
+  const [refreshingId, setRefreshingId] = useState(null)
+  const viewedIdRef = useRef(id)
+  const [refreshError, setRefreshError] = useState(null)
+  const [refreshedNotice, setRefreshedNotice] = useState(null)
   const loadedId = dataset?.id
 
   // Looks up missing abstracts. The lookup itself runs in lib/findAbstracts so
@@ -187,9 +200,15 @@ export default function DatasetDetailPage() {
   }, [loadedId])
 
   useEffect(() => {
+    viewedIdRef.current = id
+  }, [id])
+
+  useEffect(() => {
     let cancelled = false
     setError(null)
     setToggleError(null)
+    setRefreshError(null)
+    setRefreshedNotice(null)
     setFilter(EMPTY_PAPER_FILTER)
     setLookup(null)
     setDataset(null)
@@ -257,6 +276,33 @@ export default function DatasetDetailPage() {
     }
   }
 
+  // Searches the dataset's sources again for papers that appeared since it was last
+  // searched and adds only those (no AI cost). The new ones are marked, and their
+  // missing abstracts are looked up like any others.
+  const checkForNewPapers = async () => {
+    const startedFor = dataset.id
+    // The page is reused when the user opens another dataset, so what comes back is
+    // applied only while they are still looking at the dataset it was asked for. (The
+    // server saves the new papers either way; opening that dataset again shows them.)
+    const stillHere = () => String(viewedIdRef.current) === String(startedFor)
+    setRefreshingId(startedFor)
+    setRefreshError(null)
+    setRefreshedNotice(null)
+    try {
+      const { new_count: newCount, dataset: updated } = await postJson(`/api/datasets/${startedFor}/refresh`, {})
+      if (stillHere()) {
+        setDataset(updated)
+        setRefreshedNotice(newCount)
+      }
+      // Missing abstracts are looked up in the background, whichever page they are on.
+      if (updated.papers.some(isLookupCandidate)) runLookup(updated.id)
+    } catch (err) {
+      if (stillHere()) setRefreshError(err.message)
+    } finally {
+      setRefreshingId((current) => (current === startedFor ? null : current))
+    }
+  }
+
   // The publishers whose abstracts need an API key that isn't saved yet.
   const keylessPublishers = PUBLISHER_LOOKUPS.filter((p) => !providers?.[p.key]).map((p) => p.label)
 
@@ -268,6 +314,12 @@ export default function DatasetDetailPage() {
   const includedCount = dataset.papers.filter((p) => !p.excluded).length
   const excludedCount = dataset.papers.length - includedCount
   const visiblePapers = sortPapers(filterPapers(dataset.papers, filter), sort)
+
+  const refreshing = refreshingId === dataset.id
+
+  // How the latest check for new papers went, if it stopped short of some papers.
+  const lastCheck = summarizeRetrieval(dataset.last_refresh?.retrieval)
+  const incompleteCheck = lastCheck && !lastCheck.complete ? lastCheck : null
 
   const yearRange = formatYearRange(dataset.oldest_year, dataset.newest_year, dataset.newest_publication_date)
 
@@ -291,14 +343,48 @@ export default function DatasetDetailPage() {
             {excludedCount ? ` (${excludedCount} excluded)` : ''}
             {yearRange ? ` · ${yearRange}` : ''}
           </p>
-          <button
-            type="button"
-            onClick={() => navigate(`/evaluate?dataset=${dataset.id}`)}
-            className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Evaluate Dataset
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={checkForNewPapers}
+              disabled={refreshing}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+            >
+              Check for new papers
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/evaluate?dataset=${dataset.id}`)}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Evaluate Dataset
+            </button>
+          </div>
         </div>
+
+        {refreshing ? (
+          <div className="mt-3">
+            <StageIndicator label="Checking the paper sources for new papers. A broad search can take a minute or two…" />
+          </div>
+        ) : null}
+        {refreshError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{refreshError}</p> : null}
+        {refreshedNotice !== null && !refreshing ? (
+          <p className="mt-3 text-sm text-gray-700">
+            {refreshedNotice === 0
+              ? 'No new papers found.'
+              : `Found ${refreshedNotice} new paper${refreshedNotice === 1 ? '' : 's'}, marked New below.`}
+          </p>
+        ) : null}
+        {incompleteCheck ? (
+          <div className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+            <p>The last check did not retrieve every paper it matched.</p>
+            {incompleteCheck.reasons.map((reason) => (
+              <p key={reason} className="mt-1">
+                {reason}
+              </p>
+            ))}
+          </div>
+        ) : null}
 
         {/* On a wide window this sits just outside the right edge of the
             content column and stays in view while the paper list scrolls, so
@@ -393,6 +479,7 @@ export default function DatasetDetailPage() {
           total={dataset.papers.length}
           sort={sort}
           onSortChange={setSort}
+          showNew={Boolean(dataset.last_refresh)}
         />
 
         {isPaperFilterActive(filter) && visiblePapers.length === 0 ? (

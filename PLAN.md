@@ -338,6 +338,8 @@ not built.
   (see Architecture).
 - Backend (pytest) and frontend (Vitest) test suites.
 - Light/Dark/System theme, and a Settings switch to hide PubMed from Discover Papers.
+- Check for new papers: a dataset can be searched again for papers that appeared since, with
+  no AI cost, adding only the new ones (marked New). See "Stale datasets" under Open questions.
 
 **Phase 4 (optional, later)**
 Not built, roughly in priority order: packaging (see Distribution / packaging; needed for the
@@ -537,10 +539,9 @@ from GitHub before, so "clone the repo and run pip install" is not acceptable UX
 - Whether/how to surface a per-search cost estimate or cap in the main UI (the underlying
   data will exist either way — see Cost tracking above — so this is a UI/UX decision to
   make once real per-run cost numbers are in hand, not a data-modeling one).
-- What a "stale" `Dataset` should actually let the user do: just start a fresh dataset
-  (simplest, fine for Phase 3), or later support re-expanding/appending newly-published
-  results since `created_at` into the existing dataset instead of starting over (more
-  useful for the "periodically check a field for new publications" use case in Problem,
-  but adds real complexity - e.g. does an appended paper get retroactively scored by past
-  analysis runs?). Deliberately deferred until the app has been used enough to see what
-  "stale" actually feels like in practice, rather than guessing now.
+- **Stale datasets (resolved, built).** A dataset can be checked again from its page: the saved
+  queries and sources are re-run over the time since the last check (with an overlap for late
+  indexing), only papers not already held are added and marked New, and nothing is spent on the
+  AI. An appended paper is not retroactively scored: a finished run reopens and offers "Score N
+  new papers", so the user pays only for the new ones. Not built: checking on a schedule or at
+  startup (the app only runs when the user opens it), and re-expanding the queries.

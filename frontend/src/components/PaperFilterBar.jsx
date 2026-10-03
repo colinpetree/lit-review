@@ -44,7 +44,16 @@ const SORT_OPTIONS = PAPER_SORT_OPTIONS.map((o) => ({ ...o, icon: SORT_ICONS[o.v
 // when onSortChange is given, a sort picker. shown/total are the filtered and
 // unfiltered paper counts, used for the "Showing X of Y" line while a filter
 // is active. showRelevance (run results only) adds the relevance filter.
-export default function PaperFilterBar({ filter, onChange, shown, total, sort, onSortChange, showRelevance }) {
+export default function PaperFilterBar({
+  filter,
+  onChange,
+  shown,
+  total,
+  sort,
+  onSortChange,
+  showRelevance,
+  showNew,
+}) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -124,6 +133,27 @@ export default function PaperFilterBar({ filter, onChange, shown, total, sort, o
                     onChange={(relevance) => onChange({ ...filter, relevance })}
                     placeholder="All"
                   />
+                </div>
+              ) : null}
+              {showNew ? (
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 text-sm text-gray-700">
+                  <span id="new-papers-label">New in the latest check</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={filter.newOnly}
+                    aria-labelledby="new-papers-label"
+                    onClick={() => onChange({ ...filter, newOnly: !filter.newOnly })}
+                    className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                      filter.newOnly ? 'bg-blue-600' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                        filter.newOnly ? 'translate-x-4' : ''
+                      }`}
+                    />
+                  </button>
                 </div>
               ) : null}
               <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-100 pt-3 text-sm text-gray-700">

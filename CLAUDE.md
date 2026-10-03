@@ -255,6 +255,19 @@ against real copies on spare ports works well.
   same search (question, dates, sources, queries) cannot run twice at once: the second gets a 409.
   A finished retrieval is saved by `db.save_retrieved_dataset` in one transaction (dataset, the
   expansion's cost, papers and membership), so a failed save leaves no empty dataset behind.
+  **Check for new papers** (`POST /api/datasets/<id>/refresh`, the dataset page's button): runs the
+  saved queries and sources again, with no AI call, and adds only papers not already in the dataset
+  (`db.save_refresh`, one transaction; excluded and read states are untouched, and a seen paper's
+  citation count is raised, never lowered). It searches a **narrowed window** (`_refresh_window`:
+  from 45 days before the last check, or before the dataset was made, to the original end date),
+  because the whole range again returns the same most-relevant papers and a new one rarely makes
+  the cut; the overlap covers late indexing and PubMed's issue dates. A search whose end date is
+  past is refused with a message. The check is recorded in `dataset.last_refresh` (JSON: `at`, the
+  dates, `new_count`, and the same per-search `retrieval` entries, so a check that hit the ceiling
+  says so). New papers are stamped with that check's time in `dataset_paper.added_at`, and the API
+  marks `is_new` on the papers whose stamp equals `last_refresh.at`, so only the latest check's
+  batch shows the "New" badge and filter. It shares the search lock and kept-searches cache
+  (`("refresh", id)` key; a second click gets a 409). Nothing runs on a schedule.
 - `abstracts.py` - looks up a missing abstract by DOI: Elsevier (Scopus `META_ABS`) and
   Springer Nature first, when the user has saved a key and the DOI prefix matches, then
   Europe PMC, then Semantic Scholar. Accepts only abstracts of `llm.MIN_ABSTRACT_CHARS`+.
@@ -298,7 +311,8 @@ against real copies on spare ports works well.
   set `busy_timeout` and `foreign_keys`. A change to the schema means a `_migrate` step **and** a
   `SCHEMA_VERSION` bump, which makes the next launch keep a one-time copy
   (`lit_review.db.pre-upgrade-<old>-to-<new>`, never deleted by the app) before migrating; a
-  database stamped higher than the code (`DatabaseTooNew`) is refused. Foreign keys are enforced.
+  database stamped higher than the code (`DatabaseTooNew`) is refused. (Version 3 added
+  `dataset.last_refresh`.) Foreign keys are enforced.
   Papers without a DOI match on `paper.title_key` (`title_match.title_key`: markup, accents, case
   and punctuation ignored, `+` and `#` kept) plus year; it is stored, so a change to that rule
   needs a version bump and re-backfill. `get_or_create_papers` inserts a whole search in one

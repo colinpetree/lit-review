@@ -99,6 +99,21 @@ responses are `no-store`. Anything that logs an exception from an outside API mu
 puts the whole URL in its error text). Links to papers must pass `source_http.safe_url` on the
 way in (only http/https) and `isHttpUrl` (`lib/format.js`) on the way out.
 
+**Request validation.** A route reads its body with `_json_body()` (must be a JSON object) and
+takes fields through the helpers in `app.py` (`_str`, `_int_id`, `_token_count`,
+`_clean_queries`), which raise `InvalidRequest`; one error handler turns that into a 400 with
+the message, so a route does not need its own try/except for them. Never call
+`request.get_json` directly or `int()`/`.strip()` on a body value: a list, bool or huge number in
+the wrong place was a 500. Limits are constants beside the helpers (queries: `llm.MAX_QUERIES` of
+`llm.MAX_QUERY_CHARS`, since each runs against every source; paper fields; token counts; ids must
+fit SQLite) and `MAX_REQUEST_BYTES` (1 MB, a 413) covers the whole body. `llm.expand_query` cleans
+what the model returns to the same limits, and when the model was billed for an unusable answer
+the `LLMError` carries `usage` so the route still logs the cost. Any other exception is a JSON
+500 with the traceback in the log (through `redact`); an `HTTPException` (404, 405, 413) keeps
+its status and is JSON for `/api/*`. The two long text boxes (research question, new prompt) have
+a matching `maxLength` in the page. `tests/test_validation.py` has the table of bad bodies; add a
+row there for any new route field.
+
 **One slow job per run or dataset.** `POST /api/analysis-runs/<id>/process` and
 `POST /api/datasets/<id>/find-abstracts` hold an `_exclusive(kind, id)` lock (non-blocking) for
 the whole call; a second request for the same run or dataset gets **409** at once. Stopping a
@@ -219,6 +234,27 @@ against real copies on spare ports works well.
   duplicates merge. Scopus results have no abstracts (fill with "Find missing abstracts");
   Semantic Scholar without a key is often rate limited. `source_http.py` holds the shared
   HTTP helpers and `SourceError`.
+  **A search reads every hit, not the first page**: the point of the app is leaving no paper
+  unfound, and narrowing a too-broad question is the user's job. OpenAlex is read by cursor
+  (`openalex.search_all`), Semantic Scholar and Scopus by offset, PubMed by one esearch for the
+  ids and efetch batches. Each search returns a `SearchResult` (a list, so it still works as
+  one) carrying `total` (what the source says matches), `fetched` (what it returned, before the
+  exact date check) and `capped` (a sentence saying why any were left out, else None). Some
+  sources cannot be read to the end (Semantic Scholar 1,000, Scopus 5,000, PubMed 10,000), and
+  `MAX_RESULTS_PER_SEARCH` (2,500 per search per source) stops a question too broad to be a useful
+  search. It is a nudge, not a wall: the user narrows the question or dates and combines the
+  resulting datasets in one Evaluate run. Both kinds of limit are reported, never hidden.
+  `POST /api/datasets` keeps one entry per source and query in `dataset.retrieval`, shown on the
+  dataset page as "Search completeness". A page that fails for a passing reason (rate limit, 5xx,
+  dropped connection: `source_http.SourceUnavailable`, or the same kinds of `requests` error in
+  `openalex._fetch_page`) is asked again up to `PAGE_ATTEMPTS` times, so one hiccup does not discard
+  the pages already read; a quota that ran out, a rejected key or a rejected query is not retried.
+  Past that the retrieval is still one request that fails as a whole with nothing saved, but the
+  searches that did finish are kept in memory for 10 minutes (`app._SEARCH_CACHE`, at most
+  20,000 papers held, dropped when the retrieval succeeds), so the retry button only re-runs what did not finish. The
+  same search (question, dates, sources, queries) cannot run twice at once: the second gets a 409.
+  A finished retrieval is saved by `db.save_retrieved_dataset` in one transaction (dataset, the
+  expansion's cost, papers and membership), so a failed save leaves no empty dataset behind.
 - `abstracts.py` - looks up a missing abstract by DOI: Elsevier (Scopus `META_ABS`) and
   Springer Nature first, when the user has saved a key and the DOI prefix matches, then
   Europe PMC, then Semantic Scholar. Accepts only abstracts of `llm.MIN_ABSTRACT_CHARS`+.
@@ -257,7 +293,16 @@ against real copies on spare ports works well.
   serializing writes. DB lives in the platformdirs user-data dir, not the repo. Schema
   changes to existing tables go through the idempotent ALTER-based `_migrate`, since
   `CREATE TABLE IF NOT EXISTS` won't alter an existing table and user data must never
-  need deleting.
+  need deleting. Setup runs **once per process** (`_ensure_ready`, again if `DB_PATH` changes):
+  schema, `_migrate`, indexes, WAL, then `PRAGMA user_version = SCHEMA_VERSION`; connections only
+  set `busy_timeout` and `foreign_keys`. A change to the schema means a `_migrate` step **and** a
+  `SCHEMA_VERSION` bump, which makes the next launch keep a one-time copy
+  (`lit_review.db.pre-upgrade-<old>-to-<new>`, never deleted by the app) before migrating; a
+  database stamped higher than the code (`DatabaseTooNew`) is refused. Foreign keys are enforced.
+  Papers without a DOI match on `paper.title_key` (`title_match.title_key`: markup, accents, case
+  and punctuation ignored, `+` and `#` kept) plus year; it is stored, so a change to that rule
+  needs a version bump and re-backfill. `get_or_create_papers` inserts a whole search in one
+  transaction. Known limitation: duplicates stored before `title_key` existed are not merged.
 - `access.py`, `single_instance.py` - who may use a running copy and how a second launch finds it
   (see "One app per user" above); small and self-contained.
 - `credentials.py` - API keys (the three AI providers plus openalex, elsevier, springernature,

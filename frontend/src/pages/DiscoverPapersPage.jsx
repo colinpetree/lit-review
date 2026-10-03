@@ -27,7 +27,7 @@ const isSourceAvailable = (source, providers, pubmedEnabled) =>
 // fresh out of Discover Papers should show no scores at all.
 const STAGE_LABELS = {
   query: 'Processing query…',
-  retrieval: 'Submitting to Paper Databases…',
+  retrieval: 'Retrieving every matching paper from the databases. A broad topic can take a minute or two…',
 }
 
 export default function DiscoverPapersPage() {

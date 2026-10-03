@@ -29,18 +29,77 @@ from typing import Callable, Optional
 
 import credentials
 import openalex
-from source_http import SourceError, clean_text, doi_url, get, json_of, ncbi_get, semanticscholar_get
+from source_http import (
+    SourceError,
+    clean_text,
+    doi_url,
+    get,
+    json_of,
+    ncbi_get,
+    raise_if_unavailable,
+    retry_unavailable,
+    semanticscholar_get,
+)
 
-PER_PAGE = 50
-# Scopus Search returns at most 25 results per request without a subscription.
+# A search reads every hit, page by page, because a literature search that stops at
+# the first page leaves papers unfound. This ceiling per search per source stops a
+# question too broad to be a useful search (a single common word can match millions
+# of papers). It is not a limit on a review: hitting it is reported on the dataset,
+# the user narrows the question or the dates, and several narrower datasets can be
+# scored together in one evaluation.
+MAX_RESULTS_PER_SEARCH = 2_500
+# Semantic Scholar's search will not read past its first 1,000 results (offset plus
+# limit), and returns 100 per request.
+SEMANTIC_SCHOLAR_PAGE = 100
+SEMANTIC_SCHOLAR_DEPTH = 1000
+# Scopus Search returns at most 25 results per request without a subscription, and
+# will not read past its first 5,000 results.
 SCOPUS_PER_PAGE = 25
+SCOPUS_DEPTH = 5000
+# PubMed's search lists at most 10,000 papers however many match; the papers
+# themselves are fetched in batches.
+PUBMED_DEPTH = 10_000
+PUBMED_FETCH_BATCH = 200
+
+
+class SearchResult(list):
+    """The papers one search found (a plain list, so it can be used as one) and
+    how complete they are.
+
+    total   how many papers the source says match the search (None if it does not say)
+    fetched how many it returned to us, before the exact date check dropped some
+    capped  None if everything that matched was fetched, else a sentence saying
+            why some were not (a limit of the source's, or MAX_RESULTS_PER_SEARCH)
+    """
+
+    def __init__(self, papers=(), total=None, fetched=None, capped=None):
+        super().__init__(papers)
+        self.total = total
+        self.fetched = len(self) if fetched is None else fetched
+        self.capped = capped
+
+
+def _capped_reason(total, fetched, source_limit, source_label):
+    """Why fewer papers were fetched than matched, or None if all were."""
+    if total is None or fetched >= total:
+        return None
+    ceiling = MAX_RESULTS_PER_SEARCH
+    if source_limit is not None and fetched >= source_limit:
+        return f"{source_label} will not return more than {source_limit:,} papers for one search."
+    if fetched >= ceiling:
+        return (
+            f"Stopped at {ceiling:,} papers for this search. To get the rest, narrow the question or the "
+            "dates and combine the datasets when you evaluate."
+        )
+    return f"{source_label} returned only {fetched:,} of the {total:,} papers it reports."
 
 
 @dataclass(frozen=True)
 class SearchSource:
     id: str
     label: str
-    # search(query, from_date, to_date): the dates are "YYYY-MM-DD" or None.
+    # search(query, from_date, to_date): the dates are "YYYY-MM-DD" or None. Returns a
+    # SearchResult (a list of the papers, with how complete it is).
     search: Callable[[str, Optional[str], Optional[str]], list]
     # Credential provider a key must be saved under (None = no key needed).
     required_credential: Optional[str] = None
@@ -97,7 +156,13 @@ def _filtered(search):
         today = datetime.date.today().isoformat()
         if not to_date and (not from_date or from_date <= today):
             to_date = today
-        return [r for r in search(query, from_date, to_date) if _in_range(r, from_date, to_date)]
+        found = search(query, from_date, to_date)
+        return SearchResult(
+            (r for r in found if _in_range(r, from_date, to_date)),
+            total=getattr(found, "total", None),
+            fetched=getattr(found, "fetched", len(found)),
+            capped=getattr(found, "capped", None),
+        )
 
     return wrapper
 
@@ -108,52 +173,86 @@ def _year_of(date):
 
 @_filtered
 def _search_openalex(query, from_date, to_date):
-    return openalex.search_works(query, per_page=PER_PAGE, from_date=from_date, to_date=to_date)
+    results, total = openalex.search_all(
+        query, from_date=from_date, to_date=to_date, max_results=MAX_RESULTS_PER_SEARCH
+    )
+    return SearchResult(
+        results, total=total, capped=_capped_reason(total, len(results), None, "OpenAlex")
+    )
+
+
+def _semanticscholar_page(params):
+    """One page of a Semantic Scholar search as JSON, or None when there is nothing
+    more to read."""
+    response = semanticscholar_get("https://api.semanticscholar.org/graph/v1/paper/search", params)
+    # A 404 is "nothing found". A 400 means Semantic Scholar rejected the query
+    # itself, which must not be read as "no results": the dataset would silently
+    # lack a source the user asked for.
+    if response.status_code == 404:
+        return None
+    if response.status_code == 400 and params["offset"] > 0:
+        # The first page was accepted, so the query is fine: this is the depth
+        # past which Semantic Scholar will not read. It is reported as a cap.
+        return None
+    if response.status_code == 400:
+        raise SourceError("Semantic Scholar could not run this search (it rejected the query).")
+    raise_if_unavailable("Semantic Scholar", response)
+    if response.status_code != 200:
+        raise SourceError(f"Semantic Scholar returned an error (HTTP {response.status_code}).")
+    return json_of(response, "Semantic Scholar")
+
+
+def _semanticscholar_paper(item):
+    doi = doi_url((item.get("externalIds") or {}).get("DOI"))
+    return {
+        "source": "semanticscholar",
+        "id": item["paperId"],
+        "title": item["title"],
+        "abstract": clean_text(item.get("abstract")),
+        "year": item.get("year"),
+        "publication_date": item.get("publicationDate"),
+        "citation_count": item.get("citationCount") or 0,
+        "doi": doi,
+        "url": doi or item.get("url"),
+        "venue": item.get("venue") or None,
+        "authors": [a.get("name") for a in item.get("authors") or [] if a.get("name")],
+        "is_review": "Review" in (item.get("publicationTypes") or []),
+    }
 
 
 @_filtered
 def _search_semanticscholar(query, from_date, to_date):
     params = {
         "query": query,
-        "limit": PER_PAGE,
+        "limit": SEMANTIC_SCHOLAR_PAGE,
+        "offset": 0,
         "fields": "title,abstract,year,publicationDate,citationCount,externalIds,venue,authors,url,publicationTypes",
     }
     if from_date or to_date:
         # Narrowed by year here; _filtered applies the exact dates.
         params["year"] = f"{_year_of(from_date) or ''}-{_year_of(to_date) or ''}"
-    response = semanticscholar_get("https://api.semanticscholar.org/graph/v1/paper/search", params)
-    # A 404 is "nothing found". A 400 means Semantic Scholar rejected the query
-    # itself, which must not be read as "no results": the dataset would silently
-    # lack a source the user asked for.
-    if response.status_code == 404:
-        return []
-    if response.status_code == 400:
-        raise SourceError("Semantic Scholar could not run this search (it rejected the query).")
-    if response.status_code != 200:
-        raise SourceError(f"Semantic Scholar returned an error (HTTP {response.status_code}).")
-
     results = []
-    for item in json_of(response, "Semantic Scholar").get("data") or []:
-        if not item.get("title") or not item.get("paperId"):
-            continue
-        doi = doi_url((item.get("externalIds") or {}).get("DOI"))
-        results.append(
-            {
-                "source": "semanticscholar",
-                "id": item["paperId"],
-                "title": item["title"],
-                "abstract": clean_text(item.get("abstract")),
-                "year": item.get("year"),
-                "publication_date": item.get("publicationDate"),
-                "citation_count": item.get("citationCount") or 0,
-                "doi": doi,
-                "url": doi or item.get("url"),
-                "venue": item.get("venue") or None,
-                "authors": [a.get("name") for a in item.get("authors") or [] if a.get("name")],
-                "is_review": "Review" in (item.get("publicationTypes") or []),
-            }
-        )
-    return results
+    total = None
+    fetched = 0
+    while fetched < min(SEMANTIC_SCHOLAR_DEPTH, MAX_RESULTS_PER_SEARCH):
+        body = retry_unavailable(lambda: _semanticscholar_page(params))
+        if body is None:
+            break
+        if isinstance(body.get("total"), int):
+            total = body["total"]
+        page = body.get("data") or []
+        fetched += len(page)
+        results.extend(_semanticscholar_paper(item) for item in page if item.get("title") and item.get("paperId"))
+        # A short page, or none, is the last one.
+        if len(page) < SEMANTIC_SCHOLAR_PAGE or (total is not None and fetched >= total):
+            break
+        params["offset"] = fetched
+    return SearchResult(
+        results,
+        total=total,
+        fetched=fetched,
+        capped=_capped_reason(total, fetched, SEMANTIC_SCHOLAR_DEPTH, "Semantic Scholar"),
+    )
 
 
 def _scopus_query(query, from_date, to_date):
@@ -168,48 +267,78 @@ def _scopus_query(query, from_date, to_date):
     return scopus
 
 
-@_filtered
-def _search_scopus(query, from_date, to_date):
+def _scopus_paper(entry):
+    cover_date = entry.get("prism:coverDate")
+    creator = entry.get("dc:creator")
+    return {
+        "source": "scopus",
+        "id": entry["dc:identifier"],
+        "title": entry["dc:title"],
+        "abstract": "",
+        "year": _year(cover_date),
+        "publication_date": cover_date,
+        "citation_count": int(entry.get("citedby-count") or 0),
+        "doi": doi_url(entry.get("prism:doi")),
+        "url": doi_url(entry.get("prism:doi")),
+        "venue": entry.get("prism:publicationName"),
+        # A free key returns only the first author.
+        "authors": [creator] if creator else [],
+        "is_review": entry.get("subtypeDescription") == "Review",
+    }
+
+
+def _scopus_page(scopus_query, key, start):
+    """One page of a Scopus search as JSON, or None when there is nothing to read."""
     response = get(
         "Elsevier",
         "https://api.elsevier.com/content/search/scopus",
-        params={"query": _scopus_query(query, from_date, to_date), "count": SCOPUS_PER_PAGE},
-        headers={"X-ELS-APIKey": credentials.get_key("elsevier"), "Accept": "application/json"},
+        params={"query": scopus_query, "count": SCOPUS_PER_PAGE, "start": start},
+        headers={"X-ELS-APIKey": key, "Accept": "application/json"},
     )
     if response.status_code in (401, 403):
         raise SourceError("Elsevier rejected the API key or your access level.")
+    # Not a passing problem: a key's quota runs out for a long while, so asking again
+    # a moment later cannot help.
     if response.status_code == 429:
         raise SourceError("Elsevier's usage quota for this key has been reached.")
     if response.status_code == 404:
-        return []
+        return None
+    raise_if_unavailable("Elsevier", response)
     if response.status_code != 200:
         raise SourceError(f"Elsevier returned an error (HTTP {response.status_code}).")
+    return json_of(response, "Elsevier")
 
+
+@_filtered
+def _search_scopus(query, from_date, to_date):
+    scopus_query = _scopus_query(query, from_date, to_date)
+    key = credentials.get_key("elsevier")
     results = []
-    for entry in (json_of(response, "Elsevier").get("search-results") or {}).get("entry") or []:
+    total = None
+    fetched = 0
+    while fetched < min(SCOPUS_DEPTH, MAX_RESULTS_PER_SEARCH):
+        body = retry_unavailable(lambda: _scopus_page(scopus_query, key, fetched))
+        if body is None:
+            break
+        search = body.get("search-results") or {}
+        count = search.get("opensearch:totalResults")
+        if isinstance(count, str) and count.isdigit():
+            total = int(count)
+        entries = search.get("entry") or []
         # An empty result set comes back as one entry holding an "error" note.
-        if entry.get("error") or not entry.get("dc:title") or not entry.get("dc:identifier"):
-            continue
-        cover_date = entry.get("prism:coverDate")
-        creator = entry.get("dc:creator")
-        results.append(
-            {
-                "source": "scopus",
-                "id": entry["dc:identifier"],
-                "title": entry["dc:title"],
-                "abstract": "",
-                "year": _year(cover_date),
-                "publication_date": cover_date,
-                "citation_count": int(entry.get("citedby-count") or 0),
-                "doi": doi_url(entry.get("prism:doi")),
-                "url": doi_url(entry.get("prism:doi")),
-                "venue": entry.get("prism:publicationName"),
-                # A free key returns only the first author.
-                "authors": [creator] if creator else [],
-                "is_review": entry.get("subtypeDescription") == "Review",
-            }
+        real = [e for e in entries if not e.get("error")]
+        fetched += len(real)
+        results.extend(
+            _scopus_paper(entry) for entry in real if entry.get("dc:title") and entry.get("dc:identifier")
         )
-    return results
+        if not real or (total is not None and fetched >= total):
+            break
+    return SearchResult(
+        results,
+        total=total,
+        fetched=fetched,
+        capped=_capped_reason(total, fetched, SCOPUS_DEPTH, "Scopus"),
+    )
 
 
 _EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -291,11 +420,11 @@ def _pubmed_result(article):
     }
 
 
-@_filtered
-def _search_pubmed(query, from_date, to_date):
-    # Square brackets are PubMed field tags ("[Author]"), which a topic never needs.
-    term = re.sub(r"[\[\]]", " ", query).strip()
-    params = {"db": "pubmed", "term": term, "retmax": PER_PAGE, "retmode": "json", "sort": "relevance"}
+def _pubmed_ids(term, from_date, to_date):
+    """(ids, total): the PubMed ids that match, most relevant first (up to
+    PUBMED_DEPTH of them), and how many PubMed says match."""
+    retmax = min(PUBMED_DEPTH, MAX_RESULTS_PER_SEARCH)
+    params = {"db": "pubmed", "term": term, "retmax": retmax, "retmode": "json", "sort": "relevance"}
     if from_date or to_date:
         params.update(
             {
@@ -305,6 +434,7 @@ def _search_pubmed(query, from_date, to_date):
             }
         )
     response = ncbi_get(f"{_EUTILS}/esearch.fcgi", params)
+    raise_if_unavailable("PubMed", response)
     if response.status_code != 200:
         raise SourceError(f"PubMed returned an error (HTTP {response.status_code}).")
     body = json_of(response, "PubMed")
@@ -318,11 +448,16 @@ def _search_pubmed(query, from_date, to_date):
         raise SourceError("PubMed returned an unreadable response.")
     if data.get("ERROR"):
         raise SourceError(f"PubMed could not run this search: {data['ERROR']}")
-    ids = data.get("idlist") or []
-    if not ids:
-        return []
+    ids = (data.get("idlist") or [])[:MAX_RESULTS_PER_SEARCH]
+    count = data.get("count")
+    total = int(count) if isinstance(count, str) and count.isdigit() else None
+    return ids, total
 
+
+def _pubmed_articles(ids):
+    """The papers for these PubMed ids (one efetch call), by id."""
     response = ncbi_get(f"{_EUTILS}/efetch.fcgi", {"db": "pubmed", "id": ",".join(ids), "retmode": "xml"})
+    raise_if_unavailable("PubMed", response)
     if response.status_code != 200:
         raise SourceError(f"PubMed returned an error (HTTP {response.status_code}).")
     try:
@@ -336,10 +471,28 @@ def _search_pubmed(query, from_date, to_date):
         result = _pubmed_result(article)
         if result:
             by_id[result["id"]] = result
-    # efetch doesn't promise the order esearch ranked them in. (PubMed's date
-    # filter also matches a paper's print issue date, which is why _filtered
-    # re-checks the shown dates.)
-    return [by_id[pmid] for pmid in ids if pmid in by_id]
+    return by_id
+
+
+@_filtered
+def _search_pubmed(query, from_date, to_date):
+    # Square brackets are PubMed field tags ("[Author]"), which a topic never needs.
+    term = re.sub(r"[\[\]]", " ", query).strip()
+    ids, total = retry_unavailable(lambda: _pubmed_ids(term, from_date, to_date))
+    results = []
+    for start in range(0, len(ids), PUBMED_FETCH_BATCH):
+        batch = ids[start : start + PUBMED_FETCH_BATCH]
+        by_id = retry_unavailable(lambda: _pubmed_articles(batch))
+        # efetch doesn't promise the order esearch ranked them in. (PubMed's date
+        # filter also matches a paper's print issue date, which is why _filtered
+        # re-checks the shown dates.)
+        results.extend(by_id[pmid] for pmid in batch if pmid in by_id)
+    return SearchResult(
+        results,
+        total=total,
+        fetched=len(ids),
+        capped=_capped_reason(total, len(ids), PUBMED_DEPTH, "PubMed"),
+    )
 
 
 # In the order sources are searched. OpenAlex goes first so that when the same

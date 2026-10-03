@@ -11,4 +11,10 @@ llm.py and are shared by every provider.
 
 
 class LLMError(Exception):
-    """Missing credentials or an unrecoverable provider error."""
+    """Missing credentials or an unrecoverable provider error. `usage` is set when
+    the model was called and billed before the failure (an answer that could not
+    be used), so the caller can still record what it cost."""
+
+    def __init__(self, message="", usage=None):
+        super().__init__(message)
+        self.usage = usage

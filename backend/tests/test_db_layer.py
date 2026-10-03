@@ -248,6 +248,20 @@ class TestUpgrade:
         db.ensure_ready()
         assert counts(db.DB_PATH) == before
 
+    def test_a_version_1_database_gets_the_retrieval_column_and_a_copy(self):
+        db.ensure_ready()
+        dataset_id = db.create_dataset("topic", ["q"], retrieval=[{"source": "openalex"}])
+        conn = sqlite3.connect(str(db.DB_PATH))
+        conn.execute("ALTER TABLE dataset DROP COLUMN retrieval")
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+        conn.close()
+        db._ready_for = None
+        db.ensure_ready()
+        assert db.get_dataset(dataset_id)["retrieval"] is None
+        assert db.DB_PATH.with_name(f"{db.DB_PATH.name}.pre-upgrade-1-to-{db.SCHEMA_VERSION}").exists()
+        assert db.create_dataset("t2", ["q"], retrieval=[{"source": "pubmed"}])
+
     def test_a_database_from_a_newer_version_is_not_opened(self):
         db.ensure_ready()
         conn = sqlite3.connect(str(db.DB_PATH))

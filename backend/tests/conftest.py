@@ -41,6 +41,25 @@ def _is_local(host):
 
 
 @pytest.fixture(autouse=True)
+def empty_search_cache():
+    """Searches the app kept for a retry must not carry over from one test to the next."""
+    import app as app_module
+
+    app_module._SEARCH_CACHE.clear()
+    yield
+    app_module._SEARCH_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_retry_waits(monkeypatch):
+    """A page that failed for a passing reason is asked again at once, so a test of that
+    does not sit through the real waits."""
+    import source_http
+
+    monkeypatch.setattr(source_http, "PAGE_RETRY_SECONDS", 0)
+
+
+@pytest.fixture(autouse=True)
 def block_network(monkeypatch):
     """Fail any attempt to reach somewhere other than this machine: connecting
     (blocking or not), sending a UDP datagram, or looking up a hostname. This

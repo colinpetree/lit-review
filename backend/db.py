@@ -31,9 +31,10 @@ DB_PATH = Path(os.environ.get("LIT_REVIEW_DATA_DIR") or platformdirs.user_data_d
 _LOCK = threading.Lock()
 
 # Bumped when the schema changes in a way an older copy of the app could not read.
-# 1 = everything up to the title_key column and the indexes. A database stamped
+# 1 = everything up to the title_key column and the indexes.
+# 2 = dataset.retrieval (how complete each search was). A database stamped
 # higher than this was made by a newer version and is not opened.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _INIT_LOCK = threading.Lock()
 _ready_for = None  # the DB_PATH that has been created, migrated and tuned
@@ -41,6 +42,7 @@ _ready_for = None  # the DB_PATH that has been created, migrated and tuned
 
 class DatabaseTooNew(sqlite3.DatabaseError):
     pass
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper (
@@ -230,6 +232,13 @@ def _migrate(conn):
     dataset_columns = {row["name"] for row in conn.execute("PRAGMA table_info(dataset)")}
     if "sources" not in dataset_columns:
         conn.execute("ALTER TABLE dataset ADD COLUMN sources TEXT")
+        conn.commit()
+
+    # How complete each search was (JSON list, one entry per source and query: the
+    # hits the source reported, how many were fetched, and why any were not).
+    # NULL on datasets from before it was recorded.
+    if "retrieval" not in dataset_columns:
+        conn.execute("ALTER TABLE dataset ADD COLUMN retrieval TEXT")
         conn.commit()
 
     # The search's publication date bounds ("YYYY-MM-DD"), replacing the bare
@@ -665,41 +674,85 @@ def _dataset_sources(raw):
     return sources or ["openalex"]
 
 
-def create_dataset(verbose_query, expanded_queries, from_date=None, to_date=None, name=None, sources=None):
+def create_dataset(
+    verbose_query, expanded_queries, from_date=None, to_date=None, name=None, sources=None, retrieval=None
+):
     """from_date and to_date are the search's "YYYY-MM-DD" publication date bounds. name is the short title (AI-written at expansion time); without one, the
     first few words of the topic stand in. sources are the paper source ids it
-    was retrieved from (default OpenAlex)."""
-    name = (name or "").strip() or _placeholder_title(verbose_query)
+    was retrieved from (default OpenAlex). retrieval is how complete each search was
+    (a JSON-serializable list, see app.create_dataset)."""
     with _LOCK, closing(_connect()) as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO dataset
-                (name, verbose_query, from_year, to_year, from_date, to_date, expanded_queries, sources, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                name,
-                verbose_query,
-                int(from_date[:4]) if from_date else None,
-                int(to_date[:4]) if to_date else None,
-                from_date,
-                to_date,
-                json.dumps(expanded_queries),
-                json.dumps(sources or ["openalex"]),
-                _now(),
-            ),
+        dataset_id = _insert_dataset(
+            conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval
         )
         conn.commit()
-        return cur.lastrowid
+        return dataset_id
+
+
+def _insert_dataset(conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval):
+    """The dataset row, on an open connection, without committing."""
+    name = (name or "").strip() or _placeholder_title(verbose_query)
+    cur = conn.execute(
+        """
+        INSERT INTO dataset
+            (name, verbose_query, from_year, to_year, from_date, to_date, expanded_queries, sources,
+             retrieval, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            name,
+            verbose_query,
+            int(from_date[:4]) if from_date else None,
+            int(to_date[:4]) if to_date else None,
+            from_date,
+            to_date,
+            json.dumps(expanded_queries),
+            json.dumps(sources or ["openalex"]),
+            json.dumps(retrieval) if retrieval is not None else None,
+            _now(),
+        ),
+    )
+    return cur.lastrowid
+
+
+def save_retrieved_dataset(
+    verbose_query,
+    expanded_queries,
+    candidates,
+    usage,
+    from_date=None,
+    to_date=None,
+    name=None,
+    sources=None,
+    retrieval=None,
+):
+    """Save a finished retrieval as one unit: the dataset, the cost of the query
+    expansion that produced it, its papers (in the shape openalex._work_to_result()
+    returns) and their membership. All in one transaction, so a failure part way
+    leaves no half-made dataset (an empty one, or a cost with no dataset) behind,
+    and a retry starts clean. Returns the dataset id."""
+    with _LOCK, closing(_connect()) as conn:
+        dataset_id = _insert_dataset(
+            conn, verbose_query, expanded_queries, from_date, to_date, name, sources, retrieval
+        )
+        _insert_llm_call(conn, "query_expansion", usage.provider, usage.model, usage, dataset_id=dataset_id)
+        paper_ids = [_get_or_create_paper(conn, candidate) for candidate in candidates]
+        _insert_dataset_papers(conn, dataset_id, paper_ids)
+        conn.commit()
+        return dataset_id
+
+
+def _insert_dataset_papers(conn, dataset_id, paper_ids):
+    now = _now()
+    conn.executemany(
+        "INSERT OR IGNORE INTO dataset_paper (dataset_id, paper_id, added_at) VALUES (?, ?, ?)",
+        [(dataset_id, paper_id, now) for paper_id in paper_ids],
+    )
 
 
 def add_papers_to_dataset(dataset_id, paper_ids):
     with _LOCK, closing(_connect()) as conn:
-        now = _now()
-        conn.executemany(
-            "INSERT OR IGNORE INTO dataset_paper (dataset_id, paper_id, added_at) VALUES (?, ?, ?)",
-            [(dataset_id, paper_id, now) for paper_id in paper_ids],
-        )
+        _insert_dataset_papers(conn, dataset_id, paper_ids)
         conn.commit()
 
 
@@ -765,6 +818,10 @@ def get_dataset(dataset_id, include_deleted=False):
         d = dict(row)
         d["expanded_queries"] = json.loads(d["expanded_queries"])
         d["sources"] = _dataset_sources(d.get("sources"))
+        try:
+            d["retrieval"] = json.loads(d["retrieval"]) if d.get("retrieval") else None
+        except ValueError:
+            d["retrieval"] = None
         return d
 
 
@@ -1282,16 +1339,20 @@ def record_analysis_chunk(run_id, scores, usage):
         conn.commit()
 
 
+def _insert_llm_call(conn, purpose, ai_api, ai_model, usage, dataset_id=None, run_id=None):
+    conn.execute(
+        """
+        INSERT INTO llm_call
+            (purpose, dataset_id, run_id, ai_api, ai_model, input_tokens, output_tokens, usd, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (purpose, dataset_id, run_id, ai_api, ai_model, usage.input_tokens, usage.output_tokens, usage.usd, _now()),
+    )
+
+
 def record_llm_call(purpose, ai_api, ai_model, usage, dataset_id=None, run_id=None):
     with _LOCK, closing(_connect()) as conn:
-        conn.execute(
-            """
-            INSERT INTO llm_call
-                (purpose, dataset_id, run_id, ai_api, ai_model, input_tokens, output_tokens, usd, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (purpose, dataset_id, run_id, ai_api, ai_model, usage.input_tokens, usage.output_tokens, usage.usd, _now()),
-        )
+        _insert_llm_call(conn, purpose, ai_api, ai_model, usage, dataset_id=dataset_id, run_id=run_id)
         conn.commit()
 
 

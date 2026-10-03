@@ -69,6 +69,22 @@ source reports DOIs as `https://doi.org/...` so cross-source duplicates merge, a
 is searched first so its (fullest) record is the one kept. A dataset records its `sources`
 (NULL means OpenAlex only), and "reuse an identical search" also matches on sources.
 
+**Every hit, not a top-N (built).** A literature review cannot leave papers unfound, so a
+search is read to the end rather than cut at a first page, and narrowing a question that matches
+too much is left to the user (they see the counts and can search again). OpenAlex is read by
+cursor, Semantic Scholar and Scopus by offset, PubMed by id list then batches. Each source says
+how many papers match, and a dataset keeps `retrieval` (per source and query: hits reported,
+fetched, and why any were not), shown as "Search completeness". Limits that cannot be removed
+are stated, not hidden: Semantic Scholar's search reads at most 1,000, Scopus 5,000 and PubMed
+10,000 per search, and a ceiling of 2,500 per search per source stops a question too broad to be a
+useful search. The ceiling is a nudge rather than a wall: the user narrows the question or the
+dates, and an evaluation can score several datasets together, so a larger review is several
+narrower searches. Scoring, not retrieval, is what costs money, so the spend estimate and cap
+planned for runs matter more with larger datasets. A page that fails for a passing reason is
+asked again a few times, and the same search cannot run twice at once. Not built: resuming a
+retrieval that still fails part way (the whole retrieval fails and is retried), and progress while
+it runs.
+
 **Abstract lookup (built).** `backend/abstracts.py` fills a missing abstract by DOI: Elsevier
 (Scopus `META_ABS`) and Springer Nature first when a key is saved and the DOI prefix matches,
 then Europe PMC, then Semantic Scholar. It only accepts abstracts of

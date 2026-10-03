@@ -165,8 +165,32 @@ def expand_query(research_question, ai_api, model, n=4):
     )
     queries = parsed.get("queries") if isinstance(parsed, dict) else None
     if not isinstance(queries, list) or not all(isinstance(q, str) for q in queries):
-        raise LLMError("The AI returned search queries in an unexpected format.")
+        raise LLMError("The AI returned search queries in an unexpected format.", usage=usage)
+    queries = clean_queries(queries)[:n]
+    if not queries:
+        raise LLMError(
+            "The AI did not return any usable search queries. Try rewording your question.", usage=usage
+        )
     return queries, usage, _clean_title(parsed.get("title"))
+
+
+# What a dataset's search queries may be: each one is run against every selected
+# source, so the count and size are bounded (the API enforces the same limits).
+MAX_QUERIES = 10
+MAX_QUERY_CHARS = 300
+
+
+def clean_queries(queries):
+    """The queries stripped, with blank and repeated ones (ignoring case) dropped
+    and each cut to MAX_QUERY_CHARS, in order."""
+    seen = set()
+    cleaned = []
+    for query in queries:
+        query = " ".join(query.split())[:MAX_QUERY_CHARS].strip()
+        if query and query.lower() not in seen:
+            seen.add(query.lower())
+            cleaned.append(query)
+    return cleaned
 
 
 # (name, low, high) - ordered best to worst. The prompt text below and the

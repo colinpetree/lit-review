@@ -140,7 +140,7 @@ class TestRemovedRoutes:
         def must_not_run(*args, **kwargs):
             raise AssertionError("OpenAlex was searched through the removed proxy")
 
-        monkeypatch.setattr(app_module.openalex, "search_works", must_not_run)
+        monkeypatch.setattr(app_module.openalex, "search_all", must_not_run)
         response = client.get("/api/search?q=coral")
         assert response.status_code == 404
         assert response.get_json() == {"error": "not found"}

@@ -12,6 +12,54 @@ import { fetchJson, patchJson } from '../lib/api'
 import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
+import { groupBySource, hitsText, summarizeRetrieval } from '../lib/retrieval'
+
+// Whether every paper the sources reported for the searches was retrieved, with the
+// numbers per source and search behind it. A search that stopped short says why,
+// so the user knows to narrow it rather than assume nothing was missed.
+function RetrievalCompleteness({ retrieval }) {
+  const summary = summarizeRetrieval(retrieval)
+  if (!summary) return null
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-sm font-medium text-gray-500">Search completeness</p>
+      {summary.complete ? (
+        <p className="text-sm text-gray-800">Every paper the sources reported for these searches was retrieved.</p>
+      ) : (
+        <div className="text-sm text-amber-700 dark:text-amber-400">
+          <p>Some searches did not retrieve every paper they matched.</p>
+          {summary.reasons.map((reason) => (
+            <p key={reason} className="mt-1">
+              {reason}
+            </p>
+          ))}
+        </div>
+      )}
+      <details className="text-sm text-gray-600">
+        <summary className="cursor-pointer select-none text-gray-500 hover:text-gray-700">Papers per search</summary>
+        <div className="mt-2 flex flex-col gap-3">
+          {groupBySource(retrieval).map(({ source, entries }) => (
+            <div key={source}>
+              <p className="font-medium text-gray-700">{sourceLabel(source)}</p>
+              <ul className="mt-1 flex flex-col gap-0.5">
+                {entries.map((entry) => (
+                  <li key={entry.query} className="flex justify-between gap-4">
+                    <span className="min-w-0 truncate" title={entry.query}>
+                      {entry.query}
+                    </span>
+                    <span className={`shrink-0 ${entry.capped ? 'text-amber-700 dark:text-amber-400' : ''}`}>
+                      {hitsText(entry)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  )
+}
 
 // The dataset's title (renamed from its dots menu, like an analysis run's) and
 // the details it was retrieved with (all fixed).
@@ -44,6 +92,8 @@ function DatasetDetailsCard({ dataset, onRenamed }) {
           })}
         </div>
       </div>
+
+      <RetrievalCompleteness retrieval={dataset.retrieval} />
 
       {dataset.expansion ? (
         <div className="flex flex-col gap-1.5">

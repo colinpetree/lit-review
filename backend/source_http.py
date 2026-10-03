@@ -31,6 +31,29 @@ class SourceError(Exception):
     """This source can't be used right now."""
 
 
+class SourceUnavailable(SourceError):
+    """The source is having a passing problem (a rate limit, a server error, a
+    dropped connection), so asking again a moment later can work."""
+
+
+# A long search reads many pages. One passing problem partway through must not throw
+# away the pages already read, so each page is asked for again a few times.
+PAGE_ATTEMPTS = 3
+PAGE_RETRY_SECONDS = 2
+
+
+def retry_unavailable(fetch):
+    """The result of fetch(), asked again (after a growing wait) when it raises
+    SourceUnavailable, up to PAGE_ATTEMPTS times. Any other error is raised at once."""
+    for attempt in range(PAGE_ATTEMPTS):
+        try:
+            return fetch()
+        except SourceUnavailable:
+            if attempt == PAGE_ATTEMPTS - 1:
+                raise
+            time.sleep(PAGE_RETRY_SECONDS * (attempt + 1))
+
+
 def normalize_doi(doi):
     """Bare lowercase DOI, from either a bare DOI or a https://doi.org/ URL."""
     return re.sub(r"^https?://(dx\.)?doi\.org/", "", (doi or "").strip(), flags=re.I).lower()
@@ -52,7 +75,7 @@ def raise_if_unavailable(source_label, response):
     tried again."""
     status = response.status_code
     if status == 429 or status >= 500:
-        raise SourceError(f"{source_label} is having trouble right now (HTTP {status}). Try again later.")
+        raise SourceUnavailable(f"{source_label} is having trouble right now (HTTP {status}). Try again later.")
 
 
 def doi_url(doi):
@@ -106,7 +129,7 @@ def get(source_label, url, **kwargs):
     try:
         return requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT, **kwargs)
     except requests.RequestException as exc:
-        raise SourceError(f"Could not reach {source_label}.") from exc
+        raise SourceUnavailable(f"Could not reach {source_label}.") from exc
 
 
 def json_of(response, source_label):
@@ -139,7 +162,7 @@ def ncbi_get(url, params):
             return response
         if attempt == 0:
             time.sleep(2)
-    raise SourceError("PubMed's rate limit was reached. Try again in a moment.")
+    raise SourceUnavailable("PubMed's rate limit was reached. Try again in a moment.")
 
 
 SEMANTIC_SCHOLAR_KEY_REJECTED = (
@@ -169,8 +192,8 @@ def _semanticscholar_request(url, params, key):
         if attempt == 0:
             time.sleep(3)
     if key:
-        raise SourceError("Semantic Scholar's rate limit was reached. Try again in a moment.")
-    raise SourceError(
+        raise SourceUnavailable("Semantic Scholar's rate limit was reached. Try again in a moment.")
+    raise SourceUnavailable(
         "Semantic Scholar's rate limit was reached. A free Semantic Scholar API key in "
         "Settings raises it."
     )

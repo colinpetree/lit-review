@@ -15,11 +15,11 @@ import time
 import requests
 
 import credentials
+import source_http
 from source_http import clean_title
 from title_match import title_key
 
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
-DEFAULT_PER_PAGE = 25
 
 # A 429 here means the caller's per-day credit budget (anonymous or keyed)
 # is exhausted, not a short traffic burst - retrying after its Retry-After
@@ -68,12 +68,13 @@ def _work_to_result(work):
     }
 
 
-def search_works(query, per_page=DEFAULT_PER_PAGE, from_date=None, to_date=None):
-    """Run a keyword search against OpenAlex and return a flat list of results.
-    from_date and to_date are optional "YYYY-MM-DD" publication date bounds."""
+MAX_PER_PAGE = 200
+
+
+def _search_params(query, per_page, from_date, to_date):
     params = {
         "search": query,
-        "per_page": min(per_page, 200),
+        "per_page": min(per_page, MAX_PER_PAGE),
         "sort": "relevance_score:desc",
     }
 
@@ -88,7 +89,33 @@ def search_works(query, per_page=DEFAULT_PER_PAGE, from_date=None, to_date=None)
     api_key = credentials.get_key("openalex")
     if api_key:
         params["api_key"] = api_key
+    return params
 
+
+def _passing_problem(exc):
+    """Whether a failed request may work if asked again: no connection, a timeout or a
+    server error. Not a rejected key or an unreadable reply, and not a 429: that means
+    the day's credit budget is gone (see MAX_RATE_LIMIT_RETRIES above), so asking again
+    would only make the user wait longer for the same answer."""
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status is not None and status >= 500
+
+
+def _fetch_page(params):
+    """One page of results as JSON. A passing problem is retried a few times, so a
+    hiccup partway through a long search does not discard the pages already read."""
+    for attempt in range(source_http.PAGE_ATTEMPTS):
+        try:
+            return _read_page(params)
+        except requests.RequestException as exc:
+            if attempt == source_http.PAGE_ATTEMPTS - 1 or not _passing_problem(exc):
+                raise
+            time.sleep(source_http.PAGE_RETRY_SECONDS * (attempt + 1))
+
+
+def _read_page(params):
     response = _get_with_retry(params)
     try:
         data = response.json()
@@ -101,8 +128,36 @@ def search_works(query, per_page=DEFAULT_PER_PAGE, from_date=None, to_date=None)
         raise requests.RequestException(
             f"OpenAlex returned an unreadable response: {exc}"
         ) from exc
+    if not isinstance(data, dict):
+        raise requests.RequestException("OpenAlex returned an unreadable response.")
+    return data
 
-    return [_work_to_result(work) for work in data.get("results", [])]
+
+def search_all(query, from_date=None, to_date=None, max_results=10_000):
+    """Every work matching a keyword search, most relevant first, read page by page
+    (cursor paging, which has no depth limit) until they are all fetched or
+    max_results have been. Returns (results, total): total is how many works
+    OpenAlex says match, so a caller can tell when it stopped short."""
+    params = _search_params(query, MAX_PER_PAGE, from_date, to_date)
+    params["cursor"] = "*"
+    results = []
+    total = None
+    seen_cursors = set()
+    while len(results) < max_results:
+        data = _fetch_page(params)
+        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+        if isinstance(meta.get("count"), int):
+            total = meta["count"]
+        page = data.get("results") or []
+        results.extend(_work_to_result(work) for work in page)
+        cursor = meta.get("next_cursor")
+        # A page with nothing in it, no next cursor, or a cursor already used is
+        # the end (the last check stops a reply that never advances).
+        if not page or not cursor or cursor in seen_cursors:
+            break
+        seen_cursors.add(cursor)
+        params["cursor"] = cursor
+    return results[:max_results], total
 
 
 def _get_with_retry(params):

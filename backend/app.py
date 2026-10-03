@@ -10,6 +10,7 @@ import sqlite3
 import sys
 import threading
 import time
+import traceback
 import uuid
 import webbrowser
 from contextlib import contextmanager
@@ -19,6 +20,7 @@ from urllib.parse import urlparse
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
+from werkzeug.exceptions import HTTPException
 from werkzeug.serving import ThreadedWSGIServer
 from werkzeug.utils import safe_join
 
@@ -77,6 +79,37 @@ mimetypes.add_type("font/woff2", ".woff2")
 # static_folder=None disables Flask's own auto-registered static route, so the
 # catch-all below is the only route serving files/index.html - no silent collision.
 app = Flask(__name__, static_folder=None)
+
+# No request here is large (the biggest body is a paper's abstract), so anything
+# bigger is refused (413) without being read.
+MAX_REQUEST_BYTES = 1_000_000
+app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
+
+
+class InvalidRequest(ValueError):
+    """A request body that cannot be used. The message is safe to show the user and
+    is sent back as a 400, so a route only has to raise it."""
+
+
+@app.errorhandler(InvalidRequest)
+def _invalid_request(exc):
+    return jsonify({"error": str(exc)}), 400
+
+
+@app.errorhandler(Exception)
+def _unexpected_error(exc):
+    if isinstance(exc, HTTPException):
+        # 404, 405, 413...: keep their status, but answer API calls in JSON like
+        # every other API error (the page expects {"error": ...}).
+        if request.path.startswith("/api/"):
+            return jsonify({"error": exc.description or exc.name}), exc.code
+        return exc
+    # Anything else is a bug, not the caller's mistake. The details go to the log
+    # (with API keys removed) and the caller gets a plain message.
+    app.logger.error(
+        "Unhandled error on %s %s:\n%s", request.method, request.path, redact(traceback.format_exc())
+    )
+    return jsonify({"error": "Something went wrong on the server. Please try again."}), 500
 
 # The only Host values this app answers to. It listens on 127.0.0.1 only, but a
 # website can still reach it from the user's own browser: a plain cross-site POST
@@ -207,13 +240,18 @@ def get_api_key_status():
     return jsonify(status)
 
 
+def _provider_name(body):
+    provider = body.get("provider")
+    if not isinstance(provider, str) or provider not in CREDENTIAL_PROVIDERS:
+        raise InvalidRequest(f"Unsupported provider '{str(provider)[:40]}'.")
+    return provider
+
+
 @app.post("/api/settings/api-key")
 def set_api_key():
-    body = request.get_json(silent=True) or {}
-    provider = body.get("provider")
-    api_key = body.get("api_key", "").strip()
-    if provider not in CREDENTIAL_PROVIDERS:
-        return jsonify({"error": f"Unsupported provider '{provider}'."}), 400
+    body = _json_body()
+    provider = _provider_name(body)
+    api_key = _str(body, "api_key", MAX_API_KEY_CHARS)
     if not api_key:
         return jsonify({"error": "missing 'api_key'"}), 400
     credentials.set_key(provider, api_key)
@@ -226,12 +264,74 @@ def set_api_key():
 
 @app.delete("/api/settings/api-key")
 def delete_api_key():
-    body = request.get_json(silent=True) or {}
-    provider = body.get("provider")
-    if provider not in CREDENTIAL_PROVIDERS:
-        return jsonify({"error": f"Unsupported provider '{provider}'."}), 400
+    provider = _provider_name(_json_body())
     credentials.delete_key(provider)
     return jsonify({"ok": True})
+
+
+MAX_QUESTION_CHARS = 4000
+MAX_TOKEN_COUNT = 10_000_000
+MAX_API_KEY_CHARS = 512
+MAX_SKIP_IDS = 10_000
+MAX_SQLITE_INT = 2**63 - 1
+
+
+def _json_body():
+    """The request's JSON body, which must be an object ({} if there is none)."""
+    body = request.get_json(silent=True)
+    if body is None:
+        return {}
+    if not isinstance(body, dict):
+        raise InvalidRequest("The request body must be a JSON object.")
+    return body
+
+
+def _str(body, key, max_chars=None):
+    """body[key] stripped, '' if missing or null. Raises InvalidRequest for a value
+    that is not text or is longer than max_chars."""
+    value = body.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise InvalidRequest(f"'{key}' must be text")
+    value = value.strip()
+    if max_chars is not None and len(value) > max_chars:
+        raise InvalidRequest(f"'{key}' must be at most {max_chars} characters")
+    return value
+
+
+def _int_id(value, name):
+    """A database id: a whole number (not true/false, not text), within what the
+    database stores."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_SQLITE_INT:
+        raise InvalidRequest(f"'{name}' must be a whole number id")
+    return value
+
+
+def _token_count(value, name):
+    """A token count: 0 if missing, else a whole number from 0 to MAX_TOKEN_COUNT."""
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_TOKEN_COUNT:
+        raise InvalidRequest(f"'{name}' must be a whole number from 0 to {MAX_TOKEN_COUNT}")
+    return value
+
+
+def _clean_queries(raw):
+    """The search queries from a request: a list of text, stripped, with blank and
+    repeated ones (ignoring case) dropped. At least one must remain, and no more
+    than llm.MAX_QUERIES of at most llm.MAX_QUERY_CHARS characters each, since every
+    one is run against every selected source."""
+    if not isinstance(raw, list) or not all(isinstance(q, str) for q in raw):
+        raise InvalidRequest("'queries' must be a list of text")
+    if any(len(" ".join(q.split())) > llm.MAX_QUERY_CHARS for q in raw):
+        raise InvalidRequest(f"Each search query must be at most {llm.MAX_QUERY_CHARS} characters")
+    queries = llm.clean_queries(raw)
+    if not queries:
+        raise InvalidRequest("missing or empty 'queries'")
+    if len(queries) > llm.MAX_QUERIES:
+        raise InvalidRequest(f"At most {llm.MAX_QUERIES} search queries are allowed")
+    return queries
 
 
 def _optional_year(body, field):
@@ -274,14 +374,14 @@ def _optional_range(body):
 
 
 def _validate_ai_api(ai_api):
-    if ai_api not in SUPPORTED_PROVIDERS:
+    if not isinstance(ai_api, str) or ai_api not in SUPPORTED_PROVIDERS:
         raise ValueError(f"Unsupported ai_api '{ai_api}'.")
 
 
 def _validate_ai_model(ai_api, ai_model):
     """Models are only unique within a provider, so the pair is validated."""
     _validate_ai_api(ai_api)
-    if ai_model not in llm.MODELS[ai_api]:
+    if not isinstance(ai_model, str) or ai_model not in llm.MODELS[ai_api]:
         raise ValueError(f"Unsupported ai_model '{ai_model}' for '{ai_api}'.")
 
 
@@ -334,6 +434,9 @@ def _dataset_to_dict(dataset_row, papers):
         "to_date": dataset_row["to_date"],
         "expanded_queries": dataset_row["expanded_queries"],
         "sources": dataset_row["sources"],
+        # How complete each search was (None for a dataset from before it was
+        # recorded): see create_dataset.
+        "retrieval": dataset_row.get("retrieval"),
         "created_at": dataset_row["created_at"],
         "papers": papers,
         # The actual publication-year spread of what got retrieved (not to
@@ -366,8 +469,8 @@ def expand_dataset_query():
     OpenAlex's rate limit trips, the frontend can retry *just* the
     retrieval step with these same queries/usage - without paying for
     another expansion call just to retry a paper-database fetch."""
-    body = request.get_json(silent=True) or {}
-    question = (body.get("question") or "").strip()
+    body = _json_body()
+    question = _str(body, "question", MAX_QUESTION_CHARS)
     if not question:
         return jsonify({"error": "missing 'question'"}), 400
 
@@ -394,6 +497,10 @@ def expand_dataset_query():
     try:
         queries, expand_usage, title = llm.expand_query(question, ai_api, ai_model)
     except llm.LLMError as exc:
+        if exc.usage is not None:
+            # The model answered (and was billed) but the answer was unusable. No
+            # dataset follows, so the cost is logged on its own rather than lost.
+            db.record_llm_call("query_expansion", ai_api, exc.usage.model, exc.usage)
         return jsonify({"error": str(exc)}), 400
 
     return jsonify(
@@ -419,38 +526,114 @@ def create_dataset():
     (e.g. OpenAlex's rate limit) leaves no partial state - retrying this
     same request with the same body is always safe, and never re-runs the
     LLM expansion that already happened in step 1."""
-    body = request.get_json(silent=True) or {}
-    question = (body.get("question") or "").strip()
-    queries = body.get("queries")
-    usage = body.get("usage") or {}
+    body = _json_body()
+    question = _str(body, "question", MAX_QUESTION_CHARS)
+    usage = body.get("usage")
+    if usage is None:
+        usage = {}
+    if not isinstance(usage, dict):
+        raise InvalidRequest("'usage' must be an object")
     # Short title from the expansion step; carried through here so a retried
     # retrieval keeps it without another LLM call. Optional (a placeholder is
     # made from the topic if missing).
-    title = str(body.get("title") or "").strip()[:MAX_DATASET_NAME_CHARS]
+    title = _str(body, "title")[:MAX_DATASET_NAME_CHARS]
     if not question:
         return jsonify({"error": "missing 'question'"}), 400
-    if not isinstance(queries, list) or not queries:
-        return jsonify({"error": "missing or empty 'queries'"}), 400
+    queries = _clean_queries(body.get("queries"))
 
     try:
         from_date, to_date = _optional_range(body)
         usage_api, usage_model = _ai_choice({"ai_api": usage.get("ai_api"), "ai_model": usage.get("model")})
-        input_tokens = int(usage.get("input_tokens") or 0)
-        output_tokens = int(usage.get("output_tokens") or 0)
         sources = search_sources.validate_sources(body.get("sources"))
-    except (ValueError, TypeError) as exc:
-        return jsonify({"error": str(exc) or "invalid 'usage'"}), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    input_tokens = _token_count(usage.get("input_tokens"), "input_tokens")
+    output_tokens = _token_count(usage.get("output_tokens"), "output_tokens")
+    expand_usage = llm.Usage(input_tokens, output_tokens, model=usage_model, provider=usage_api)
 
+    # A long search spends the sources' quotas, so the same search is not run twice at
+    # once (a second tab, a double click); the second asker is told, and finds the
+    # dataset reused once the first has finished.
+    search_key = (question.lower(), from_date, to_date, tuple(sources), tuple(q.lower() for q in queries))
+    with _exclusive("search", search_key) as acquired:
+        if not acquired:
+            return jsonify({"error": "This search is already running. Wait for it to finish."}), 409
+        return _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage)
+
+
+# Searches that finished while a retrieval was still failing, kept for a few minutes so
+# its retry button only re-runs what did not finish (a broad search can be minutes of
+# requests). Dropped when the retrieval succeeds, so a later search of the same
+# question asks the sources again, and after SEARCH_CACHE_SECONDS, so it is never stale.
+# Keyed by (source id, query, from date, to date); the value is (when, SearchResult).
+_SEARCH_CACHE = {}
+_SEARCH_CACHE_LOCK = threading.Lock()
+SEARCH_CACHE_SECONDS = 600
+# Bounded by the papers held, not by how many searches: a full search is thousands of
+# papers with abstracts, so this keeps the most it can hold to some tens of MB.
+SEARCH_CACHE_MAX_PAPERS = 20_000
+
+
+def _cached_search(key):
+    """The finished search stored under `key`, or None."""
+    now = time.monotonic()
+    with _SEARCH_CACHE_LOCK:
+        for stale in [k for k, (when, _) in _SEARCH_CACHE.items() if now - when >= SEARCH_CACHE_SECONDS]:
+            del _SEARCH_CACHE[stale]
+        entry = _SEARCH_CACHE.get(key)
+    return entry[1] if entry else None
+
+
+def _remember_search(key, found):
+    """Keep a finished search, dropping the oldest ones if that holds too many papers."""
+    with _SEARCH_CACHE_LOCK:
+        _SEARCH_CACHE[key] = (time.monotonic(), found)
+        # The newest is never dropped for its own size (a search is at most
+        # MAX_RESULTS_PER_SEARCH papers), so a retry always keeps the last finished one.
+        while len(_SEARCH_CACHE) > 1 and sum(len(f) for _, f in _SEARCH_CACHE.values()) > SEARCH_CACHE_MAX_PAPERS:
+            del _SEARCH_CACHE[min(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k][0])]
+
+
+def _forget_searches(keys):
+    with _SEARCH_CACHE_LOCK:
+        for key in keys:
+            _SEARCH_CACHE.pop(key, None)
+
+
+def _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage):
+    """Run every query against every selected source and save the dataset (the
+    caller holds the search's lock)."""
     # Every selected source is searched with every query. All of them have to
     # succeed: a source that fails (rate limit, rejected key) fails the whole
     # retrieval, with nothing saved, so the retry button is always safe and a
-    # dataset never silently lacks a source the user asked for.
+    # dataset never silently lacks a source the user asked for. The searches that
+    # did finish are kept briefly (see _SEARCH_CACHE), so a retry does not repeat them.
+    result_lists = []
+    retrieval = []
+    used = []
     try:
-        result_lists = [
-            search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date)
-            for source_id in sources
-            for q in queries
-        ]
+        for source_id in sources:
+            for q in queries:
+                key = (source_id, q, from_date, to_date)
+                found = _cached_search(key)
+                if found is None:
+                    found = search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date)
+                    _remember_search(key, found)
+                used.append(key)
+                result_lists.append(found)
+                # Kept with the dataset, so how complete each search was can be seen
+                # later: `total` is what the source says matches, `fetched` what it
+                # returned, `capped` why any were left out.
+                retrieval.append(
+                    {
+                        "source": source_id,
+                        "query": q,
+                        "total": getattr(found, "total", None),
+                        "fetched": getattr(found, "fetched", len(found)),
+                        "kept": len(found),
+                        "capped": getattr(found, "capped", None),
+                    }
+                )
         candidates = openalex.dedupe(result_lists)
     except requests.HTTPError as exc:
         return _openalex_error_response(exc)
@@ -460,13 +643,20 @@ def create_dataset():
     except SourceError as exc:
         return jsonify({"error": str(exc)}), 502
 
-    expand_usage = llm.Usage(input_tokens, output_tokens, model=usage_model, provider=usage_api)
-    dataset_id = db.create_dataset(
-        question, queries, from_date=from_date, to_date=to_date, name=title, sources=sources
+    # One transaction: a failure here leaves no half-made dataset, and the finished
+    # searches stay kept (see _SEARCH_CACHE) so the retry does not repeat them.
+    dataset_id = db.save_retrieved_dataset(
+        question,
+        queries,
+        candidates,
+        expand_usage,
+        from_date=from_date,
+        to_date=to_date,
+        name=title,
+        sources=sources,
+        retrieval=retrieval,
     )
-    db.record_llm_call("query_expansion", usage_api, expand_usage.model, expand_usage, dataset_id=dataset_id)
-    paper_ids = db.get_or_create_papers(candidates)
-    db.add_papers_to_dataset(dataset_id, paper_ids)
+    _forget_searches(used)
 
     dataset_row = db.get_dataset(dataset_id)
     papers = db.get_dataset_papers(dataset_id)
@@ -493,11 +683,9 @@ def update_dataset(dataset_id):
     not editable."""
     if db.get_dataset(dataset_id) is None:
         return jsonify({"error": "dataset not found"}), 404
-    name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+    name = _str(_json_body(), "name", MAX_DATASET_NAME_CHARS)
     if not name:
         return jsonify({"error": "'name' cannot be blank"}), 400
-    if len(name) > MAX_DATASET_NAME_CHARS:
-        return jsonify({"error": f"'name' must be at most {MAX_DATASET_NAME_CHARS} characters"}), 400
     db.rename_dataset(dataset_id, name)
     return jsonify(
         _dataset_to_dict(db.get_dataset(dataset_id), db.get_dataset_papers(dataset_id, include_excluded=True))
@@ -519,7 +707,7 @@ def update_analysis_run(run_id):
     """Rename a run. Names are unique among live runs (case-insensitive)."""
     if db.get_analysis_run(run_id) is None:
         return jsonify({"error": "analysis run not found"}), 404
-    name = " ".join(str((request.get_json(silent=True) or {}).get("name") or "").split())
+    name = " ".join(_str(_json_body(), "name").split())
     if not name:
         return jsonify({"error": "'name' cannot be blank"}), 400
     if len(name) > db.MAX_RUN_NAME_CHARS:
@@ -549,13 +737,18 @@ def find_dataset_abstracts(dataset_id):
     if db.get_dataset(dataset_id) is None:
         return jsonify({"error": "dataset not found"}), 404
 
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     skip_ids = body.get("skip_ids") or []
     skip_sources = body.get("skip_sources") or []
-    if not isinstance(skip_ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in skip_ids):
-        return jsonify({"error": "'skip_ids' must be a list of integers"}), 400
+    if (
+        not isinstance(skip_ids, list)
+        or len(skip_ids) > MAX_SKIP_IDS
+        or not all(isinstance(i, int) and not isinstance(i, bool) for i in skip_ids)
+    ):
+        return jsonify({"error": f"'skip_ids' must be a list of at most {MAX_SKIP_IDS} integers"}), 400
     if (
         not isinstance(skip_sources, list)
+        or len(skip_sources) > len(abstracts.SOURCE_IDS)
         or not all(isinstance(s, str) for s in skip_sources)
         or not set(skip_sources) <= abstracts.SOURCE_IDS
     ):
@@ -612,12 +805,19 @@ def update_dataset_paper(dataset_id, paper_id):
     in the dataset but are skipped when it's used in an analysis run."""
     if db.get_dataset(dataset_id) is None:
         return jsonify({"error": "dataset not found"}), 404
-    excluded = (request.get_json(silent=True) or {}).get("excluded")
+    excluded = _json_body().get("excluded")
     if not isinstance(excluded, bool):
         return jsonify({"error": "'excluded' must be true or false"}), 400
     if not db.set_dataset_paper_excluded(dataset_id, paper_id, excluded):
         return jsonify({"error": "paper not in dataset"}), 404
     return jsonify({"id": paper_id, "excluded": excluded})
+
+
+MAX_PAPER_TITLE_CHARS = 1000
+MAX_PAPER_ABSTRACT_CHARS = 20_000
+MAX_PAPER_VENUE_CHARS = 300
+MAX_PAPER_URL_CHARS = 2000
+MIN_PAPER_YEAR, MAX_PAPER_YEAR = 1000, 2100
 
 
 @app.patch("/api/papers/<int:paper_id>")
@@ -630,22 +830,24 @@ def update_paper(paper_id):
     if db.get_paper(paper_id) is None:
         return jsonify({"error": "paper not found"}), 404
 
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     fields = {}
     if "title" in body:
-        title = (body.get("title") or "").strip()
+        title = _str(body, "title", MAX_PAPER_TITLE_CHARS)
         if not title:
             return jsonify({"error": "'title' cannot be blank"}), 400
         fields["title"] = title
     if "abstract" in body:
-        fields["abstract"] = (body.get("abstract") or "").strip()
+        fields["abstract"] = _str(body, "abstract", MAX_PAPER_ABSTRACT_CHARS)
     # The DOI is deliberately not editable: it's how the same paper is
     # recognized across searches (db.get_or_create_paper), so changing it
     # would split off a duplicate that lacks the user's edits.
     if "venue" in body:
-        fields["venue"] = (body.get("venue") or "").strip() or None
+        fields["venue"] = _str(body, "venue", MAX_PAPER_VENUE_CHARS) or None
     if "url" in body:
         raw_url = body.get("url")
+        if isinstance(raw_url, str) and len(raw_url) > MAX_PAPER_URL_CHARS:
+            return jsonify({"error": f"'url' must be at most {MAX_PAPER_URL_CHARS} characters"}), 400
         url = safe_url(raw_url)
         # Blank clears the link; anything else must be a web address, since it
         # is opened in the browser (javascript: and data: links are refused).
@@ -656,11 +858,10 @@ def update_paper(paper_id):
         fields["url"] = url
     if "year" in body:
         year = body.get("year")
-        if year is not None:
-            try:
-                year = int(year)
-            except (TypeError, ValueError):
-                return jsonify({"error": "'year' must be an integer"}), 400
+        if year is not None and (
+            isinstance(year, bool) or not isinstance(year, int) or not MIN_PAPER_YEAR <= year <= MAX_PAPER_YEAR
+        ):
+            return jsonify({"error": f"'year' must be a year from {MIN_PAPER_YEAR} to {MAX_PAPER_YEAR}"}), 400
         fields["year"] = year
 
     # Not a data correction: whether the user has read the paper, shared like
@@ -681,9 +882,9 @@ def update_paper(paper_id):
 
 @app.post("/api/analysis-runs")
 def create_analysis_run():
-    body = request.get_json(silent=True) or {}
+    body = _json_body()
     dataset_ids = body.get("dataset_ids")
-    grading_prompt = (body.get("grading_prompt") or "").strip()
+    grading_prompt = _str(body, "grading_prompt", MAX_PROMPT_DESCRIPTION_CHARS)
     prompt_id = body.get("prompt_id")
 
     if not isinstance(dataset_ids, list) or not dataset_ids:
@@ -691,22 +892,19 @@ def create_analysis_run():
     if prompt_id is not None:
         # An existing saved prompt: its own description is used, so any
         # grading_prompt text in the body is ignored.
-        try:
-            prompt_id = int(prompt_id)
-        except (TypeError, ValueError):
-            return jsonify({"error": "invalid 'prompt_id'"}), 400
+        prompt_id = _int_id(prompt_id, "prompt_id")
         if db.get_prompt(prompt_id) is None:
             return jsonify({"error": "prompt not found"}), 400
     elif not grading_prompt:
         return jsonify({"error": "missing 'prompt_id' or 'grading_prompt'"}), 400
+    # De-duplicated, order preserved - a repeated id would otherwise hit
+    # analysis_run_dataset's (run_id, dataset_id) PK constraint on the
+    # second insert and crash with a raw 500 instead of a clean error.
+    dataset_ids = list(dict.fromkeys(_int_id(d, "dataset_ids") for d in dataset_ids))
     try:
-        # De-duplicated, order preserved - a repeated id would otherwise hit
-        # analysis_run_dataset's (run_id, dataset_id) PK constraint on the
-        # second insert and crash with a raw 500 instead of a clean error.
-        dataset_ids = list(dict.fromkeys(int(d) for d in dataset_ids))
         ai_api, ai_model = _ai_choice(body)
-    except (ValueError, TypeError) as exc:
-        return jsonify({"error": str(exc) or "invalid 'dataset_ids'"}), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     for dataset_id in dataset_ids:
         if db.get_dataset(dataset_id) is None:
@@ -817,16 +1015,12 @@ MAX_PROMPT_DESCRIPTION_CHARS = 4000
 
 def _prompt_fields(body):
     """(name, description, error) from a create/edit body."""
-    name = (body.get("name") or "").strip()
-    description = (body.get("description") or "").strip()
+    name = _str(body, "name", MAX_PROMPT_NAME_CHARS)
+    description = _str(body, "description", MAX_PROMPT_DESCRIPTION_CHARS)
     if not name:
         return None, None, "'name' cannot be blank"
     if not description:
         return None, None, "'description' cannot be blank"
-    if len(name) > MAX_PROMPT_NAME_CHARS:
-        return None, None, f"'name' must be at most {MAX_PROMPT_NAME_CHARS} characters"
-    if len(description) > MAX_PROMPT_DESCRIPTION_CHARS:
-        return None, None, f"'description' must be at most {MAX_PROMPT_DESCRIPTION_CHARS} characters"
     return name, description, None
 
 
@@ -837,7 +1031,7 @@ def list_prompts():
 
 @app.post("/api/prompts")
 def create_prompt():
-    name, description, error = _prompt_fields(request.get_json(silent=True) or {})
+    name, description, error = _prompt_fields(_json_body())
     if error:
         return jsonify({"error": error}), 400
     prompt_id = db.create_prompt(name, description)
@@ -862,7 +1056,7 @@ def get_prompt(prompt_id):
 def update_prompt(prompt_id):
     if db.get_prompt(prompt_id) is None:
         return jsonify({"error": "prompt not found"}), 404
-    name, description, error = _prompt_fields(request.get_json(silent=True) or {})
+    name, description, error = _prompt_fields(_json_body())
     if error:
         return jsonify({"error": error}), 400
     db.update_prompt(prompt_id, name, description)
@@ -891,7 +1085,7 @@ def update_run_result(run_id, paper_id):
     """Set the user's relevance call on one scored paper in this run."""
     if not db.get_analysis_run(run_id):
         return jsonify({"error": "analysis run not found"}), 404
-    relevance = (request.get_json(silent=True) or {}).get("relevance")
+    relevance = _json_body().get("relevance")
     if not isinstance(relevance, str) or relevance not in db.RELEVANCE_VALUES:
         return jsonify({"error": "'relevance' must be relevant, neutral or not_relevant"}), 400
     if not db.set_result_relevance(run_id, paper_id, relevance):
@@ -910,11 +1104,7 @@ def mark_run_example(run_id):
     if not prompt:
         return jsonify({"error": "this run's prompt no longer exists"}), 400
 
-    body = request.get_json(silent=True) or {}
-    try:
-        paper_id = int(body.get("paper_id"))
-    except (TypeError, ValueError):
-        return jsonify({"error": "missing or invalid 'paper_id'"}), 400
+    paper_id = _int_id(_json_body().get("paper_id"), "paper_id")
 
     result = db.get_run_result(run_id, paper_id)
     if not result or result["score"] is None or not result["rationale"]:

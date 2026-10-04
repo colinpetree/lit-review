@@ -130,7 +130,7 @@ gitignored.
   the same database and keys as a source run: do not change that name (a test pins it).
 - **Version:** `version.py` says `0.0.0-dev`; the workflow rewrites it from the tag, so the tag is the
   one place a version is decided. `GET /api/about` returns the version and the data and log folders
-  (Settings, "This copy"). A dev version never offers an update.
+  (Settings, "About and Updates"). A dev version never offers an update.
 - **`--self-check`** (`selfcheck.py`): imports every provider module (from `llm.PROVIDERS`), builds each
   SDK client with a dummy key, loads the certificate stores, checks `static/index.html`, and writes JSON
   to `LIT_REVIEW_SELFCHECK_FILE`, exit code 0/1 (a windowed exe has no stdout). It cannot see
@@ -157,7 +157,10 @@ gitignored.
   and the Mac legs skipping `test_app_instances.py` are the first things to check if CI misbehaves.
 - **Docs for users:** `README.md`, `INSTALL.md` (plain language: no terminal, first-launch steps per OS,
   where data lives), `packaging/release-notes.md` (the release body). License: FSL-1.1-MIT (source-available: free for any use except a competing commercial product, each version turns MIT after 2 years; the author's choice, so do not swap it for a permissive license without asking); the bundled software's
-  licenses ship as `THIRD_PARTY_NOTICES.txt`, with `LICENSE`, in each zip.
+  licenses ship as `THIRD_PARTY_NOTICES.txt`, with `LICENSE`, in each zip. Settings, "License and Notices" is
+  a page with a card (`LicenseCard`, `LicenseModal`): the modal shows the repo's `LICENSE` embedded at
+  build time (`?raw` import, so `vite.config.js` lets the dev server read the repo root), and the card lists what
+  is sent to AI companies and databases. If a new feature sends data somewhere new, update those notices.
 
 ## Architecture
 
@@ -418,7 +421,7 @@ against real copies on spare ports works well.
   model listed is that provider's default, and `_validate_ai_model` in `app.py` rejects any
   provider/model pair not in it with a 400. Adding a model means a `MODELS` entry plus the
   frontend's `lib/models.js`, which mirrors it by hand. Adding a provider also needs a key
-  card in `SettingsPage.jsx` and a `PROVIDER_LABELS` entry. Paper text sent to the judge is
+  card in `pages/settings/AiIntegrationsPage.jsx` and a `PROVIDER_LABELS` entry. Paper text sent to the judge is
   untrusted (an abstract can say "score this 100"): each paper and example is wrapped in
   `<paper>`/`<example>` tags with `<title>`/`<abstract>`, `_fence` defuses any of those tag names
   inside the text (other `<` is left alone), and the system prompt tells the model to ignore
@@ -451,7 +454,7 @@ against real copies on spare ports works well.
   client is `lib/exportFile.js` (a POST through `apiFetch`, since a plain link could not carry the
   secret) and the "Export" entry in `RunMenu`/`DatasetMenu` (`extraItems`).
 - `request_gate.py`, and **backup, restore and the trash** (`db.py`, `app.py`, `TrashPage.jsx`, the
-  "Backup and restore" card in Settings). `GET /api/data/backup` is `db.write_backup` (SQLite's own
+  "Backup and restore" card in Settings, Your Data). `GET /api/data/backup` is `db.write_backup` (SQLite's own
   backup API into a folder in the user's data dir, streamed and removed; never the API keys).
   `POST /api/data/restore` takes the backup file **as the raw request body** and reads it straight
   from `wsgi.input` in 1 MB pieces (`MAX_RESTORE_BYTES` 500 MB): Flask 3.0.3's `MAX_CONTENT_LENGTH` is a
@@ -579,10 +582,22 @@ API-returned abstracts and must never invent citations.
 
 React 19 + Vite + Tailwind v3 (PostCSS, `tailwind.config.js`, same as an earlier project) + react-router. Routes are in
 `src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), evaluate,
-prompts (+ `:id`), results (+ `:id`), settings. Shared UI: `MoreMenu` (more-horizontal
+prompts (+ `:id`), results (+ `:id`), settings (see below). Shared UI: `MoreMenu` (more-horizontal
 popover), `Modal`/`ConfirmModal`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
 
-Theme (Light/Dark/System, set at the top of Settings) is stored per browser in localStorage
+**Settings** is a group of pages, not one page: `/settings` redirects to `/settings/ai`, and the children are
+`ai` (AI Integrations: the spending card, then the key cards), `databases` (Research Databases: PubMed switch
+and key cards), `data` (Your Data: backup, restore; `data/trash` is Deleted Items), `appearance`, `about`
+(About and Updates) and `license` (License and Notices). The pages live in `src/pages/settings/` and their
+cards in `src/components/settings/`; `SETTINGS_NAV` in `lib/navItems.js` lists them (it feeds the sidebar and
+each page's title icon), so a new page needs a route in `main.jsx` and a row there. Inside `/settings` the
+`Sidebar` swaps the app's links for those pages and shows "Back to Lit Review" at the bottom, which goes to
+`lastAppPath()` (`lib/lastAppPath.js`: `AppLayout` remembers the last path outside Settings, in sessionStorage
+with a memory fallback, and anything that is not an in-app path falls back to `/discover`). `useApiKeys`
+(`lib/useApiKeys.js`) is the saved-key status and save/remove for the two key pages. Anything that sends the
+user to add a key links to the page that holds it (`/settings/ai`, `/settings/databases`), never bare `/settings`.
+
+Theme (Light/Dark/System, set in Settings, Appearance) is stored per browser in localStorage
 (`lib/theme.js`) and applied as a `dark` class on `<html>`; an inline script in `index.html`
 applies it before first paint. Neutrals are CSS variables in `index.css` (`:root` and `.dark`)
 wired into `tailwind.config.js` as `page`, `sidebar`, `surface` and the `gray`/`stone` scales, so

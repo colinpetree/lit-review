@@ -41,9 +41,9 @@ These downloads are not signed with a paid developer certificate, so your comput
 Lit Review needs two kinds of key, both from the companies that provide the service. Open **Settings** (in the left-hand menu) and paste them in:
 
 1. A free **OpenAlex** key (it gives you a larger daily allowance for searches).
-2. A key for **one AI provider**: Anthropic (Claude), OpenAI, or Google (Gemini). The AI company charges you for what it scores, based on your use. Lit Review shows an estimate before every run and can stop a run at a limit you set in **Settings → Spending**.
+2. A key for **one AI provider**: Anthropic (Claude), OpenAI, or Google (Gemini). The AI company charges you for what it scores, based on your use. Lit Review shows an estimate before every run and can stop a run at a limit you set in **Settings → AI Integrations**.
 
-The other paper databases (Semantic Scholar, Elsevier/Scopus, Springer Nature) are optional. Each card in Settings explains where to get its key.
+The other research databases (Semantic Scholar, Elsevier/Scopus, Springer Nature) are optional. Each card in Settings explains where to get its key.
 
 Then go to **Discover Papers**, describe your research question, and follow the steps.
 
@@ -56,12 +56,12 @@ Then go to **Discover Papers**, describe your research question, and follow the 
 
 ## Your data
 
-Your datasets, results and prompts are kept in your own user folder, not in the program folder, so **updating or deleting the program does not delete your work**. **Settings → This copy** shows the exact folder. By default:
+Your datasets, results and prompts are kept in your own user folder, not in the program folder, so **updating or deleting the program does not delete your work**. **Settings → About and Updates** shows the exact folder. By default:
 
 - Windows: `C:\Users\<you>\AppData\Local\lit-review\lit-review`
 - Mac: `~/Library/Application Support/lit-review`
 
-Your API keys are kept encrypted in that same area. Make a backup of your work from **Settings → Backup and restore**. API keys are deliberately not part of a backup.
+Your API keys are kept encrypted in that same area. Make a backup of your work from **Settings → Your Data**. API keys are deliberately not part of a backup.
 
 ## Updating
 
@@ -72,7 +72,7 @@ When a new version is available, Lit Review shows a notice at the top of the pag
 - **It does not open, or shows a message box:** read the message. It says what to try.
 - **Windows says it cannot start or a file is missing:** make sure you extracted the whole zip (step 2 above).
 - **The browser shows "not connected":** open Lit Review again from its icon, which opens a connected window.
-- **Anything else:** the log is in the **Log folder** shown in **Settings → This copy**. The icon's **Open log folder** shows it. Send that file to whoever is helping you.
+- **Anything else:** the log is in the **Log folder** shown in **Settings → About and Updates**. The icon's **Open log folder** shows it. Send that file to whoever is helping you.
 
 ## Removing it
 

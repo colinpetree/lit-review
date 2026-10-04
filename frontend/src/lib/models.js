@@ -1,7 +1,7 @@
 // Mirrors the model ids in backend/llm.py's MODELS (per provider) - kept in
 // sync by hand since there's no shared schema between the two. Adding a
 // provider or model here also means adding it to the backend, and a key card
-// for the provider in SettingsPage.jsx.
+// for the provider in pages/settings/AiIntegrationsPage.jsx.
 import { AnthropicIcon, GeminiIcon, OpenAIIcon } from '../components/ProviderIcons'
 
 export const PROVIDER_LABELS = {
@@ -28,6 +28,13 @@ export const MODELS_BY_PROVIDER = {
     { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
     { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' },
   ],
+}
+
+// "A, B, and C": a provider's model names as a sentence, cheapest first.
+export function modelNameList(aiApi) {
+  const names = (MODELS_BY_PROVIDER[aiApi] ?? []).map((m) => m.label)
+  if (names.length < 3) return names.join(' and ')
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`
 }
 
 export const PROVIDER_ICONS = {

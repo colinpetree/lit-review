@@ -81,7 +81,7 @@ export default function DiscoverPapersPage() {
   const runDiscovery = async (e) => {
     e.preventDefault()
     if (!configured) {
-      navigate('/settings')
+      navigate('/settings/ai')
       return
     }
     const trimmed = question.trim()

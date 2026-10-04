@@ -455,7 +455,7 @@ export default function DatasetDetailPage() {
                   <>
                     Missing abstracts are looked up automatically. Add {keylessPublishers.join(' and ')} API{' '}
                     {keylessPublishers.length === 1 ? 'key' : 'keys'} in{' '}
-                    <Link to="/settings" className="underline">
+                    <Link to="/settings/databases" className="underline">
                       Settings
                     </Link>{' '}
                     to find more, or you can update them manually.

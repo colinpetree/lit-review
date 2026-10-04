@@ -113,7 +113,7 @@ export default function EvaluatePapersPage() {
   const runEvaluation = async (e) => {
     e.preventDefault()
     if (!configured) {
-      navigate('/settings')
+      navigate('/settings/ai')
       return
     }
     if (!runRequest) return

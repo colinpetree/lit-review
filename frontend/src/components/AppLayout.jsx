@@ -1,5 +1,7 @@
-import { Outlet } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import { rememberAppPath } from '../lib/lastAppPath'
 import UpdateBanner from './UpdateBanner'
 import { useThemeSync } from '../lib/theme'
 import useNotConnected from '../lib/useNotConnected'
@@ -8,6 +10,9 @@ import { NOT_CONNECTED_MESSAGE } from '../lib/session'
 export default function AppLayout() {
   useThemeSync()
   const notConnected = useNotConnected()
+  // So "Back to Lit Review" in Settings knows where to return to.
+  const { pathname, search } = useLocation()
+  useEffect(() => rememberAppPath({ pathname, search }), [pathname, search])
   return (
     <div className="flex h-screen bg-page">
       <Sidebar />

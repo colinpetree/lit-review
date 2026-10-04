@@ -12,7 +12,12 @@ import ScoringPromptsPage from './pages/ScoringPromptsPage'
 import PromptDetailPage from './pages/PromptDetailPage'
 import PastResultsPage from './pages/PastResultsPage'
 import RunResultsPage from './pages/RunResultsPage'
-import SettingsPage from './pages/SettingsPage'
+import AiIntegrationsPage from './pages/settings/AiIntegrationsPage'
+import ResearchDatabasesPage from './pages/settings/ResearchDatabasesPage'
+import YourDataPage from './pages/settings/YourDataPage'
+import AppearancePage from './pages/settings/AppearancePage'
+import AboutPage from './pages/settings/AboutPage'
+import LicensePage from './pages/settings/LicensePage'
 import TrashPage from './pages/TrashPage'
 
 // The app opens this page with its secret after the # in the address. Take it, and
@@ -33,8 +38,17 @@ createRoot(document.getElementById('root')).render(
           <Route path="prompts/:id" element={<PromptDetailPage />} />
           <Route path="results" element={<PastResultsPage />} />
           <Route path="results/:id" element={<RunResultsPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="settings/trash" element={<TrashPage />} />
+          <Route path="settings">
+            <Route index element={<Navigate to="ai" replace />} />
+            <Route path="ai" element={<AiIntegrationsPage />} />
+            <Route path="databases" element={<ResearchDatabasesPage />} />
+            <Route path="data" element={<YourDataPage />} />
+            <Route path="data/trash" element={<TrashPage />} />
+            <Route path="appearance" element={<AppearancePage />} />
+            <Route path="about" element={<AboutPage />} />
+            <Route path="license" element={<LicensePage />} />
+            <Route path="*" element={<Navigate to="/settings/ai" replace />} />
+          </Route>
         </Route>
       </Routes>
     </BrowserRouter>

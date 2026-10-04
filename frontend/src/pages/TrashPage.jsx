@@ -111,7 +111,7 @@ export default function TrashPage() {
         ) : null
       }
     >
-      <BackLink to="/settings">Back to Settings</BackLink>
+      <BackLink to="/settings/data">Back to Your Data</BackLink>
       {error ? <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {notice ? (
         <div className="mt-4 text-sm text-gray-700">

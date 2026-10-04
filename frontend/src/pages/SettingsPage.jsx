@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CircleDollarSign, Database, Download, Info, Monitor, Moon, Sun } from 'lucide-react'
+import { CircleDollarSign, Database, Download, Info, Monitor, Moon, Scale, Sun } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
@@ -12,6 +12,7 @@ import useSavedState from '../lib/useSavedState'
 import { usePubMedEnabled } from '../lib/pubmedSetting'
 import { useUpdateCheckEnabled } from '../lib/updateCheck'
 import ConfirmModal from '../components/ConfirmModal'
+import LicenseModal from '../components/LicenseModal'
 import { downloadBackup, restoreBackup } from '../lib/dataFiles'
 import { DEFAULT_THRESHOLD_TEXT, formatUsd, parseThreshold, useSpendThresholdText } from '../lib/spendSetting'
 import {
@@ -217,6 +218,59 @@ function AboutCard() {
         computer’s settings folder for the app. If something goes wrong, the log folder has details that help
         whoever is fixing it.
       </p>
+    </Card>
+  )
+}
+
+// The license, and what leaves this computer when the app is used, in one place a user can
+// find without the download folder.
+function LicenseCard() {
+  const [open, setOpen] = useState(false)
+  return (
+    <Card className="flex flex-col gap-5">
+      <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-800 [--icon-nudge:-1px]">
+        <Scale size={18} className="shrink-0" />
+        License and notices
+      </h2>
+
+      <div className="flex flex-col gap-1.5">
+        <p className="text-sm font-medium text-gray-700">License</p>
+        <p className="text-xs text-gray-400">
+          Lit Review is free to use for any purpose, including at work. You may not use its code to offer a competing
+          commercial product or service. Copyright 2026 Colin Petree.
+        </p>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="self-start rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+        >
+          View full license
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <p className="text-sm font-medium text-gray-700">Notices</p>
+        <ul className="flex list-disc flex-col gap-1.5 pl-4 text-xs text-gray-400">
+          <li>
+            Your research question, your grading criteria, and the titles and abstracts of the papers being judged are
+            sent to the AI company you choose, to write search queries and to score papers. Lit Review does not send
+            them anywhere else.
+          </li>
+          <li>
+            The search queries are sent to the paper databases you search, and a paper’s DOI is sent to the databases
+            used to look up a missing abstract.
+          </li>
+          <li>
+            The AI company and each database bill or limit you under their own terms. Scores and rationales are AI
+            judgments and can be wrong; read the papers before relying on them.
+          </li>
+          <li>
+            Nothing is sent to the author of Lit Review. Your data stays on this computer, apart from the above.
+          </li>
+        </ul>
+      </div>
+
+      {open && <LicenseModal onClose={() => setOpen(false)} />}
     </Card>
   )
 }
@@ -600,6 +654,7 @@ export default function SettingsPage() {
 
         <SettingsSection title="This copy">
           <AboutCard />
+          <LicenseCard />
           <UpdatesCard />
         </SettingsSection>
 

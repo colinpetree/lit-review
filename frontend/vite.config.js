@@ -5,6 +5,8 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // LicenseModal imports the LICENSE file at the repo root, outside this folder.
+    fs: { allow: ['..'] },
     proxy: {
       // The backend refuses any request not addressed to 127.0.0.1:5175 (see
       // reject_foreign_requests in backend/app.py), so the proxy rewrites Host

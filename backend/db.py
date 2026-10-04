@@ -1041,16 +1041,13 @@ def rename_analysis_run(run_id, name):
 
 
 def delete_analysis_run(run_id):
-    """Hard delete: the run, its scores and its dataset links are removed,
-    since nothing depends on a run. What it leaves behind is detached, not
-    deleted: its llm_call rows stay (run_id cleared) so total spend is still
-    right, and prompt examples marked from it stay with their prompt."""
+    """Soft delete, like datasets and prompts: the run is hidden everywhere but kept, with
+    its scores, its dataset links and what it spent, in Deleted Items. There it can be
+    restored (restore_from_trash) or removed for good (purge_from_trash)."""
     with _LOCK, closing(_connect()) as conn:
-        conn.execute("UPDATE llm_call SET run_id = NULL WHERE run_id = ?", (run_id,))
-        conn.execute("UPDATE prompt_example SET source_run_id = NULL WHERE source_run_id = ?", (run_id,))
-        conn.execute("DELETE FROM analysis_result WHERE run_id = ?", (run_id,))
-        conn.execute("DELETE FROM analysis_run_dataset WHERE run_id = ?", (run_id,))
-        conn.execute("DELETE FROM analysis_run WHERE id = ?", (run_id,))
+        conn.execute(
+            "UPDATE analysis_run SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL", (_now(), run_id)
+        )
         conn.commit()
 
 
@@ -1318,10 +1315,13 @@ def list_prompt_examples(prompt_id):
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
-            SELECT pe.id, pe.paper_id, pe.source_run_id, pe.score, pe.rationale, pe.created_at,
+            -- The run an example was marked from, only while that run can still be opened: a
+            -- deleted run's page is gone, so its link would lead nowhere.
+            SELECT pe.id, pe.paper_id, r.id AS source_run_id, pe.score, pe.rationale, pe.created_at,
                    p.title, p.year
             FROM prompt_example pe
             JOIN paper p ON p.id = pe.paper_id
+            LEFT JOIN analysis_run r ON r.id = pe.source_run_id AND r.deleted_at IS NULL
             WHERE pe.prompt_id = ?
             ORDER BY pe.created_at DESC, pe.id DESC
             """,
@@ -1815,8 +1815,7 @@ _TRASH_TABLES = {"dataset": "dataset", "prompt": "prompt", "run": "analysis_run"
 
 
 def list_trash():
-    """What was deleted but is still kept: datasets and prompts (soft-deleted) and any
-    result runs deleted by an older version (a run is removed outright now)."""
+    """What was deleted but is still kept: datasets, prompts and result runs (all soft-deleted)."""
     with closing(_connect()) as conn:
         datasets = conn.execute(
             """
@@ -1902,17 +1901,33 @@ def purge_from_trash(kind, item_id):
         if row is None:
             return None
         if kind == "dataset":
-            in_use = conn.execute(
-                "SELECT COUNT(*) FROM analysis_run_dataset WHERE dataset_id = ?", (item_id,)
-            ).fetchone()[0]
+            use = conn.execute(
+                """
+                SELECT COUNT(*) AS total, COALESCE(SUM(r.deleted_at IS NULL), 0) AS live
+                FROM analysis_run_dataset ard JOIN analysis_run r ON r.id = ard.run_id
+                WHERE ard.dataset_id = ?
+                """,
+                (item_id,),
+            ).fetchone()
         elif kind == "prompt":
-            in_use = conn.execute("SELECT COUNT(*) FROM analysis_run WHERE prompt_id = ?", (item_id,)).fetchone()[0]
+            use = conn.execute(
+                "SELECT COUNT(*) AS total, COALESCE(SUM(deleted_at IS NULL), 0) AS live FROM analysis_run WHERE prompt_id = ?",
+                (item_id,),
+            ).fetchone()
         else:
-            in_use = 0
-        if in_use:
+            use = None
+        if use is not None and use["total"]:
+            # A run that is itself in the trash still holds a link to this (and the database
+            # keeps it): it has to be removed first. Which it is changes what to do about it.
+            live, trashed = use["live"], use["total"] - use["live"]
+            if live:
+                raise TrashError(
+                    f"{live} result run{' still uses' if live == 1 else 's still use'} this {kind}. "
+                    f"Delete {'that run' if live == 1 else 'those runs'} first."
+                )
             raise TrashError(
-                f"{in_use} result run{' still uses' if in_use == 1 else 's still use'} this {kind}. "
-                f"Delete {'that run' if in_use == 1 else 'those runs'} first."
+                f"{trashed} deleted result run{' still uses' if trashed == 1 else 's still use'} this {kind}. "
+                f"Delete {'that run' if trashed == 1 else 'those runs'} permanently first."
             )
         if kind == "dataset":
             paper_ids = [r[0] for r in conn.execute("SELECT paper_id FROM dataset_paper WHERE dataset_id = ?", (item_id,))]

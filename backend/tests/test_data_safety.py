@@ -364,17 +364,18 @@ class TestRestoreWaitsForRunningWork:
 
 
 class TestTrashList:
-    def test_it_lists_deleted_datasets_and_prompts(self, client):
+    def test_it_lists_deleted_datasets_prompts_and_runs(self, client):
         data = populate()
         db.delete_analysis_run(data["run"])
         db.delete_dataset(data["dataset"])
         db.delete_prompt(data["prompt"])
         trash = client.get("/api/trash").get_json()
+        assert [r["id"] for r in trash["runs"]] == [data["run"]]
+        assert trash["runs"][0]["result_count"] == 3
         assert [d["name"] for d in trash["datasets"]] == ["Dataset"]
         assert trash["datasets"][0]["paper_count"] == 3
         assert [p["name"] for p in trash["prompts"]] == ["Coral prompt"]
         assert trash["prompts"][0]["example_count"] == 1
-        assert trash["runs"] == []
 
     def test_live_things_are_not_in_it(self, client):
         populate()
@@ -399,11 +400,9 @@ class TestRestoreFromTrash:
         assert [p["id"] for p in client.get("/api/prompts").get_json()["prompts"]] == [prompt_id]
         assert client.get("/api/trash").get_json() == {"datasets": [], "prompts": [], "runs": []}
 
-    def test_a_run_deleted_by_an_older_version_gets_a_free_name_back(self, client):
+    def test_a_deleted_run_gets_a_free_name_back_if_its_name_was_taken(self, client):
         data = populate()
-        with closing(db._connect()) as conn:
-            conn.execute("UPDATE analysis_run SET deleted_at = '2026-01-01T00:00:00+00:00' WHERE id = ?", (data["run"],))
-            conn.commit()
+        db.delete_analysis_run(data["run"])
         taken = db.create_analysis_run([data["dataset"]], "g", "anthropic", "claude-haiku-4-5", data["prompt"])
         name_in_use = db.get_analysis_run(taken)["name"]
         with closing(db._connect()) as conn:
@@ -474,17 +473,20 @@ class TestPurge:
         db.delete_prompt(data["prompt"])
         assert client.delete(f"/api/trash/prompt/{data['prompt']}").status_code == 409
         db.delete_analysis_run(data["run"])
+        # Still held back while the run is only in Deleted Items: it has to go for good first.
+        held = client.delete(f"/api/trash/prompt/{data['prompt']}")
+        assert held.status_code == 409
+        assert held.get_json()["error"] == "1 deleted result run still uses this prompt. Delete that run permanently first."
+        assert client.delete(f"/api/trash/run/{data['run']}").status_code == 200
         response = client.delete(f"/api/trash/prompt/{data['prompt']}")
         assert response.status_code == 200
         assert scalar("SELECT COUNT(*) FROM prompt_example") == 0
         assert scalar("SELECT COUNT(*) FROM paper") == 3  # still in the live dataset
         assert integrity_ok()
 
-    def test_a_run_deleted_by_an_older_version_goes_and_its_spending_stays(self, client):
+    def test_a_deleted_run_goes_for_good_and_its_spending_stays(self, client):
         data = populate()
-        with closing(db._connect()) as conn:
-            conn.execute("UPDATE analysis_run SET deleted_at = '2026-01-01T00:00:00+00:00' WHERE id = ?", (data["run"],))
-            conn.commit()
+        db.delete_analysis_run(data["run"])
         before_spent = spent()
         assert client.delete(f"/api/trash/run/{data['run']}").status_code == 200
         assert scalar("SELECT COUNT(*) FROM analysis_run") == 0 and scalar("SELECT COUNT(*) FROM analysis_result") == 0
@@ -522,9 +524,7 @@ class TestEmptyTrash:
 
     def test_runs_go_first_so_what_they_used_is_free(self, client):
         data = populate()
-        with closing(db._connect()) as conn:
-            conn.execute("UPDATE analysis_run SET deleted_at = '2026-01-01T00:00:00+00:00' WHERE id = ?", (data["run"],))
-            conn.commit()
+        db.delete_analysis_run(data["run"])
         db.delete_dataset(data["dataset"])
         db.delete_prompt(data["prompt"])
         body = client.delete("/api/trash").get_json()
@@ -534,3 +534,88 @@ class TestEmptyTrash:
 
     def test_an_empty_trash_is_fine(self, client):
         assert client.delete("/api/trash").get_json() == {"purged": {"run": 0, "dataset": 0, "prompt": 0}, "papers_removed": 0, "skipped": []}
+
+
+class TestDeletingARun:
+    """Deleting a result run is a soft delete like a dataset's or a prompt's."""
+
+    def test_the_run_disappears_but_all_of_it_is_kept(self, client):
+        data = populate()
+        before_spent = spent()
+        before = counts()
+        response = client.delete(f"/api/analysis-runs/{data['run']}")
+        assert response.status_code == 200
+        assert client.get(f"/api/analysis-runs/{data['run']}").status_code == 404
+        assert client.get("/api/analysis-runs").get_json()["runs"] == []
+        assert counts() == before  # its scores, its examples and its spending are all still there
+        assert scalar("SELECT COUNT(*) FROM analysis_run_dataset WHERE run_id = ?", data["run"]) == 1
+        assert spent() == pytest.approx(before_spent)
+        assert [r["id"] for r in client.get("/api/trash").get_json()["runs"]] == [data["run"]]
+
+    def test_a_deleted_run_cannot_be_opened_scored_renamed_or_deleted_again(self, client):
+        data = populate()
+        client.delete(f"/api/analysis-runs/{data['run']}")
+        assert client.post(f"/api/analysis-runs/{data['run']}/process").status_code == 404
+        assert client.patch(f"/api/analysis-runs/{data['run']}", json={"name": "x"}).status_code == 404
+        assert client.delete(f"/api/analysis-runs/{data['run']}").status_code == 404
+        assert client.post(f"/api/analysis-runs/{data['run']}/export", json={"format": "csv"}).status_code == 404
+
+    def test_restoring_it_brings_back_the_run_with_its_scores(self, client):
+        data = populate()
+        name = client.get(f"/api/analysis-runs/{data['run']}").get_json()["name"]
+        client.delete(f"/api/analysis-runs/{data['run']}")
+        assert client.post(f"/api/trash/run/{data['run']}/restore").status_code == 200
+        run = client.get(f"/api/analysis-runs/{data['run']}").get_json()
+        assert run["name"] == name and len(run["results"]) == 3
+        assert [r["id"] for r in client.get("/api/analysis-runs").get_json()["runs"]] == [data["run"]]
+
+    def test_deleting_for_good_removes_it_and_keeps_the_spending(self, client):
+        data = populate()
+        before_spent = spent()
+        client.delete(f"/api/analysis-runs/{data['run']}")
+        assert client.delete(f"/api/trash/run/{data['run']}").status_code == 200
+        assert scalar("SELECT COUNT(*) FROM analysis_run") == 0 and scalar("SELECT COUNT(*) FROM analysis_result") == 0
+        assert spent() == pytest.approx(before_spent)
+        assert integrity_ok()
+
+    def test_a_prompt_example_does_not_link_to_a_run_that_is_deleted(self, client):
+        data = populate()
+        assert db.list_prompt_examples(data["prompt"])[0]["source_run_id"] == data["run"]
+        client.delete(f"/api/analysis-runs/{data['run']}")
+        assert db.list_prompt_examples(data["prompt"])[0]["source_run_id"] is None
+        client.post(f"/api/trash/run/{data['run']}/restore")
+        assert db.list_prompt_examples(data["prompt"])[0]["source_run_id"] == data["run"]
+
+    def test_a_dataset_used_by_a_deleted_run_must_wait_until_the_run_is_gone(self, client):
+        data = populate()
+        client.delete(f"/api/analysis-runs/{data['run']}")
+        db.delete_dataset(data["dataset"])
+        held = client.delete(f"/api/trash/dataset/{data['dataset']}")
+        assert held.status_code == 409
+        assert held.get_json()["error"] == "1 deleted result run still uses this dataset. Delete that run permanently first."
+        assert scalar("SELECT COUNT(*) FROM dataset WHERE id = ?", data["dataset"]) == 1
+
+    def test_a_live_run_is_what_the_message_names_when_there_are_both_kinds(self, client):
+        data = populate()
+        db.create_analysis_run([data["dataset"]], "g", "anthropic", "claude-haiku-4-5", data["prompt"])
+        client.delete(f"/api/analysis-runs/{data['run']}")
+        db.delete_dataset(data["dataset"])
+        error = client.delete(f"/api/trash/dataset/{data['dataset']}").get_json()["error"]
+        assert error == "1 result run still uses this dataset. Delete that run first."
+
+    def test_empty_trash_removes_the_run_then_what_it_used(self, client):
+        data = populate()
+        client.delete(f"/api/analysis-runs/{data['run']}")
+        db.delete_dataset(data["dataset"])
+        db.delete_prompt(data["prompt"])
+        body = client.delete("/api/trash").get_json()
+        assert body["purged"] == {"run": 1, "dataset": 1, "prompt": 1} and body["skipped"] == []
+        assert counts()["analysis_run"] == 0 and counts()["dataset"] == 0 and counts()["prompt"] == 0
+        assert integrity_ok()
+
+    def test_the_name_of_a_deleted_run_can_be_used_again(self, client):
+        data = populate()
+        name = db.get_analysis_run(data["run"])["name"]
+        client.delete(f"/api/analysis-runs/{data['run']}")
+        again = db.create_analysis_run([data["dataset"]], "g", "anthropic", "claude-haiku-4-5", data["prompt"])
+        assert db.get_analysis_run(again)["name"] == name

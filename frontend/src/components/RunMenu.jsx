@@ -34,7 +34,7 @@ export default function RunMenu({ run, onRenamed, onDelete, className, extraItem
       {modal === 'delete' ? (
         <ConfirmModal
           title="Delete this result run?"
-          message="This removes the run and its scores from your results. The papers and datasets are not affected."
+          message="This moves the run and its scores out of your results into Deleted Items (in Settings), where you can restore it or delete it permanently. The papers and datasets are not affected."
           confirmLabel="Delete"
           busyLabel="Deleting..."
           danger

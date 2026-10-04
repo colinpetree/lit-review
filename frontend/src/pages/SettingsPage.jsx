@@ -329,7 +329,7 @@ function DataCard() {
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-700">Deleted items</p>
         <p className="text-xs text-gray-400">
-          Datasets and prompts you delete are kept, hidden from the rest of the app, until you remove them for good.
+          Datasets, prompts and result runs you delete are kept, hidden from the rest of the app, until you remove them for good.
           Bring one back, or delete it permanently.
         </p>
         <Link

@@ -389,8 +389,10 @@ against real copies on spare ports works well.
   One restore at a time (`_exclusive("restore", 0)`). **Trash:** `GET /api/trash`,
   `POST /api/trash/<kind>/<id>/restore` (a run gets a free name through `_unique_run_name`),
   `DELETE /api/trash/<kind>/<id>` (purge; 409 while a result run still uses the dataset or prompt) and
-  `DELETE /api/trash` (empty: runs, then datasets, then prompts, listing what stayed and why). Runs are
-  hard-deleted now, so the trash holds datasets and prompts, plus any run an older version soft-deleted.
+  `DELETE /api/trash` (empty: runs, then datasets, then prompts, listing what stayed and why). The
+  trash holds datasets, prompts and runs. A dataset or prompt is held back (409) while a **live** run
+  uses it ("Delete that run first") and also while a run that is itself in the trash does ("Delete
+  that run permanently first": the database keeps its link), which is why Empty trash goes runs first.
   A purge runs in one transaction, **detaches** `llm_call` rows (`dataset_id`/`run_id` NULL) instead of
   deleting them so total spend stays right, and removes only the purged item's own papers that nothing
   else refers to (not every unreferenced paper).
@@ -466,10 +468,14 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   copies that paper's score and reasoning); only the newest `db.EXAMPLE_LIMIT` are sent to
   the judge. A prompt created from Evaluate gets an AI title (requested in the run's first
   scoring call via `title_pending`; never for existing prompts, and any user edit clears
-  the flag). Prompts and datasets are soft-deleted (`deleted_at`); runs are hard-deleted
-  (`db.delete_analysis_run`: results and dataset links removed, `llm_call` and `prompt_example`
-  rows detached by clearing their run id, so spend totals and examples survive). Runs deleted
-  before that change remain as hidden `deleted_at` rows.
+  the flag). Datasets, prompts and runs are all soft-deleted (`deleted_at`) and kept in Deleted
+  Items (Settings), the only place anything is removed for good (`db.purge_from_trash`).
+  `db.delete_analysis_run` only sets `deleted_at`: every reader of runs already filters it (lists,
+  `get_analysis_run`, `_unique_run_name`), so a deleted run 404s everywhere and its scores, dataset
+  links and spending stay in the database. Purging a run clears its `llm_call.run_id` and
+  `prompt_example.source_run_id` instead of deleting those rows, so spend totals and examples
+  survive; until then `list_prompt_examples` hides the example's run link (the run page is gone).
+  Runs deleted by versions before the first soft delete (hard-deleted in between) are simply gone.
 
 - A run has its own `analysis_run.name`, unique among live (not deleted) runs, case-insensitive
   (`db._unique_run_name` adds " (2)" etc.; renames that clash get a 409). It starts as the

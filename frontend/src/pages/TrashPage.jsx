@@ -12,7 +12,6 @@ function sections(trash) {
     {
       kind: 'run',
       title: 'Result runs',
-      note: 'Deleted by an older version of Lit Review. A run you delete now is removed straight away.',
       items: trash.runs.map((r) => ({ id: r.id, name: r.name, detail: plural(r.result_count, 'scored paper'), deletedAt: r.deleted_at })),
     },
     {
@@ -99,7 +98,7 @@ export default function TrashPage() {
   return (
     <PageShell
       title="Deleted Items"
-      description="Datasets and prompts you deleted are kept here, hidden from the rest of the app, until you remove them for good. Restore brings one back as it was. Delete permanently removes it, and cannot be undone. Spending already recorded is not affected."
+      description="Datasets, prompts and result runs you deleted are kept here, hidden from the rest of the app, until you remove them for good. Restore brings one back as it was. Delete permanently removes it, and cannot be undone. Spending already recorded is not affected."
       actions={
         total ? (
           <button

@@ -344,13 +344,23 @@ not built.
   papers out unless asked, saying how many.
 - Check for new papers: a dataset can be searched again for papers that appeared since, with
   no AI cost, adding only the new ones (marked New). See "Stale datasets" under Open questions.
+- Export: the papers of a run (with scores and reasoning) or of a dataset, or just the ones a
+  filter shows, as CSV (spreadsheets), RIS (Zotero, EndNote, Mendeley) or BibTeX (LaTeX). A
+  retracted paper is marked in every format.
+- Cost control: an estimate of what a run will cost before it starts (from the prompt text, and
+  from what the model really wrote in the user's earlier runs once there is enough history), a
+  per-browser "ask before spending more than" amount in Settings, and a spending limit on each run
+  that pauses it, with a one-click way to raise the limit and carry on. See "Cost tracking".
+- Data safety: a backup of everything the app stores (not the API keys) that can be downloaded
+  and restored, with the replaced data kept as a file so a restore can be undone; and Deleted Items,
+  where a deleted dataset, prompt or result run can be restored or removed for good, with spending
+  history kept either way and nothing removed while a result run still depends on it.
 
 **Phase 4 (optional, later)**
 Not built, roughly in priority order: packaging (see Distribution / packaging; needed for the
 primary user), Semantic Scholar citation-graph exploration ("show me
-what cites/references this shortlisted paper"), export shortlist to BibTeX/RIS for the
-user's reference manager, Web of Science integration if the primary user's institution has
-API access, and packaging (see Distribution / packaging).
+what cites/references this shortlisted paper"), and Web of Science integration if the primary
+user's institution has API access.
 
 **Find missing abstracts (built).** The risk with automating this is *how* the gap is
 filled: asking an LLM to recall an abstract from its training data risks a fabricated
@@ -460,7 +470,11 @@ and `google-genai` SDKs, and the `providers.*` modules must be listed as hidden 
 because `llm.py` loads them by name at runtime. Also verify in the frozen build: the
 single-copy startup (the venv launcher problem does not apply, but the lock and port logic
 does), the `static` folder location, and that data and keys still land in the user's profile
-folders. There is no app version string yet; one is needed for the update check. Target user has never used a command line or downloaded code
+folders. There is no app version string yet; one is needed for the update check. Startup problems (the
+port taken by another program, a data folder that cannot be used) are only printed to the console
+today, which a double-click user never sees: the window just closes. The packaged build needs a
+dialog for these, which needs a small GUI toolkit chosen first; the console message and exit code
+are all there is for now. Target user has never used a command line or downloaded code
 from GitHub before, so "clone the repo and run pip install" is not acceptable UX. Plan:
 
 - **Packaging**: PyInstaller `--onedir` bundles the Flask backend + all Python deps +
@@ -540,9 +554,12 @@ from GitHub before, so "clone the repo and run pip install" is not acceptable UX
 
 ## Open questions to resolve before/while building
 
-- Whether/how to surface a per-search cost estimate or cap in the main UI (the underlying
-  data will exist either way — see Cost tracking above — so this is a UI/UX decision to
-  make once real per-run cost numbers are in hand, not a data-modeling one).
+- **Cost estimate and cap (resolved, built).** Evaluate Papers shows an estimated cost before a
+  run, asks for confirmation above an amount the user sets in Settings, and each run carries a
+  spending limit that is checked before every batch of 20 papers (so a run can pass it by up to one
+  batch). The estimate counts prompt text at about four characters a token and is approximate; the
+  real cost on the run page comes from the token counts each provider reports, times the price table
+  in `llm.MODELS`. Not built: recording the cost of a call that was billed but returned nothing usable.
 - **Stale datasets (resolved, built).** A dataset can be checked again from its page: the saved
   queries and sources are re-run over the time since the last check (with an overlap for late
   indexing), only papers not already held are added and marked New, and nothing is spent on the

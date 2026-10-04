@@ -12,9 +12,14 @@ fields (engineering/physical sciences, biology, health/medicine) so the design
 can't assume one discipline's databases or vocabulary. See [PLAN.md](PLAN.md) for the
 full design: data sources, pipeline stages, architecture decisions, and phased build-out.
 
-Current state: Phases 1-3 are built (OpenAlex retrieval, Claude-based query expansion and
-relevance scoring, SQLite persistence, multi-page UI). Three AI providers are implemented
-(Anthropic, OpenAI, Google Gemini); the user picks one per run. PubMed is a built search source (authoritative biology/health-medicine coverage).
+Current state: Phases 1-3 are built (retrieval, AI query expansion and relevance scoring, SQLite
+persistence, multi-page UI), and so is most of what came after: four search sources (OpenAlex,
+Semantic Scholar, Elsevier/Scopus, PubMed), three AI providers (Anthropic, OpenAI, Google Gemini;
+the user picks one per run), checking a dataset for new papers, retraction handling, export
+(CSV, RIS, BibTeX), a cost estimate with a spending threshold and per-run limit, backup and
+restore, and Deleted Items (datasets, prompts and runs are soft-deleted; Deleted Items is the
+only place anything is removed for good). The big missing piece is packaging (see PLAN.md,
+Distribution / packaging), which the primary user needs.
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
 command line, so end-user distribution must be a double-click executable (no

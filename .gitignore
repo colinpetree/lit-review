@@ -7,3 +7,27 @@ frontend/dist/
 /build/
 /dist/
 packaging/build/
+
+# Per-user app data and secrets: these live in the user's profile folders, never in the
+# repo, but a test run or a mis-set LIT_REVIEW_*_DIR could drop them here.
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+lit_review.db.*
+access.token
+instance.json
+instance.lock
+credentials.enc
+credentials.key
+credentials.lock
+*.corrupt-*
+logs/
+*.log
+
+# Local-only tool settings and caches
+.claude/settings.local.json
+.pytest_cache/
+**/__pycache__/

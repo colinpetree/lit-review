@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import UpdateBanner from './UpdateBanner'
 import { useThemeSync } from '../lib/theme'
 import useNotConnected from '../lib/useNotConnected'
 import { NOT_CONNECTED_MESSAGE } from '../lib/session'
@@ -20,6 +21,7 @@ export default function AppLayout() {
             {NOT_CONNECTED_MESSAGE}
           </p>
         ) : null}
+        <UpdateBanner />
         <Outlet />
       </main>
     </div>

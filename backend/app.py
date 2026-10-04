@@ -29,13 +29,19 @@ from werkzeug.utils import safe_join
 
 import abstracts
 import access
+import bundle
 import credentials
 import db
 import export
 import llm
+import logfile
 import openalex
 import search_sources
 import single_instance
+import tray
+import ui
+import updates
+import version
 from request_gate import RequestGate
 from source_http import SourceError, redact, safe_url
 
@@ -71,7 +77,7 @@ SCORE_CHUNK_SIZE = 20
 
 MAX_DATASET_NAME_CHARS = 120
 
-STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR = bundle.resource_path("static")
 # LIT_REVIEW_PORT is for tests only, so launching real copies never touches the
 # port a real app is using. The Vite dev proxy (vite.config.js) assumes 5175.
 PORT = int(os.environ.get("LIT_REVIEW_PORT") or 5175)
@@ -161,6 +167,14 @@ def add_security_headers(response):
 # score the same papers twice and pay twice.
 _BUSY_LOCKS = {}
 _BUSY_GUARD = threading.Lock()
+
+
+def _jobs_running():
+    """True while any slow job (a search, a lookup, a scoring run, a restore) is in
+    progress; the tray asks before quitting on one, since a call to the AI model
+    already paid for would be lost."""
+    with _BUSY_GUARD:
+        return any(lock.locked() for lock in _BUSY_LOCKS.values())
 
 
 @contextmanager
@@ -258,6 +272,27 @@ def health():
     """Lets a second launch tell that this port is already Lit Review, and which
     copy (`instance`) it is. Open to everyone, so it carries nothing private."""
     return jsonify({"app": "lit-review", "instance": INSTANCE_ID})
+
+
+@app.get("/api/about")
+def about():
+    """What Settings shows about this copy: its version and where it keeps things, so
+    a user can find their data and the log without guessing a hidden folder."""
+    return jsonify(
+        {
+            "version": version.__version__,
+            "data_dir": str(db.DB_PATH.parent),
+            "log_dir": str(db.DB_PATH.parent / "logs"),
+            "packaged": bundle.is_frozen(),
+        }
+    )
+
+
+@app.get("/api/update-check")
+def update_check():
+    """Is a newer release published? Asks GitHub at most once a day (updates.py), and
+    only when the page asks, which it does not if the user switched the check off."""
+    return jsonify(updates.check())
 
 
 @app.get("/api/settings/api-key")
@@ -1740,8 +1775,9 @@ class SingleOwnerServer(ThreadedWSGIServer):
 
 
 # How long a second launch waits for the first to start answering, when the
-# first holds the lock but has not bound its port yet (importing takes a moment).
-RUNNING_COPY_WAIT_SECONDS = 15
+# first holds the lock but has not bound its port yet (importing takes a moment; a
+# packaged first run can take far longer, while antivirus scans the unpacked files).
+RUNNING_COPY_WAIT_SECONDS = 60 if bundle.is_frozen() else 15
 # How long a second launch waits for a record before deciding the other copy is an
 # older version that never writes one (a new copy writes it within a second or two).
 LEGACY_GRACE_SECONDS = 4
@@ -1798,10 +1834,10 @@ def hand_over_to_running_copy(state_dir, wait_seconds=RUNNING_COPY_WAIT_SECONDS)
                 _open_browser(PORT)
                 return 0
         if time.monotonic() >= deadline:
-            print(
+            ui.show_error(
+                "Lit Review",
                 "Another copy of Lit Review is running but is not answering. "
                 "Close it and start Lit Review again.",
-                file=sys.stderr,
             )
             return 1
         time.sleep(0.25)
@@ -1814,20 +1850,92 @@ def _data_folder_problem(folder, exc):
         if isinstance(exc, db.DatabaseTooNew)
         else "Make sure that folder can be written to and the disk is not full, then start Lit Review again."
     )
-    print(
+    ui.show_error(
+        "Lit Review",
         "Lit Review cannot use its data folder:\n"
         f"  {folder}\n"
         f"{reason}\n"
         f"{advice}",
-        file=sys.stderr,
     )
     return 1
 
 
-def main():
+def _tray_wanted(argv):
+    """The tray is the packaged app's only visible part. From source it is off (the
+    console and Ctrl+C do the job) unless asked for with --tray; tests and CI turn
+    it off with LIT_REVIEW_NO_TRAY or --no-tray."""
+    if "--no-tray" in argv or os.environ.get("LIT_REVIEW_NO_TRAY"):
+        return False
+    return bundle.is_frozen() or "--tray" in argv
+
+
+def _confirm_quit():
+    """Quitting while a search, lookup or scoring run is in progress would lose a
+    call to the AI model that has already been paid for, so ask first."""
+    if not _jobs_running():
+        return True
+    return ui.confirm(
+        "Lit Review",
+        "Lit Review is still working (searching, looking up abstracts or scoring papers).\n\n"
+        "If you quit now, what it is doing is lost, and a scoring step you have already "
+        "been charged for may be wasted. Scored papers so far are kept.\n\n"
+        "Quit anyway?",
+    )
+
+
+def _serve(server, open_app, log_dir):
+    """Serve until the tray's Quit. The server runs on its own thread and the tray on
+    this one, because macOS needs its event loop on the main thread. Returns when the
+    tray ends: Quit, or the server dying (so the icon never stays up for a server
+    that is gone). Without a usable tray it just serves on this thread."""
+    try:
+        icon = tray.Tray(open_app, lambda: tray.open_folder(log_dir), _confirm_quit)
+    except tray.TrayUnavailable as exc:
+        app.logger.warning("No tray icon (%s); serving without one.", exc)
+        server.serve_forever()
+        return
+
+    failed = []
+
+    def serve():
+        try:
+            server.serve_forever()
+        except Exception:  # noqa: BLE001 - logged here, with the traceback
+            failed.append(True)
+            app.logger.error("The server stopped:\n%s", redact(traceback.format_exc()))
+        finally:
+            icon.stop()
+
+    thread = threading.Thread(target=serve, name="server", daemon=True)
+    thread.start()
+    try:
+        icon.run()
+    except Exception as exc:  # noqa: BLE001 - TrayUnavailable, or the shell failing under pystray
+        app.logger.warning("The tray icon stopped (%s); serving without one.", exc)
+        thread.join()
+    finally:
+        if thread.is_alive():
+            server.shutdown()
+            thread.join(10)
+    if failed:
+        ui.show_error(
+            "Lit Review",
+            "Lit Review stopped unexpectedly. Start it again, and if it keeps happening "
+            f"the log has the details:\n{log_dir}",
+        )
+
+
+def main(argv=None):
     """Start the app, unless this user already has a copy running, in which case
     open the browser on that one and exit. Returns the exit code."""
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if "--self-check" in argv:
+        import selfcheck
+
+        return selfcheck.run()
+    ui.ensure_streams()
     state_dir = db.DB_PATH.parent
+    log_dir = state_dir / "logs"
     try:
         # Held until the process ends (kept in a local that lives as long as main).
         instance_lock = single_instance.acquire(state_dir / "instance.lock")
@@ -1836,12 +1944,16 @@ def main():
     except OSError as exc:
         return _data_folder_problem(state_dir, exc)
 
+    # Only the copy that stays up writes the log: a second launch that just hands
+    # over has nothing to record.
+    logfile.setup(log_dir)
     try:
         # Everything that touches the data folder happens here, so a folder that
         # cannot be used is reported plainly at launch instead of as errors later.
         db.ensure_ready()
         token = access.load_or_create_token(state_dir)
     except (OSError, sqlite3.Error) as exc:
+        logfile.teardown()
         return _data_folder_problem(state_dir, exc)
 
     # Ports taken by another user's copy (or another program) are skipped, so two
@@ -1849,10 +1961,11 @@ def main():
     # browser is asked to open.
     server = start_server()
     if server is None:
-        print(
+        logfile.teardown()
+        ui.show_error(
+            "Lit Review",
             f"Lit Review could not find a free port from {PORT} to {PORT + PORT_FALLBACK_COUNT - 1}. "
             "Close some programs and start Lit Review again.",
-            file=sys.stderr,
         )
         return 1
     port = server.server_port
@@ -1863,18 +1976,28 @@ def main():
         access.write_instance(state_dir, port, INSTANCE_ID)
     except OSError as exc:
         server.server_close()
+        logfile.teardown()
         return _data_folder_problem(state_dir, exc)
+    use_tray = _tray_wanted(argv)
     Timer(1, _open_browser, args=(port, token)).start()
-    print(f"Lit Review is running at http://127.0.0.1:{port}  (press Ctrl+C to stop)")
+    # Console only, on purpose: the private link carries the secret, so it is never
+    # logged (and a packaged app has no console to show it on; its tray menu opens
+    # the signed-in page instead).
+    stop_hint = "use the tray icon" if use_tray else "press Ctrl+C"
+    print(f"Lit Review is running at http://127.0.0.1:{port}  ({stop_hint} to stop)")
     print(f"If your browser does not open, use this private link (only you can use it):\n  {access.launch_url(port, token)}")
     try:
-        server.serve_forever()
+        if use_tray:
+            _serve(server, lambda: _open_browser(port, token), log_dir)
+        else:
+            server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
         access.clear_instance(state_dir, INSTANCE_ID)
         instance_lock.release()
+        logfile.teardown()
     return 0
 
 

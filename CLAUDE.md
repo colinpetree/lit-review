@@ -18,8 +18,9 @@ Semantic Scholar, Elsevier/Scopus, PubMed), three AI providers (Anthropic, OpenA
 the user picks one per run), checking a dataset for new papers, retraction handling, export
 (CSV, RIS, BibTeX), a cost estimate with a spending threshold and per-run limit, backup and
 restore, and Deleted Items (datasets, prompts and runs are soft-deleted; Deleted Items is the
-only place anything is removed for good). The big missing piece is packaging (see PLAN.md,
-Distribution / packaging), which the primary user needs.
+only place anything is removed for good). Packaging is built (see "Packaging and release" below):
+a tag push builds a Windows zip and two Mac zips (Apple Silicon, Intel) on GitHub Actions, and the
+app checks GitHub for newer releases. Not yet verified on real Macs (see that section).
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
 command line, so end-user distribution must be a double-click executable (no
@@ -37,8 +38,10 @@ Every line in `requirements.txt` is pinned to the version that was tested (the p
 use newer parameters, such as `output_config` in `providers/anthropic.py`, that an older
 release would reject). When bumping one, run the whole test suite, since the tests fake the
 provider call and will not notice an SDK change by themselves. Check one real scoring call
-with your own key before shipping an SDK bump, and keep PLAN.md's packaging hidden-imports
-list in sync with the provider modules.
+with your own key before shipping an SDK bump. The packaged build takes its provider modules from
+`llm.PROVIDERS` (`pyinstaller.spec`) and `--self-check` imports and constructs each SDK client, so
+a new provider needs no list kept in sync (a test pins this); but run the frozen build's
+self-check after any SDK bump, since the SDKs import pieces lazily.
 
 **Frontend** (from `frontend/`):
 ```
@@ -84,6 +87,77 @@ npm run build
 Shell state does not persist between tool calls, so repeat this preamble each time. Use
 PowerShell for this, not Bash (fnm is set up for PowerShell). If 24.19.0 is gone, list
 installed versions in `%APPDATA%\fnm\node-versions` and use one of those.
+
+### Packaging and release
+
+The primary user gets a double-click app, not source. Build, from the repo root, on the OS you are
+building for (PyInstaller cannot cross-compile; CI builds all three):
+```
+cd frontend; npm run build                  # writes backend/static
+python packaging/make_icons.py              # packaging/build/: LitReview.ico, tray.png, LitReview.iconset
+python packaging/make_notices.py            # THIRD_PARTY_NOTICES.txt (licenses of what is bundled)
+pyinstaller backend/pyinstaller.spec --noconfirm     # needs backend/requirements-build.txt
+python packaging/smoke_test.py "dist/Lit Review/Lit Review.exe"   # self-check, then a real launch
+```
+`packaging/icon-source.png` is the one logo: 1024x1024, transparent, its own corners rounded about
+160 px. The script makes the Windows `.ico` from it as it is and the macOS look itself: art scaled
+to 824 px, squircle mask, drop shadow. `iconutil -c icns` runs only on a Mac, so CI does that step.
+Use `--distpath`/`--workpath` to build outside the repo; `/build`, `/dist` and `packaging/build` are
+gitignored.
+
+- **What the packaged app is:** a PyInstaller onedir folder, `console=False`, with a tray (Windows) or
+  menu-bar (macOS) icon and no console. `main()` in `app.py` serves on a thread and runs the tray
+  (`tray.py`, pystray) on the main thread, since macOS needs its event loop there. From source the
+  tray is off (console and Ctrl+C); `--tray` turns it on, `--no-tray` or `LIT_REVIEW_NO_TRAY=1`
+  turns it off (tests, CI). Quit from the tray asks first if a slow job holds an `_exclusive` lock
+  (`_jobs_running`), and the server thread dying takes the icon down with it. Shutdown and cleanup
+  (`server_close`, `clear_instance`, lock release, log teardown) all happen in `main()`'s `finally`,
+  never in the tray callback.
+- **No console means no stdout/stderr** (they are `None`: a `print` is a silent no-op and a message
+  is lost). `ui.py` is how anything is told to the user: `show_error` prints when there is a console
+  and otherwise opens the OS's own dialog (a Windows message box; `osascript` on macOS with the text
+  as arguments, never inside the script), `confirm` asks yes/no, `ensure_streams` replaces missing
+  streams with devnull. No GUI toolkit (tkinter is excluded: it would fight pystray on macOS).
+  `LIT_REVIEW_NO_DIALOG=1` turns dialogs off. The launch link carries the secret, so those two
+  `print`s stay console-only and never go through anything that logs.
+- **Log file:** `logfile.setup` (called in `main()` after the lock is won, so a hand-over launch writes
+  nothing) keeps warnings and errors in `<data dir>/logs/lit-review.log` (1 MB x 3), every line
+  passed through `source_http.redact` (it hides `key=`, `api_key=` and `token=` values). Request lines
+  are not kept. Tray: "Open log folder".
+- **Finding files:** `bundle.resource_path` (static files, `tray.png`): `sys._MEIPASS` when frozen,
+  the backend folder otherwise. Never use `__file__` for a shipped file. The data and key folders still
+  come from platformdirs with app name `lit-review` (`credentials.APP_NAME`), so a packaged copy sees
+  the same database and keys as a source run: do not change that name (a test pins it).
+- **Version:** `version.py` says `0.0.0-dev`; the workflow rewrites it from the tag, so the tag is the
+  one place a version is decided. `GET /api/about` returns the version and the data and log folders
+  (Settings, "This copy"). A dev version never offers an update.
+- **`--self-check`** (`selfcheck.py`): imports every provider module (from `llm.PROVIDERS`), builds each
+  SDK client with a dummy key, loads the certificate stores, checks `static/index.html`, and writes JSON
+  to `LIT_REVIEW_SELFCHECK_FILE`, exit code 0/1 (a windowed exe has no stdout). It cannot see
+  everything lazy, so the release checklist also makes one real call per provider and per source.
+- **Update check:** `updates.py`, `GET /api/update-check`. Asks GitHub's releases/latest once a day (10
+  minutes after a failure), sends only `User-Agent: lit-review/<version>`, accepts a link only if it is
+  `https://github.com/colinpetree/lit-review/...`, and never raises. The page shows a dismissible
+  banner (`UpdateBanner`, `lib/updateCheck.js`) and Settings has a per-browser switch; off means the
+  page never calls it. A draft or pre-release is invisible to it, so a draft release is not offered.
+  Needs the repo to be **public**.
+- **macOS specifics:** double-clicking an already running .app does not start a second process (Launch
+  Services sends it a "reopen" Apple event), so the hand-over used on Windows never runs;
+  `tray.register_reopen` listens for the event and opens the browser. This is **untested off a Mac**:
+  verify it on a real Mac (double-click twice). The app is a normal Dock app, not menu-bar only
+  (`LSUIElement` is off), so Cmd+Q and the Dock menu should work (also unverified). Bundle id
+  `io.github.colinpetree.lit-review` (changing it makes macOS treat a release as a new app). Builds
+  are signed ad hoc only; the first-launch "Open Anyway" step is in INSTALL.md.
+- **Workflow** (`.github/workflows/release.yml`): `prepare` checks the tag is `vN.N.N` and on `main`;
+  `build` (Windows, macOS arm64, `macos-15-intel`) installs the pinned requirements first, runs the frontend
+  and backend tests, builds, ad-hoc signs the Mac app, runs `smoke_test.py` on the built app, and zips
+  (`ditto` on Mac: `upload-artifact` would break an `.app`); `release` (tag pushes only, the only job with
+  write permission) makes a **draft** release with `SHA256SUMS.txt` for the maintainer to test and publish.
+  Actions are pinned by commit SHA. `workflow_dispatch` builds without releasing. The Intel runner label
+  and the Mac legs skipping `test_app_instances.py` are the first things to check if CI misbehaves.
+- **Docs for users:** `README.md`, `INSTALL.md` (plain language: no terminal, first-launch steps per OS,
+  where data lives), `packaging/release-notes.md` (the release body). License: FSL-1.1-MIT (source-available: free for any use except a competing commercial product, each version turns MIT after 2 years; the author's choice, so do not swap it for a permissive license without asking); the bundled software's
+  licenses ship as `THIRD_PARTY_NOTICES.txt`, with `LICENSE`, in each zip.
 
 ## Architecture
 

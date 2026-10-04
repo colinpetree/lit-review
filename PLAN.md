@@ -462,20 +462,20 @@ saves confirmed good calls as well.
 
 ## Distribution / packaging
 
-Status: nothing here is built yet. There is no PyInstaller spec, no GitHub Actions
-workflow and no update check in the repo, and the app currently runs from source
-(`python app.py` in `backend/`). This is the largest remaining gap against the primary user's
-needs. The `collect_all()` list below will also need `requests`, `filelock` and the `openai`
-and `google-genai` SDKs, and the `providers.*` modules must be listed as hidden imports,
-because `llm.py` loads them by name at runtime. Also verify in the frozen build: the
-single-copy startup (the venv launcher problem does not apply, but the lock and port logic
-does), the `static` folder location, and that data and keys still land in the user's profile
-folders. There is no app version string yet; one is needed for the update check. Startup problems (the
-port taken by another program, a data folder that cannot be used) are only printed to the console
-today, which a double-click user never sees: the window just closes. The packaged build needs a
-dialog for these, which needs a small GUI toolkit chosen first; the console message and exit code
-are all there is for now. Target user has never used a command line or downloaded code
-from GitHub before, so "clone the repo and run pip install" is not acceptable UX. Plan:
+Status: built. A pushed tag (`v0.1.0`) builds a Windows zip and two Mac zips on GitHub Actions and makes a
+draft release (`.github/workflows/release.yml`); `CLAUDE.md`, "Packaging and release", is the working
+description and `INSTALL.md` is the user's guide. What was decided: a hidden app with a tray / menu-bar
+icon (no console), unsigned builds (ad-hoc signed on Mac) with a first-launch guide, targets Windows plus
+macOS Apple Silicon and Intel, a public repo, a once-a-day update notice that can be switched off, and
+the FSL-1.1-MIT license (free for any use except a competing commercial product; each version becomes MIT
+after two years). Still open: verifying on real Macs (the reopen handler is untested off a Mac), how the
+Windows SmartScreen and antivirus warnings go on a first release, Apple signing and a Windows certificate
+if the warnings prove too much for the primary user, and an installer. The text below is the original
+design, kept for its reasoning (where it differs from what was built, CLAUDE.md wins).
+
+The original problem: nothing was built and the app ran from source. The target user has never used a
+command line or downloaded code from GitHub before, so "clone the repo and run pip install" is not
+acceptable UX. Plan:
 
 - **Packaging**: PyInstaller `--onedir` bundles the Flask backend + all Python deps +
   the built React/Vite/Tailwind static assets into a folder containing the executable

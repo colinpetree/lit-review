@@ -35,6 +35,7 @@ import db
 import export
 import llm
 import logfile
+import mac_app
 import notices
 import openalex
 import search_sources
@@ -1945,6 +1946,12 @@ def main(argv=None):
 
         return selfcheck.run()
     ui.ensure_streams()
+    if sys.platform == "darwin" and bundle.is_frozen() and mac_app.running_from_read_only_volume(sys.executable):
+        # Opened from the installer's disk image (or a read-only download folder) instead of
+        # from Applications: it could not update itself there, so say where to put it. Before
+        # the instance lock, so this launch holds nothing and hands over to nothing.
+        ui.show_error("Lit Review", mac_app.RUN_FROM_INSTALLER_MESSAGE)
+        return 1
     state_dir = db.DB_PATH.parent
     log_dir = state_dir / "logs"
     try:

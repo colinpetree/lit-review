@@ -3,13 +3,17 @@ menu bar do. AppKit itself only exists on a Mac, so what is tested here is the p
 generation and `MacActions` (all the decisions), plus that the wiring calls them."""
 
 import importlib.util
+import os
 import sys
+import types
 
 import pytest
 from PIL import Image, ImageDraw
 
+import app as app_module
 import bundle
 import mac_app
+import selfcheck
 import tray
 
 REPO = bundle.resource_path("..").resolve()
@@ -246,3 +250,140 @@ class TestTallShape:
         left, top, right, bottom = icons.menu_template(image).getchannel("A").getbbox()
         assert top >= 0 and bottom <= 36 and bottom - top == 36
         assert right - left < icons.MENU_GLYPH_WIDTH_PX
+
+
+class TestRunningFromAReadOnlyVolume:
+    """The installer's disk image, and the read-only copy macOS runs a fresh download from,
+    are read-only volumes: the app cannot update itself there, so it asks to be moved."""
+
+    @staticmethod
+    def volume(monkeypatch, flag=None, error=None):
+        """Make os.statvfs answer with `f_flag` (or raise); returns the paths it was asked about."""
+        asked = []
+
+        def statvfs(path):
+            asked.append(path)
+            if error:
+                raise error
+            return types.SimpleNamespace(f_flag=flag)
+
+        monkeypatch.setattr(os, "statvfs", statvfs, raising=False)  # Windows has no statvfs
+        return asked
+
+    def test_a_read_only_volume_is_flagged(self, monkeypatch):
+        self.volume(monkeypatch, flag=mac_app.ST_RDONLY)
+        assert mac_app.running_from_read_only_volume("/Volumes/Lit Review/Lit Review.app/Contents/MacOS/Lit Review")
+
+    def test_other_flags_do_not_hide_it_and_do_not_fake_it(self, monkeypatch):
+        self.volume(monkeypatch, flag=0x1000 | mac_app.ST_RDONLY)  # read-only plus an unrelated flag
+        assert mac_app.running_from_read_only_volume("/x")
+        self.volume(monkeypatch, flag=0x1000 | 0x2)  # unrelated flags only
+        assert not mac_app.running_from_read_only_volume("/x")
+
+    def test_a_writable_volume_is_not_flagged(self, monkeypatch):
+        self.volume(monkeypatch, flag=0)
+        assert not mac_app.running_from_read_only_volume("/Applications/Lit Review.app/Contents/MacOS/Lit Review")
+
+    def test_it_asks_about_the_real_path_so_a_link_into_a_disk_image_counts(self, monkeypatch, tmp_path):
+        asked = self.volume(monkeypatch, flag=0)
+        mac_app.running_from_read_only_volume(tmp_path / "x")
+        assert asked == [os.path.realpath(tmp_path / "x")]
+
+    @pytest.mark.parametrize("error", [OSError("gone"), ValueError("embedded null"), AttributeError("odd")])
+    def test_anything_unreadable_means_no_so_the_app_still_starts(self, monkeypatch, error):
+        self.volume(monkeypatch, error=error)
+        assert not mac_app.running_from_read_only_volume("/x")
+
+    @pytest.mark.parametrize("path", [None, ""])
+    def test_no_path_means_no(self, monkeypatch, path):
+        asked = self.volume(monkeypatch, flag=mac_app.ST_RDONLY)
+        assert not mac_app.running_from_read_only_volume(path)
+        assert asked == []
+
+    def test_a_platform_without_statvfs_means_no(self, monkeypatch):
+        monkeypatch.delattr(os, "statvfs", raising=False)  # as on Windows
+        assert not mac_app.running_from_read_only_volume("/x")
+
+    def test_the_constant_is_the_posix_one_where_there_is_one(self):
+        assert mac_app.ST_RDONLY == getattr(os, "ST_RDONLY", 1)
+
+
+class Reached(Exception):
+    """Raised by a stand-in for the instance lock: main() got past the installer check."""
+
+
+class TestTheInstallerCheckInMain:
+    """main() refuses to start from a read-only volume (a packaged Mac app only), before it
+    holds the instance lock or starts a server, and says where to put the app."""
+
+    @pytest.fixture
+    def launch(self, monkeypatch):
+        """Set up a launch: returns `run(...)`, which calls main() and reports (result, dialogs)."""
+        shown = []
+        monkeypatch.setattr(app_module.ui, "show_error", lambda title, message: shown.append((title, message)))
+
+        def lock(*args, **kwargs):
+            raise Reached
+
+        monkeypatch.setattr(app_module.single_instance, "acquire", lock)
+
+        def run(*, platform="darwin", frozen=True, read_only=True, argv=()):
+            monkeypatch.setattr(sys, "platform", platform)
+            monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+            monkeypatch.setattr(mac_app, "running_from_read_only_volume", lambda path: read_only)
+            try:
+                return app_module.main(list(argv)), shown
+            except Reached:
+                return "started", shown
+
+        return run
+
+    def test_from_a_read_only_volume_it_says_so_and_stops(self, launch):
+        result, shown = launch()
+        assert result == 1
+        assert shown == [("Lit Review", mac_app.RUN_FROM_INSTALLER_MESSAGE)]
+        assert "Applications" in mac_app.RUN_FROM_INSTALLER_MESSAGE
+
+    @pytest.mark.usefixtures("launch")  # the stand-in lock raises Reached if main() gets past the check
+    def test_it_asks_about_the_running_program(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(mac_app, "running_from_read_only_volume", lambda path: asked.append(path) or False)
+        with pytest.raises(Reached):
+            app_module.main([])
+        assert asked == [sys.executable]
+
+    def test_a_refused_launch_holds_no_lock_and_hands_over_to_nothing(self, launch, monkeypatch):
+        handed_over = []
+        monkeypatch.setattr(app_module, "hand_over_to_running_copy", lambda *a, **k: handed_over.append(a))
+        result, _ = launch()  # the stand-in lock raises Reached if it is ever asked for
+        assert result == 1 and handed_over == []
+
+    def test_from_a_writable_folder_it_starts_as_before(self, launch):
+        result, shown = launch(read_only=False)
+        assert result == "started" and shown == []
+
+    def test_a_source_run_is_never_stopped(self, launch):
+        result, shown = launch(frozen=False)
+        assert result == "started" and shown == []
+
+    def test_other_systems_are_never_stopped(self, launch):
+        result, shown = launch(platform="win32")
+        assert result == "started" and shown == []
+
+    def test_the_self_check_still_runs_from_a_read_only_volume(self, launch, monkeypatch):
+        # CI runs the mounted disk image's app with --self-check.
+        monkeypatch.setattr(selfcheck, "run", lambda: 7)
+        result, shown = launch(argv=["--self-check"])
+        assert result == 7 and shown == []
+
+    def test_with_dialogs_off_it_stops_quietly(self, monkeypatch):
+        # Not stubbing show_error here: the real one, with dialogs turned off and no console.
+        monkeypatch.setenv("LIT_REVIEW_NO_DIALOG", "1")
+        monkeypatch.setattr(app_module.ui, "_HAS_CONSOLE", False)
+        monkeypatch.setattr(app_module.ui, "_mac_dialog", lambda *a: pytest.fail("a dialog was shown"))
+        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(mac_app, "running_from_read_only_volume", lambda path: True)
+        assert app_module.main([]) == 1

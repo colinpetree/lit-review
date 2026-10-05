@@ -369,6 +369,69 @@ class TestWhatShips:
         assert version.__version__ == "0.0.0-dev"
 
 
+class TestMacDiskImage:
+    """Guards for the Mac download people use (a disk image) and the zip the updater uses.
+    The steps themselves only run on a Mac runner; these keep the workflow from losing them."""
+
+    WORKFLOW = (bundle.resource_path("..") / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    def step(self, name):
+        start = self.WORKFLOW.index(f"- name: {name}")
+        end = self.WORKFLOW.find("\n      - ", start + 1)
+        return self.WORKFLOW[start : end if end != -1 else len(self.WORKFLOW)]
+
+    def test_the_image_is_made_on_macs_only_from_the_signed_app_after_the_smoke_test(self):
+        step = self.step("Make the Mac disk image")
+        assert "if: runner.os == 'macOS'" in step
+        assert 'hdiutil create -volname "Lit Review" -srcfolder dmg -format UDZO' in step
+        assert 'ditto "dist/Lit Review.app" "dmg/Lit Review.app"' in step  # the same app as the zip
+        assert "ln -s /Applications dmg/Applications" in step
+        assert self.WORKFLOW.index("Sign the macOS app ad hoc") < self.WORKFLOW.index("Run the built app")
+        assert self.WORKFLOW.index("Run the built app") < self.WORKFLOW.index("Make the Mac disk image")
+
+    def test_the_image_is_mounted_and_checked_and_always_detached(self):
+        step = self.step("Make the Mac disk image")
+        assert "trap cleanup EXIT" in step and "hdiutil detach" in step and "-force" in step
+        assert "hdiutil verify" in step
+        assert "-readonly" in step and "-nobrowse" in step
+        assert "codesign --verify --deep --strict" in step  # what a user drags out is still signed
+        assert '--self-check' in step  # and runs from the read-only volume
+        assert "Applications\\nLit Review.app" in step  # nothing else is in the window
+
+    def test_the_start_up_check_is_proved_on_the_runner(self):
+        # mac_app.running_from_read_only_volume must see Applications as writable (or it would
+        # block every install) and the image as read-only, and the app must refuse from the image.
+        step = self.step("Make the Mac disk image")
+        assert 'test "$(readonly_flag /Applications)" = 0' in step
+        assert 'test "$(readonly_flag "$mnt")" = 1' in step
+        assert "timeout=60" in step  # a hook that does not fire must fail the job, not hang it
+        assert "got {code}" in step
+        # and the run uses throwaway folders, never the runner's real ones, with no dialog
+        assert "LIT_REVIEW_DATA_DIR" in step and "LIT_REVIEW_CONFIG_DIR" in step
+        assert "LIT_REVIEW_NO_DIALOG=1 LIT_REVIEW_NO_BROWSER=1 LIT_REVIEW_NO_TRAY=1" in step  # as the smoke test
+        # exit code 1 alone could be another start-up failure: a refusal also leaves no instance lock
+        assert 'test ! -e "$LIT_REVIEW_DATA_DIR/instance.lock"' in step
+
+    def test_both_files_are_uploaded_and_released(self):
+        assert "path: out/*\n" in self.WORKFLOW  # the build uploads everything it made
+        assert "path: out/*.zip" not in self.WORKFLOW
+        release = self.WORKFLOW[self.WORKFLOW.index("\n  release:") :]
+        assert "sha256sum *.zip *.dmg" in release
+        assert "out/*.zip" in release and "out/*.dmg" in release
+
+    def test_the_release_job_stops_unless_all_five_downloads_are_there(self):
+        release = self.WORKFLOW[self.WORKFLOW.index("\n  release:") :]
+        check = release[release.index("Check the downloads are all here") : release.index("- name: Checksums")]
+        assert '"${#zips[@]}" -ne 3' in check and '"${#dmgs[@]}" -ne 2' in check
+        assert "exit 1" in check
+        assert release.index("Check the downloads are all here") < release.index("softprops/action-gh-release")
+
+    def test_the_mac_zips_stay_for_the_updater(self):
+        zip_step = self.step("Zip it")
+        assert 'ditto -c -k --sequesterRsrc --keepParent "dist/Lit Review.app"' in zip_step
+        assert ".dmg" not in zip_step  # the image has its own step
+
+
 class TestConsoleDetection:
     class Stream:
         def __init__(self, tty):

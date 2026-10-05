@@ -1,9 +1,10 @@
 name: Release
 
 # Builds Lit Review for Windows and macOS (Apple Silicon and Intel) and, when a version
-# tag such as v0.1.0 is pushed, attaches the three zips to a DRAFT GitHub Release for
+# tag such as v0.1.0 is pushed, attaches the downloads (a Windows zip, and for each Mac a
+# disk image for people plus a zip for the in-app updater) to a DRAFT GitHub Release for
 # the maintainer to test and publish. Run by hand ("Run workflow") it only builds and
-# keeps the zips as artifacts, so a trial never makes a release.
+# keeps the files as artifacts, so a trial never makes a release.
 #
 # PyInstaller cannot cross-compile, so each operating system builds its own.
 
@@ -207,10 +208,56 @@ jobs:
           fi
           ls -l out
 
+      # The Mac download people use: open the disk image, drag Lit Review onto Applications.
+      # It holds the same signed, smoke-tested app as the zip (which the in-app updater uses), so
+      # it is made last. It is then mounted and checked: it must hold only the app and the
+      # Applications link, the app must still verify as signed, run from the read-only volume
+      # (--self-check), and refuse to start from it. The trap detaches it on every exit path.
+      - name: Make the Mac disk image
+        if: runner.os == 'macOS'
+        run: |
+          name="Lit-Review-$VERSION-${{ matrix.asset }}"
+          rm -rf dmg && mkdir dmg
+          ditto "dist/Lit Review.app" "dmg/Lit Review.app"
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Lit Review" -srcfolder dmg -format UDZO "out/$name.dmg"
+          hdiutil verify "out/$name.dmg"
+          mnt="$(mktemp -d)"
+          cleanup() { hdiutil detach "$mnt" -quiet || hdiutil detach "$mnt" -force -quiet || true; }
+          trap cleanup EXIT
+          hdiutil attach "out/$name.dmg" -readonly -nobrowse -mountpoint "$mnt"
+          echo "--- what is in the disk image"
+          ls -l "$mnt"
+          test "$(ls "$mnt")" = "$(printf 'Applications\nLit Review.app')" || { echo "::error::the disk image holds something unexpected"; exit 1; }
+          test "$(readlink "$mnt/Applications")" = "/Applications" || { echo "::error::the Applications link is wrong"; exit 1; }
+          codesign --verify --deep --strict "$mnt/Lit Review.app"
+          # The app's start-up check refuses to run from a read-only volume (mac_app.py). Prove it
+          # sees Applications as writable (else it would block every install) and the image as
+          # read-only, and that the app launched from the image really does refuse (exit 1).
+          readonly_flag() { python -c "import os, sys; print(os.statvfs(sys.argv[1]).f_flag & 1)" "$1"; }
+          test "$(readonly_flag /Applications)" = 0 || { echo "::error::Applications reads as read-only"; exit 1; }
+          test "$(readonly_flag "$mnt")" = 1 || { echo "::error::the disk image reads as writable"; exit 1; }
+          export LIT_REVIEW_DATA_DIR="$RUNNER_TEMP/dmg-data" LIT_REVIEW_CONFIG_DIR="$RUNNER_TEMP/dmg-config"
+          export LIT_REVIEW_NO_DIALOG=1 LIT_REVIEW_NO_BROWSER=1 LIT_REVIEW_NO_TRAY=1
+          app="$mnt/Lit Review.app/Contents/MacOS/Lit Review"
+          LIT_REVIEW_SELFCHECK_FILE="$RUNNER_TEMP/dmg-selfcheck.json" "$app" --self-check
+          python - "$app" <<'PY'
+          import subprocess, sys
+          try:
+              code = subprocess.run([sys.argv[1]], timeout=60).returncode
+          except subprocess.TimeoutExpired:
+              sys.exit("::error::the app started from the disk image instead of refusing")
+          sys.exit(0 if code == 1 else f"::error::expected exit code 1 from the disk image, got {code}")
+          PY
+          # Exit code 1 is also what other start-up failures return. The check runs before the
+          # instance lock is taken, so a lock file means the app got past it and failed later.
+          test ! -e "$LIT_REVIEW_DATA_DIR/instance.lock" || { echo "::error::the app got past the start-up check"; exit 1; }
+          ls -l out
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.asset }}
-          path: out/*.zip
+          path: out/*
           if-no-files-found: error
 
   release:
@@ -227,13 +274,27 @@ jobs:
           path: out
           merge-multiple: true
 
+      # Five downloads: the Windows zip, and for each Mac a disk image (for people) and a zip
+      # (for the in-app updater). A missing one must stop the release, not publish without it.
+      - name: Check the downloads are all here
+        run: |
+          cd out
+          ls -l
+          shopt -s nullglob
+          zips=(*.zip)
+          dmgs=(*.dmg)
+          if [ "${#zips[@]}" -ne 3 ] || [ "${#dmgs[@]}" -ne 2 ]; then
+            echo "::error::expected 3 zips and 2 disk images, found ${#zips[@]} and ${#dmgs[@]}: ${zips[*]} ${dmgs[*]}"
+            exit 1
+          fi
+
       - name: Checksums
         run: |
           cd out
-          sha256sum *.zip > SHA256SUMS.txt
+          sha256sum *.zip *.dmg > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      # A draft: nothing is public until the maintainer has tried the three downloads
+      # A draft: nothing is public until the maintainer has tried the downloads
       # and pressed Publish. (A draft is also invisible to the app's update check.)
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
@@ -243,4 +304,5 @@ jobs:
           generate_release_notes: true
           files: |
             out/*.zip
+            out/*.dmg
             out/SHA256SUMS.txt

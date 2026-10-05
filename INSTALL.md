@@ -11,12 +11,12 @@ Open the **[latest release](https://github.com/colinpetree/lit-review/releases/l
 | Your computer | File |
 |---|---|
 | Windows 10 or 11 | `Lit-Review-…-windows.zip` |
-| Mac with an Apple chip (M1, M2, M3, M4 or newer) | `Lit-Review-…-macos-apple-silicon.zip` |
-| Mac with an Intel chip | `Lit-Review-…-macos-intel.zip` |
+| Mac with an Apple chip (M1, M2, M3, M4 or newer) | `Lit-Review-…-macos-apple-silicon.dmg` |
+| Mac with an Intel chip | `Lit-Review-…-macos-intel.dmg` |
 
 Not sure which Mac you have? Click the Apple menu in the top-left corner, then **About This Mac**. It says either "Chip: Apple M…" or "Processor: Intel".
 
-The download is a few hundred megabytes.
+The download is about 50 megabytes. (The Mac `.zip` files on the release page are for Lit Review's own update feature. You can ignore them.)
 
 ## 2. Open it for the first time
 
@@ -31,10 +31,14 @@ These downloads are not signed with a paid developer certificate, so your comput
 
 ### Mac
 
-1. Double-click the zip to extract it. Drag **Lit Review** into your **Applications** folder.
-2. Double-click **Lit Review** in Applications. Your Mac will probably say it cannot be opened.
-3. Open **System Settings**, then **Privacy & Security**, scroll down to the message about Lit Review, and click **Open Anyway**. Type your Mac password if asked, then click **Open**.
-4. Your web browser opens with Lit Review. After this first time, it opens normally.
+1. Double-click the downloaded **.dmg** file. A window opens that shows **Lit Review** and an **Applications** folder.
+2. Drag **Lit Review** onto **Applications**. (If your Mac will not let you copy into Applications, drag it to your **Documents** folder instead.)
+3. Close that window, then eject the disk: in the Finder sidebar, click the small eject button next to **Lit Review** (or right-click it and choose **Eject**).
+4. Open your **Applications** folder and double-click **Lit Review**. Your Mac will probably say it cannot be opened.
+5. Open **System Settings**, then **Privacy & Security**, scroll down to the message about Lit Review, and click **Open Anyway**. Type your Mac password if asked, then click **Open**.
+6. Your web browser opens with Lit Review. After this first time, it opens normally.
+
+Do not open Lit Review from inside the disk window or from your Downloads folder. It will tell you to drag it into Applications first.
 
 ## 3. First use
 
@@ -65,12 +69,13 @@ Your API keys are kept encrypted in that same area. Make a backup of your work f
 
 ## Updating
 
-When a new version is available, Lit Review shows a notice at the top of the page with a link. To update: quit Lit Review, download the new version the same way, and replace the old program with it. Your data is kept. (This check can be turned off in **Settings → New versions**. It sends only the program name and version number to GitHub.)
+When a new version is available, Lit Review shows a notice at the top of the page with a link. To update: quit Lit Review, download the new version the same way, and replace the old program with it. On a Mac, open the new **.dmg**, drag **Lit Review** onto **Applications**, and click **Replace** (it cannot be replaced while it is running). On Windows, extract the new zip, use the new **Lit Review** folder, and delete the old one. Your data is kept. (This check can be turned off in **Settings → New versions**. It sends only the program name and version number to GitHub.)
 
 ## If something goes wrong
 
 - **It does not open, or shows a message box:** read the message. It says what to try.
 - **Windows says it cannot start or a file is missing:** make sure you extracted the whole zip (step 2 above).
+- **A Mac message says Lit Review is running from the installer:** you opened it from inside the disk window or from Downloads. Drag **Lit Review** into your **Applications** folder (or Documents), eject the disk, and open it from there.
 - **The browser shows "not connected":** open Lit Review again from its icon, which opens a connected window.
 - **Anything else:** the log is in the **Log folder** shown in **Settings → About and Updates**. The icon's **Open log folder** shows it. Send that file to whoever is helping you.
 

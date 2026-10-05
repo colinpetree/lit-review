@@ -462,7 +462,8 @@ saves confirmed good calls as well.
 
 ## Distribution / packaging
 
-Status: built. A pushed tag (`v0.1.0`) builds a Windows zip and two Mac zips on GitHub Actions and makes a
+Status: built. A pushed tag (`v0.1.0`) builds a Windows zip and, for each Mac, a disk image (what people
+install from) and a zip (for the planned in-app updater) on GitHub Actions and makes a
 draft release (`.github/workflows/release.yml`); `CLAUDE.md`, "Packaging and release", is the working
 description and `INSTALL.md` is the user's guide. What was decided: a hidden app with a tray / menu-bar
 icon (no console), unsigned builds (ad-hoc signed on Mac) with a first-launch guide, targets Windows plus

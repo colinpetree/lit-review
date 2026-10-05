@@ -19,7 +19,8 @@ the user picks one per run), checking a dataset for new papers, retraction handl
 (CSV, RIS, BibTeX), a cost estimate with a spending threshold and per-run limit, backup and
 restore, and Deleted Items (datasets, prompts and runs are soft-deleted; Deleted Items is the
 only place anything is removed for good). Packaging is built (see "Packaging and release" below):
-a tag push builds a Windows zip and two Mac zips (Apple Silicon, Intel) on GitHub Actions, and the
+a tag push builds a Windows zip and, for each Mac (Apple Silicon, Intel), a `.dmg` for people to install
+from (drag onto Applications) plus a `.zip` that the planned in-app updater uses, on GitHub Actions, and the
 app checks GitHub for newer releases. Not yet verified on real Macs (see that section).
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
@@ -170,8 +171,20 @@ gitignored.
 - **Workflow** (`.github/workflows/release.yml`): `prepare` checks the tag is `vN.N.N` and on `main`;
   `build` (Windows, macOS arm64, `macos-15-intel`) installs the pinned requirements first, runs the frontend
   and backend tests, builds, ad-hoc signs the Mac app, runs `smoke_test.py` on the built app, and zips
-  (`ditto` on Mac: `upload-artifact` would break an `.app`); `release` (tag pushes only, the only job with
-  write permission) makes a **draft** release with `SHA256SUMS.txt` for the maintainer to test and publish.
+  (`ditto` on Mac: `upload-artifact` would break an `.app`). Each Mac leg then makes a **disk image**
+  (`hdiutil create` from a `dmg/` folder holding the same signed app and an `Applications` link; the step
+  mounts it read-only, requires exactly those two items, runs `codesign --verify` and `--self-check` on the
+  mounted app, proves the start-up check below on the runner (`/Applications` must read writable, the image
+  read-only, and the app launched from the image must exit 1 and leave no `instance.lock`), and always
+  detaches). The `.dmg` is what people download; the `.zip` stays for the updater
+  (Plan 3), whose signed manifest must list the zips only. `release` (tag pushes only, the only job with
+  write permission) first requires exactly 3 zips and 2 disk images, then makes a **draft** release with
+  `SHA256SUMS.txt` for the maintainer to test and publish.
+  **Read-only start-up check:** a packaged Mac app that finds its own volume read-only (the mounted disk
+  image, a Gatekeeper-translocated copy, read-only media; `mac_app.running_from_read_only_volume`, via
+  `statvfs`) shows `RUN_FROM_INSTALLER_MESSAGE` and exits 1 in `main()`, after the `--self-check` branch and
+  before the instance lock, so everyone installs by dragging the app onto Applications. Any `statvfs` error
+  means "not read-only" (the app starts as before).
   Actions are pinned by commit SHA. `workflow_dispatch` builds without releasing. The Intel runner label
   and the Mac legs skipping `test_app_instances.py` are the first things to check if CI misbehaves.
 - **Docs for users:** `README.md`, `INSTALL.md` (plain language: no terminal, first-launch steps per OS,

@@ -22,6 +22,7 @@ the thin AppKit layer around it; it needs a Mac to run, and wraps everything in
 """
 
 import logging
+import os
 import threading
 import time
 
@@ -36,6 +37,29 @@ TERMINATE_CANCEL = 0
 TERMINATE_NOW = 1
 
 MENU_ICON_POINTS = 18  # the size the menu-bar picture is shown at; the file is 2x that
+
+ST_RDONLY = 1  # the POSIX "read-only filesystem" flag of statvfs (os.ST_RDONLY; Windows has neither)
+
+RUN_FROM_INSTALLER_MESSAGE = (
+    "Lit Review is running from the installer or a temporary location. "
+    "Drag Lit Review into your Applications folder, then open it from there."
+)
+
+
+def running_from_read_only_volume(path):
+    """True when `path` is on a read-only volume: the mounted disk image the app is
+    installed from, the read-only copy macOS runs a freshly downloaded app from
+    ("App Translocation"), or read-only media. From there the app cannot update itself
+    and the disk cannot be ejected. An app in Applications, or any folder the user can
+    write, is on a writable volume (whoever may write to it), so it is never flagged.
+    Anything unreadable counts as "no", so the app then starts as before."""
+    statvfs = getattr(os, "statvfs", None)
+    if statvfs is None or not path:
+        return False
+    try:
+        return bool(statvfs(os.path.realpath(path)).f_flag & ST_RDONLY)
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 class MacActions:

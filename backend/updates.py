@@ -1,7 +1,7 @@
 """Is there a newer release of Lit Review on GitHub?
 
-The packaged app is updated by downloading a new zip, so all this does is tell the
-user one exists (the page shows a banner with a link). Nothing is downloaded or
+The packaged app is updated by downloading a new copy (a Mac disk image or a zip), so
+all this does is tell the user one exists (the page shows a banner with a link). Nothing is downloaded or
 replaced. It asks GitHub's public API for the latest release of this project's
 repository, with no key and nothing about the user in the request beyond the
 program name and version. The answer is kept for a day (a failure for ten

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { SETTINGS_ITEM, SETTINGS_NAV } from '../lib/navItems'
+import { Tooltip } from './ui/Tooltip'
+import useCollapsedNav from '../lib/useCollapsedNav'
 import AiIntegrationsSection from './settings/AiIntegrationsSection'
 import ResearchDatabasesSection from './settings/ResearchDatabasesSection'
 import YourDataSection from './settings/YourDataSection'
@@ -31,6 +33,9 @@ export default function SettingsModal({ section, onClose }) {
   const scrollRef = useRef(null)
   const dialogRef = useRef(null)
   const pressStartedOnBackdrop = useRef(false)
+  const collapsed = useCollapsedNav()
+  // Names show as tooltips only while the labels are hidden.
+  const tip = (label) => (collapsed ? label : null)
 
   // Where a section starts, in the scroll area's own coordinates.
   const sectionTop = (id) => {
@@ -92,27 +97,31 @@ export default function SettingsModal({ section, onClose }) {
       >
         <nav
           aria-label="Settings sections"
-          className="flex w-56 shrink-0 flex-col gap-1 overflow-auto border-r border-gray-200 bg-sidebar px-3 py-5"
+          className="flex w-14 shrink-0 flex-col gap-1 overflow-y-auto overflow-x-hidden border-r border-gray-200 bg-sidebar px-2 py-5 lg:w-56 lg:px-3"
         >
-          <div className="flex items-center gap-2.5 px-3 pb-3 text-sm font-semibold text-stone-700">
-            <SETTINGS_ITEM.icon size={16} />
-            {SETTINGS_ITEM.label}
-          </div>
+          <Tooltip content={tip(SETTINGS_ITEM.label)} side="right">
+            <div className="flex items-center justify-center gap-2.5 pb-3 text-sm font-semibold text-stone-700 lg:justify-start lg:px-3">
+              <SETTINGS_ITEM.icon size={16} className="shrink-0" />
+              <span className="hidden lg:inline">{SETTINGS_ITEM.label}</span>
+            </div>
+          </Tooltip>
           {SETTINGS_NAV.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => goTo(item.id)}
-              aria-current={active === item.id ? 'true' : undefined}
-              className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors ${
-                active === item.id
-                  ? 'bg-stone-200 font-medium text-stone-700'
-                  : 'text-stone-500 hover:bg-stone-200/60 hover:text-stone-700'
-              }`}
-            >
-              <item.icon size={16} />
-              {item.label}
-            </button>
+            <Tooltip key={item.id} content={tip(item.label)} side="right">
+              <button
+                type="button"
+                onClick={() => goTo(item.id)}
+                aria-label={item.label}
+                aria-current={active === item.id ? 'true' : undefined}
+                className={`flex h-9 w-9 mx-auto items-center justify-center gap-2.5 rounded-md text-sm transition-colors lg:h-auto lg:w-full lg:justify-start lg:px-3 lg:py-2 lg:text-left ${
+                  active === item.id
+                    ? 'bg-stone-200 font-medium text-stone-700'
+                    : 'text-stone-500 hover:bg-stone-200/60 hover:text-stone-700'
+                }`}
+              >
+                <item.icon size={16} className="shrink-0" />
+                <span className="hidden lg:inline">{item.label}</span>
+              </button>
+            </Tooltip>
           ))}
         </nav>
 

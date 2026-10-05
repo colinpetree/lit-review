@@ -13,6 +13,7 @@ import PromptDetailPage from './pages/PromptDetailPage'
 import PastResultsPage from './pages/PastResultsPage'
 import RunResultsPage from './pages/RunResultsPage'
 import TrashPage from './pages/TrashPage'
+import { TooltipProvider } from './components/ui/Tooltip'
 
 // The app opens this page with its secret after the # in the address. Take it, and
 // remove it from the address bar, before anything is shown or any call is made.
@@ -20,6 +21,7 @@ captureTokenFromLocation()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
+    <TooltipProvider>
     <BrowserRouter>
       <Routes>
         <Route element={<AppLayout />}>
@@ -36,5 +38,6 @@ createRoot(document.getElementById('root')).render(
         </Route>
       </Routes>
     </BrowserRouter>
+    </TooltipProvider>
   </StrictMode>,
 )

@@ -12,7 +12,7 @@ Go to the **[latest release](https://github.com/colinpetree/lit-review/releases/
 
 - Everything runs on your own computer and is reachable only from it. There is no account and no server of ours.
 - Your datasets, results and prompts are stored in a file in your user folder. Your API keys are stored encrypted, in a separate settings folder.
-- The only things that leave your computer are the searches you run (sent to the paper databases you choose), the paper titles and abstracts you ask the AI model to grade (sent to the AI company whose key you entered), and, optionally, a once-a-day check for a new version of Lit Review (it can be turned off in Settings).
+- The only things that leave your computer are the searches you run (sent to the paper databases you choose), the paper titles and abstracts you ask the AI model to grade (sent to the AI company whose key you entered), and a check for a new version of Lit Review when it starts and once a day (only the program's name and version are sent; it cannot be turned off, because the AI models it uses change and an old version can stop working). A newer version is downloaded from GitHub in the background and installed when you choose, or automatically at the next start if you switch that on in Settings.
 - You pay the AI company directly, using your own key. Lit Review shows an estimate before every run and stops a run at a limit you control.
 
 ## For developers

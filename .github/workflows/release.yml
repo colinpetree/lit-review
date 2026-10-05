@@ -166,6 +166,23 @@ jobs:
       - name: List third-party licenses
         run: python packaging/make_notices.py
 
+      # A release built without the public signing keys could never accept an update, and the
+      # version people install first must be able to (see RELEASING.md, One-time setup).
+      - name: Check the update signing keys are in the app
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          python -c "import sys; sys.path.insert(0, 'backend'); import update_manifest; sys.exit(0 if update_manifest.PUBLIC_KEYS else 1)"             || { echo "::error::backend/update_manifest.py has no PUBLIC_KEYS: run packaging/make_update_key.py first"; exit 1; }
+
+      # The program that swaps a downloaded update in (packaging/update_helper.py), built on its own
+      # because it must run while the app's own folder is being replaced. It goes inside the app
+      # (pyinstaller.spec), so the Mac signature below covers it. No console window on Windows.
+      - name: Build the update helper
+        run: |
+          flags=--onefile
+          if [ "$RUNNER_OS" = "Windows" ]; then flags="$flags --noconsole"; fi
+          pyinstaller packaging/update_helper.py $flags --name update-helper --distpath packaging/build             --workpath "$RUNNER_TEMP/helper-build" --specpath "$RUNNER_TEMP/helper-build" --noconfirm
+          ls -l packaging/build | sed -n '1,20p'
+
       - name: Build the app
         run: pyinstaller backend/pyinstaller.spec --noconfirm
 
@@ -288,6 +305,12 @@ jobs:
             exit 1
           fi
 
+      # The list of the three zips with their sizes and SHA-256, which the maintainer signs
+      # (packaging/sign_release.py) before publishing. Unsigned, no app will use it; the
+      # updater never lists the .dmg files.
+      - name: Make the update manifest
+        run: python3 packaging/make_manifest.py --version "${{ needs.prepare.outputs.version }}" --dir out
+
       - name: Checksums
         run: |
           cd out
@@ -313,3 +336,4 @@ jobs:
             out/*.zip
             out/*.dmg
             out/SHA256SUMS.txt
+            out/update-manifest.json

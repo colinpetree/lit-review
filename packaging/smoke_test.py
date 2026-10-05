@@ -48,6 +48,10 @@ def main(exe):
         LIT_REVIEW_NO_BROWSER="1",
         LIT_REVIEW_NO_DIALOG="1",
         LIT_REVIEW_NO_TRAY="1",
+        # The packaged app checks GitHub for updates on its own, which CI must never do: the
+        # background thread is switched off (this only works together with the testing switch).
+        LIT_REVIEW_TESTING="1",
+        LIT_REVIEW_NO_UPDATE_THREAD="1",
     )
     base = f"http://127.0.0.1:{port}"
 
@@ -104,6 +108,13 @@ def main(exe):
         if status != 200 or len(notices) < 10_000 or "Lit Review includes" not in notices:
             raise SystemExit(f"FAIL: /api/notices gave status {status} and {len(notices)} characters")
         print("third-party notices ok:", len(notices), "characters")
+
+        # The update status is served, nothing is being checked, and the setting starts off.
+        status, body = get(f"{base}/api/update-check", token)
+        update = json.loads(body)
+        if status != 200 or update.get("state") != "idle" or update.get("auto_apply") is not False:
+            raise SystemExit(f"FAIL: /api/update-check said {update}")
+        print("update status ok:", update["state"])
 
         # A second launch must hand over to the first, not start another.
         second = subprocess.run([exe], env=env, timeout=90)

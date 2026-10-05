@@ -69,7 +69,13 @@ Your API keys are kept encrypted in that same area. Make a backup of your work f
 
 ## Updating
 
-When a new version is available, Lit Review shows a notice at the top of the page with a link. To update: quit Lit Review, download the new version the same way, and replace the old program with it. On a Mac, open the new **.dmg**, drag **Lit Review** onto **Applications**, and click **Replace** (it cannot be replaced while it is running). On Windows, extract the new zip, use the new **Lit Review** folder, and delete the old one. Your data is kept. (This check can be turned off in **Settings → New versions**. It sends only the program name and version number to GitHub.)
+Lit Review checks for a new version by itself when it starts and then once a day, and downloads it in the background. This cannot be switched off, because the AI models it uses change and an old version can stop working. Only the program's name and version number are sent to GitHub, nothing about you or your work. Your data is kept when you update.
+
+When a new version has been downloaded, a notice at the top of the page says so. Click **Install and restart**: Lit Review finishes what it is doing, closes, installs the update and opens again (give it a minute). If you would rather not click, turn on **Settings → New versions → Install new versions automatically**, and a downloaded version is installed the next time you open Lit Review. If your version is too old to keep working, it is installed the next time you open Lit Review whatever that setting says.
+
+If the update cannot be installed, you stay on the version you have, and Lit Review says why, with a link to download the new version yourself (open the new **.dmg** and drag **Lit Review** onto **Applications**, choosing **Replace**; on Windows, extract the new zip and use the new folder). Two things stop an automatic update: running Lit Review straight from the disk image or the Downloads folder on a Mac (drag it into **Applications** first), and keeping it in a folder you are not allowed to change (move it to your Documents folder). On a newer Mac, the system may ask once whether Lit Review may modify apps: allow it in **System Settings → Privacy & Security → App Management**.
+
+If an update is interrupted at the worst moment, the old program may be left as a folder named `Lit Review.old` next to `Lit Review` with no working `Lit Review`: rename `Lit Review.old` back to `Lit Review`.
 
 ## If something goes wrong
 

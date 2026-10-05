@@ -2,8 +2,9 @@
 """PyInstaller recipe for the packaged Lit Review (a folder per OS: Lit Review.exe
 on Windows, Lit Review.app on macOS). Build from the repo root, after
 `npm run build` in frontend/ (it writes backend/static) and
-`python packaging/make_icons.py` and `python packaging/make_notices.py` (both write
-packaging/build/):
+`python packaging/make_icons.py`, `python packaging/make_notices.py` and
+`pyinstaller packaging/update_helper.py --onefile --name update-helper --distpath packaging/build`
+(each writes into packaging/build/):
 
     pyinstaller backend/pyinstaller.spec --noconfirm
 
@@ -74,6 +75,15 @@ NOTICES = ROOT / "packaging" / "build" / "THIRD_PARTY_NOTICES.txt"
 if not NOTICES.is_file():
     raise SystemExit(f"{NOTICES} is missing: run `python packaging/make_notices.py` before building")
 datas += [(str(ROOT / "LICENSE"), "licenses"), (str(NOTICES), "licenses")]
+
+# The update helper (packaging/update_helper.py, built on its own as a small standalone program by
+# the workflow) swaps a downloaded update in while the app is not running. It ships as a data file;
+# the app copies it out of the install folder before running it, since it renames that folder. An
+# app without it could not update itself, so a build without it stops.
+HELPER = ROOT / "packaging" / "build" / ("update-helper.exe" if sys.platform == "win32" else "update-helper")
+if not HELPER.is_file():
+    raise SystemExit(f"{HELPER} is missing: build packaging/update_helper.py with PyInstaller before this build")
+datas += [(str(HELPER), ".")]
 
 if sys.platform == "win32":
     exe_icon = ICON_DIR / "LitReview.ico"

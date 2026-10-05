@@ -28,6 +28,7 @@ from werkzeug.serving import ThreadedWSGIServer
 from werkzeug.utils import safe_join
 
 import abstracts
+import app_settings
 import access
 import bundle
 import credentials
@@ -42,7 +43,7 @@ import search_sources
 import single_instance
 import tray
 import ui
-import updates
+import updater
 import version
 from request_gate import RequestGate
 from source_http import SourceError, redact, safe_url
@@ -253,6 +254,10 @@ def require_session():
 _GATE = RequestGate()
 
 
+# How the update route ends this process: set by main() once it knows how it is being served.
+_QUIT = {"fn": None}
+
+
 @app.before_request
 def hold_off_during_restore():
     if not request.path.startswith("/api/") or request.path in OPEN_PATHS:
@@ -302,9 +307,55 @@ def third_party_notices():
 
 @app.get("/api/update-check")
 def update_check():
-    """Is a newer release published? Asks GitHub at most once a day (updates.py), and
-    only when the page asks, which it does not if the user switched the check off."""
-    return jsonify(updates.check())
+    """Where the update stands (updater.py): nothing new, available, downloading, staged and
+    ready, failed, or this copy cannot update itself. The packaged app checks on its own, in
+    the background, whether or not a page is open."""
+    return jsonify(updater.status())
+
+
+@app.post("/api/update/check")
+def update_check_now():
+    """"Check now": start a check in the background and answer at once with the current status."""
+    updater.check_now(_jobs_running)
+    return jsonify(updater.status()), 202
+
+
+@app.post("/api/update/apply")
+def update_apply():
+    """"Install and restart": with the server quiet (as for a restore), hand the staged copy
+    to the update helper and quit. Work already running finishes and is saved first; if it
+    does not within 30 seconds nothing changes."""
+    with _exclusive("update-apply", 0) as acquired:
+        if not acquired:
+            return jsonify({"error": "The update is already being installed."}), 409
+        if updater.status()["state"] != "staged":
+            return jsonify({"error": "There is no update ready to install."}), 409
+        if _QUIT["fn"] is None:
+            return jsonify({"error": "This copy cannot restart itself."}), 409
+        if not _GATE.close_when_quiet(RESTORE_WAIT_SECONDS):
+            return jsonify({"error": "Lit Review is still working. Try again in a moment."}), 409
+        try:
+            updater.start_apply()
+        except updater.UpdateError as exc:
+            _GATE.open()
+            return jsonify({"error": str(exc)}), 500
+        # The gate stays closed (every other request gets a 503 and the page shows "restarting"):
+        # the helper is already waiting for this process to end.
+        threading.Timer(1, _QUIT["fn"]).start()
+        return jsonify({"ok": True})
+
+
+@app.get("/api/settings/updates")
+def get_update_settings():
+    return jsonify(app_settings.load())
+
+
+@app.put("/api/settings/updates")
+def put_update_settings():
+    value = _json_body().get("auto_apply")
+    if not isinstance(value, bool):
+        raise InvalidRequest("auto_apply must be true or false.")
+    return jsonify(app_settings.save(auto_apply=value))
 
 
 @app.get("/api/settings/api-key")
@@ -1904,10 +1955,12 @@ def _serve(server, open_app, log_dir):
         icon = tray.Tray(open_app, lambda: tray.open_folder(log_dir), _confirm_quit)
     except tray.TrayUnavailable as exc:
         app.logger.warning("No tray icon (%s); serving without one.", exc)
+        _QUIT["fn"] = lambda: threading.Thread(target=server.shutdown, daemon=True).start()
         server.serve_forever()
         return
 
     failed = []
+    _QUIT["fn"] = icon.stop
 
     def serve():
         try:
@@ -1937,6 +1990,19 @@ def _serve(server, open_app, log_dir):
         )
 
 
+def _acquire_instance_lock(state_dir, after_update):
+    """The instance lock. A copy started by the update helper waits up to 30 seconds for the
+    old copy to let go of it, instead of treating the old one as a running copy to hand over to."""
+    deadline = time.monotonic() + (30 if after_update else 0)
+    while True:
+        try:
+            return single_instance.acquire(state_dir / "instance.lock")
+        except single_instance.AlreadyRunning:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.5)
+
+
 def main(argv=None):
     """Start the app, unless this user already has a copy running, in which case
     open the browser on that one and exit. Returns the exit code."""
@@ -1956,7 +2022,7 @@ def main(argv=None):
     log_dir = state_dir / "logs"
     try:
         # Held until the process ends (kept in a local that lives as long as main).
-        instance_lock = single_instance.acquire(state_dir / "instance.lock")
+        instance_lock = _acquire_instance_lock(state_dir, "--after-update" in argv)
     except single_instance.AlreadyRunning:
         return hand_over_to_running_copy(state_dir)
     except OSError as exc:
@@ -1965,6 +2031,12 @@ def main(argv=None):
     # Only the copy that stays up writes the log: a second launch that just hands
     # over has nothing to record.
     logfile.setup(log_dir)
+    if updater.apply_at_launch():
+        # A downloaded update is due (updater.py): the helper swaps it in and starts it, so
+        # this copy leaves before it serves anything, with nothing running to interrupt.
+        instance_lock.release()
+        logfile.teardown()
+        return 0
     try:
         # Everything that touches the data folder happens here, so a folder that
         # cannot be used is reported plainly at launch instead of as errors later.
@@ -1996,6 +2068,14 @@ def main(argv=None):
         server.server_close()
         logfile.teardown()
         return _data_folder_problem(state_dir, exc)
+    # Tell a waiting update helper this copy came up (it rolls back without the marker), then
+    # report how an earlier attempt went and tidy up, and only then start checking again.
+    updater.write_started_marker()
+    problem = updater.take_result()
+    if problem:
+        updater.note_failure(problem)
+    updater.cleanup_stale()
+    updater.start_background(_jobs_running)
     use_tray = _tray_wanted(argv)
     Timer(1, _open_browser, args=(port, token)).start()
     # Console only, on purpose: the private link carries the secret, so it is never
@@ -2008,10 +2088,12 @@ def main(argv=None):
         if use_tray:
             _serve(server, lambda: _open_browser(port, token), log_dir)
         else:
+            _QUIT["fn"] = lambda: threading.Thread(target=server.shutdown, daemon=True).start()
             server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        updater.stop_background()
         server.server_close()
         access.clear_instance(state_dir, INSTANCE_ID)
         instance_lock.release()

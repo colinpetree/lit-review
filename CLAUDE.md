@@ -20,8 +20,8 @@ the user picks one per run), checking a dataset for new papers, retraction handl
 restore, and Deleted Items (datasets, prompts and runs are soft-deleted; Deleted Items is the
 only place anything is removed for good). Packaging is built (see "Packaging and release" below):
 a tag push builds a Windows zip and, for each Mac (Apple Silicon, Intel), a `.dmg` for people to install
-from (drag onto Applications) plus a `.zip` that the planned in-app updater uses, on GitHub Actions, and the
-app checks GitHub for newer releases. Not yet verified on real Macs (see that section).
+from (drag onto Applications) plus a `.zip` that the in-app updater uses, on GitHub Actions, and the
+app checks GitHub for signed newer releases and can install them. Not yet verified on real Macs (see that section).
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
 command line, so end-user distribution must be a double-click executable (no
@@ -131,17 +131,43 @@ gitignored.
   the same database and keys as a source run: do not change that name (a test pins it).
 - **Version:** `version.py` says `0.0.0-dev`; the workflow rewrites it from the tag, so the tag is the
   one place a version is decided. `GET /api/about` returns the version and the data and log folders
-  (Settings, "Software and Updates"). A dev version never offers an update.
+  (Settings, "Software and Updates"). A dev version never updates.
 - **`--self-check`** (`selfcheck.py`): imports every provider module (from `llm.PROVIDERS`), builds each
   SDK client with a dummy key, loads the certificate stores, checks `static/index.html`, and writes JSON
   to `LIT_REVIEW_SELFCHECK_FILE`, exit code 0/1 (a windowed exe has no stdout). It cannot see
   everything lazy, so the release checklist also makes one real call per provider and per source.
-- **Update check:** `updates.py`, `GET /api/update-check`. Asks GitHub's releases/latest once a day (10
-  minutes after a failure), sends only `User-Agent: lit-review/<version>`, accepts a link only if it is
-  `https://github.com/colinpetree/lit-review/...`, and never raises. The page shows a dismissible
-  banner (`UpdateBanner`, `lib/updateCheck.js`) and Settings has a per-browser switch; off means the
-  page never calls it. A draft or pre-release is invisible to it, so a draft release is not offered.
-  Needs the repo to be **public**.
+- **Updates** (`updater.py`, `update_manifest.py`, `app_settings.py`, `packaging/update_helper.py`).
+  The packaged app **always** checks (no user switch: the AI models it uses get retired, so an old build must be
+  able to learn of a fix): 30 s after start, then daily, on a background thread (`updater.start_background`, off
+  from source and under `LIT_REVIEW_TESTING=1` + `LIT_REVIEW_NO_UPDATE_THREAD`, which the smoke test sets so CI
+  never reaches GitHub). It fetches `update-manifest.json` and `.sig` straight from
+  `github.com/.../releases/latest/download/` (not the rate-limited API), verifies the **Ed25519 signature over the raw
+  bytes with a domain prefix** against `update_manifest.PUBLIC_KEYS` (two keys: active and spare), requires
+  version == tag and strictly newer, then downloads the platform zip (HTTPS, GitHub hosts across redirects, **resumes**
+  a partial file, signed size and SHA-256), unpacks it next to the install as `<install>.new` (zip-slip checks; `ditto`
+  and `codesign --verify` on macOS) and runs the new build's `--self-check`, which must report the expected version.
+  It never downloads while a search, lookup or grading run is active. Where the install cannot be replaced (read-only,
+  translocated, not writable, long path) the state is `unsupported` with the manual link, quietly.
+  **Applying:** the `auto_apply` setting (server-side `settings.json` in the config dir, default **off**) decides whether
+  a staged update installs at the **next launch** (`apply_at_launch`, in `main()` after the instance lock and before the
+  database is touched, so nothing is running) or waits for the page's **Install and restart** (`POST /api/update/apply`,
+  which quiesces with `_GATE.close_when_quiet` like a restore, starts the helper and quits via `_QUIT["fn"]`). A running
+  version below the manifest's signed `min_version` is "required": it installs at the next launch whatever the setting
+  says and its banner cannot be dismissed (it never locks anyone out of their data). There is deliberately **no
+  quit-time swap** (it races a relaunch, can be killed at logoff, and would raise the macOS App Management prompt while
+  exiting). `state.json` in `<data>/updates/` counts attempts: a version that fails twice is marked `failed` and not
+  retried. The helper (`packaging/update_helper.py`, stdlib only, built by the workflow into `update-helper[.exe]` and
+  shipped inside the app) is copied out of the install folder and run with an argument list: wait for the old process,
+  rename install to `.old`, new to install (retried), start the new copy with `--after-update` (it waits up to 30 s for
+  the instance lock instead of handing over), wait for `started.json` naming the new version (written by `main()` once
+  the server is up), then delete `.old`; otherwise roll back, restart the old one and write `result.json`, which the
+  next launch turns into a message (`updater.take_result`, `note_failure`). The marker is written **before** cleanup
+  runs, because cleanup deletes `.old`. The database is backed up to `updates/before-update-<version>.db` first.
+  Test-only overrides (`LIT_REVIEW_UPDATE_BASE` loopback URL, `LIT_REVIEW_UPDATE_PUBKEY`) work only with
+  `LIT_REVIEW_TESTING=1`. Page: `UpdateBanner`, `lib/updateCheck.js` (polls `GET /api/update-check`, a status read),
+  Settings "New versions" (`UpdatesCard`: the toggle, **Check now**). Release side: CI writes the unsigned manifest
+  (`make_manifest.py`, zips only, never the `.dmg`); the maintainer signs the draft (`sign_release.py`) and publishes; see
+  `RELEASING.md`. Needs the repo to be **public**. Unverified off real machines: see RELEASING.md "Still to prove".
 - **macOS specifics** (`mac_app.py`, wired in by `tray.Tray.run`; all of it is **untested off a Mac**, so a
   new build needs a look on a real one). The behaviour is in `MacActions` (plain Python, tested anywhere in
   `tests/test_mac_app.py`); `install()` is the thin AppKit layer, wrapped in `try/except` so a failure leaves

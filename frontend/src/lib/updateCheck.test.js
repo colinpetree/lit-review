@@ -1,63 +1,109 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getDismissedVersion, getUpdateCheckEnabled, shouldShowUpdate } from './updateCheck'
+import { describeStatus, dismissalKey, getDismissed, pollDelay, shouldShow, updateNotice, POLL_FAST_MS, POLL_SLOW_MS } from './updateCheck'
 
 afterEach(() => vi.unstubAllGlobals())
 
-function stubStorage(store) {
-  vi.stubGlobal('localStorage', {
-    getItem: (k) => (k in store ? store[k] : null),
-    setItem: (k, v) => {
-      store[k] = v
-    },
-  })
-}
-
-const release = {
+const link = 'https://github.com/colinpetree/lit-review/releases/tag/v0.2.0'
+const status = (over = {}) => ({
+  state: 'staged',
   current: '0.1.0',
   latest: '0.2.0',
-  newer: true,
-  url: 'https://github.com/colinpetree/lit-review/releases/tag/v0.2.0',
-}
+  url: link,
+  notice: '',
+  required: false,
+  progress: 1,
+  error: '',
+  auto_apply: false,
+  ...over,
+})
 
-describe('shouldShowUpdate', () => {
-  it('shows a newer release', () => {
-    expect(shouldShowUpdate(release, null)).toBe(true)
+describe('updateNotice', () => {
+  it('shows nothing when idle, unheard or without a version', () => {
+    expect(updateNotice(null)).toBe(null)
+    expect(updateNotice(status({ state: 'idle', latest: null }))).toBe(null)
+    expect(updateNotice(status({ state: 'available' }))).toBe(null)
   })
 
-  it('does not show when there is nothing newer or nothing was heard', () => {
-    expect(shouldShowUpdate({ ...release, newer: false }, null)).toBe(false)
-    expect(shouldShowUpdate(null, null)).toBe(false)
-    expect(shouldShowUpdate(undefined, null)).toBe(false)
+  it('shows a download in progress', () => {
+    expect(updateNotice(status({ state: 'downloading', progress: 0.4 }))).toMatchObject({ kind: 'downloading', progress: 0.4, dismissible: true })
   })
 
-  it('does not show a release without a link it can open', () => {
-    expect(shouldShowUpdate({ ...release, url: null }, null)).toBe(false)
-    expect(shouldShowUpdate({ ...release, url: 'javascript:alert(1)' }, null)).toBe(false)
+  it('offers to install when downloaded and automatic installing is off', () => {
+    expect(updateNotice(status())).toMatchObject({ kind: 'ready', link })
   })
 
-  it('stays hidden for a dismissed version, but a later one shows again', () => {
-    expect(shouldShowUpdate(release, '0.2.0')).toBe(false)
-    expect(shouldShowUpdate({ ...release, latest: '0.3.0' }, '0.2.0')).toBe(true)
+  it('says it installs itself when automatic installing is on', () => {
+    expect(updateNotice(status({ auto_apply: true }))).toMatchObject({ kind: 'ready-auto' })
   })
 
-  it('needs newer to be exactly true', () => {
-    expect(shouldShowUpdate({ ...release, newer: 'yes' }, null)).toBe(false)
+  it('shows the restart as not dismissible', () => {
+    expect(updateNotice(status({ state: 'applying' }))).toMatchObject({ kind: 'applying', dismissible: false })
+  })
+
+  it('shows a failed or unsupported install as a problem with the link', () => {
+    expect(updateNotice(status({ state: 'failed', error: 'It did not work.' }))).toMatchObject({ kind: 'problem', error: 'It did not work.' })
+    expect(updateNotice(status({ state: 'unsupported' }))).toMatchObject({ kind: 'problem' })
+  })
+
+  it('a required update cannot be dismissed, in any state it can be in', () => {
+    for (const state of ['available', 'downloading', 'staged', 'failed', 'unsupported']) {
+      expect(updateNotice(status({ state, required: true }))).toMatchObject({ kind: 'required', dismissible: false })
+    }
+  })
+
+  it('required needs to be exactly true', () => {
+    expect(updateNotice(status({ required: 'yes' }))).toMatchObject({ kind: 'ready' })
+  })
+
+  it('drops a link it cannot safely open', () => {
+    expect(updateNotice(status({ url: 'javascript:alert(1)' })).link).toBe(null)
+    expect(updateNotice(status({ url: null })).link).toBe(null)
   })
 })
 
-describe('the saved choices', () => {
-  it('checks by default, and off only when switched off', () => {
-    stubStorage({})
-    expect(getUpdateCheckEnabled()).toBe(true)
-    stubStorage({ 'lit-review.update-check': 'false' })
-    expect(getUpdateCheckEnabled()).toBe(false)
-    stubStorage({ 'lit-review.update-check': 'true' })
-    expect(getUpdateCheckEnabled()).toBe(true)
+describe('shouldShow', () => {
+  it('hides a dismissed notice for that version and kind only', () => {
+    const notice = updateNotice(status())
+    expect(shouldShow(notice, null)).toBe(true)
+    expect(shouldShow(notice, dismissalKey(notice))).toBe(false)
+    expect(shouldShow(updateNotice(status({ latest: '0.3.0' })), dismissalKey(notice))).toBe(true)
+    expect(shouldShow(updateNotice(status({ auto_apply: true })), dismissalKey(notice))).toBe(true)
   })
 
-  it('remembers the dismissed version', () => {
-    stubStorage({ 'lit-review.update-dismissed': '0.2.0' })
-    expect(getDismissedVersion()).toBe('0.2.0')
+  it('never hides what cannot be dismissed', () => {
+    const notice = updateNotice(status({ required: true }))
+    expect(shouldShow(notice, dismissalKey(notice))).toBe(true)
+  })
+
+  it('shows nothing for no notice', () => {
+    expect(shouldShow(null, null)).toBe(false)
+  })
+})
+
+describe('pollDelay', () => {
+  it('is quick while downloading or restarting, slow otherwise', () => {
+    expect(pollDelay({ state: 'downloading' })).toBe(POLL_FAST_MS)
+    expect(pollDelay({ state: 'applying' })).toBe(POLL_FAST_MS)
+    expect(pollDelay({ state: 'staged' })).toBe(POLL_SLOW_MS)
+    expect(pollDelay(null)).toBe(POLL_SLOW_MS)
+  })
+})
+
+describe('describeStatus', () => {
+  it('describes each state in words', () => {
+    expect(describeStatus(null)).toBe('Checking...')
+    expect(describeStatus(status({ state: 'idle', latest: null }))).toBe('You have the latest version')
+    expect(describeStatus(status({ state: 'downloading', progress: 0.5 }))).toContain('50%')
+    expect(describeStatus(status({ auto_apply: true }))).toContain('next time you open')
+    expect(describeStatus(status())).toContain('ready to install')
+    expect(describeStatus(status({ state: 'failed', error: 'Nope' }))).toBe('Nope')
+  })
+})
+
+describe('the remembered dismissal', () => {
+  it('is read from storage', () => {
+    vi.stubGlobal('localStorage', { getItem: () => '0.2.0:ready' })
+    expect(getDismissed()).toBe('0.2.0:ready')
   })
 
   it('copes with storage that throws', () => {
@@ -66,7 +112,6 @@ describe('the saved choices', () => {
         throw new Error('blocked')
       },
     })
-    expect(getUpdateCheckEnabled()).toBe(true)
-    expect(getDismissedVersion()).toBe(null)
+    expect(getDismissed()).toBe(null)
   })
 })

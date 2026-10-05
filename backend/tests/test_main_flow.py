@@ -396,6 +396,89 @@ class TestMain:
         assert "Warning" not in capsys.readouterr().err
 
 
+class TestUpdateHooks:
+    """How main() uses the updater: apply a due update before serving, report the start, wait for the old copy."""
+
+    def test_a_due_update_is_handed_to_the_helper_before_anything_is_served(self, state_dir, fake_server, monkeypatch):
+        monkeypatch.setattr(app_module.updater, "apply_at_launch", lambda: True)
+        assert app_module.main() == 0
+        assert fake_server.seen == {}  # no server, no instance record, no browser
+        assert access.read_instance(state_dir) is None
+        assert fake_server.timers == []
+        single_instance.acquire(state_dir / "instance.lock").release()  # the lock was let go for the new copy
+
+    def test_no_update_due_serves_as_usual(self, state_dir, fake_server, monkeypatch):
+        monkeypatch.setattr(app_module.updater, "apply_at_launch", lambda: False)
+        assert app_module.main() == 0
+        assert fake_server.seen["token"]
+
+    def test_the_marker_result_and_cleanup_run_once_the_app_is_up(self, state_dir, fake_server, monkeypatch):
+        order = []
+        monkeypatch.setattr(app_module.updater, "write_started_marker", lambda: order.append("marker"))
+        monkeypatch.setattr(app_module.updater, "take_result", lambda: order.append("result") or "It failed.")
+        monkeypatch.setattr(app_module.updater, "note_failure", lambda message: order.append(("note", message)))
+        monkeypatch.setattr(app_module.updater, "cleanup_stale", lambda: order.append("cleanup"))
+        monkeypatch.setattr(app_module.updater, "start_background", lambda jobs: order.append("thread"))
+        app_module.main()
+        # The marker comes first: a waiting helper rolls back without it, and cleanup must not run before it.
+        assert order == ["marker", "result", ("note", "It failed."), "cleanup", "thread"]
+
+    def test_the_marker_is_not_written_if_the_instance_record_could_not_be(self, state_dir, fake_server, monkeypatch):
+        written = []
+        monkeypatch.setattr(app_module.updater, "write_started_marker", lambda: written.append(1))
+
+        def fail(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(access, "write_instance", fail)
+        monkeypatch.setattr(app_module, "_data_folder_problem", lambda *args: 1)
+        assert app_module.main() == 1
+        assert written == []
+
+    def test_the_checking_thread_is_stopped_on_the_way_out(self, state_dir, fake_server, monkeypatch):
+        stopped = []
+        monkeypatch.setattr(app_module.updater, "stop_background", lambda: stopped.append(1))
+        app_module.main()
+        assert stopped == [1]
+
+    def test_a_copy_started_by_the_helper_waits_for_the_old_one_to_let_go(self, state_dir):
+        held, let_go = threading.Event(), threading.Event()
+
+        def old_copy():
+            # Taken and released on one thread: filelock locks belong to the thread that took them.
+            holder = single_instance.acquire(state_dir / "instance.lock")
+            held.set()
+            let_go.wait(5)
+            holder.release()
+
+        thread = threading.Thread(target=old_copy)
+        thread.start()
+        assert held.wait(5)
+        threading.Timer(0.6, let_go.set).start()
+        lock = app_module._acquire_instance_lock(state_dir, after_update=True)
+        lock.release()
+        thread.join(5)
+
+    def test_an_ordinary_launch_does_not_wait(self, state_dir):
+        holder = single_instance.acquire(state_dir / "instance.lock")
+        try:
+            with pytest.raises(single_instance.AlreadyRunning):
+                app_module._acquire_instance_lock(state_dir, after_update=False)
+        finally:
+            holder.release()
+
+    def test_a_helper_started_copy_gives_up_after_the_wait_and_hands_over(self, state_dir, monkeypatch):
+        holder = single_instance.acquire(state_dir / "instance.lock")
+        clock = iter([0, 5, 31, 31])
+        monkeypatch.setattr(app_module.time, "monotonic", lambda: next(clock))
+        monkeypatch.setattr(app_module.time, "sleep", lambda seconds: None)
+        try:
+            with pytest.raises(single_instance.AlreadyRunning):
+                app_module._acquire_instance_lock(state_dir, after_update=True)
+        finally:
+            holder.release()
+
+
 class TestAnUnusableDataFolder:
     def friendly(self, capsys, folder, reason):
         err = capsys.readouterr().err

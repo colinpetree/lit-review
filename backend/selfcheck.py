@@ -18,6 +18,7 @@ import sys
 
 import bundle
 import llm
+import updater
 import version
 
 
@@ -85,10 +86,41 @@ def _check_files():
         # The license and notices travel inside the app (Settings shows them), so a
         # packaged build without them would ship without what its libraries ask for.
         required += [("licenses", "LICENSE"), ("licenses", "THIRD_PARTY_NOTICES.txt")]
+        # Without the helper the app could never install an update.
+        required += [(updater.HELPER_NAME,)]
     for parts in required:
         path = bundle.resource_path(*parts)
         if not path.is_file():
             raise FileNotFoundError(f"missing {path}")
+
+
+def _check_update_signing():
+    """The updater trusts a download only if an Ed25519 signature verifies, so a build whose
+    cryptography cannot do that would offer updates it can never accept."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    import update_manifest
+
+    private = Ed25519PrivateKey.generate()
+    public = private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    signature = base64.b64encode(private.sign(update_manifest.SIGNATURE_PREFIX + b"x"))
+    assert update_manifest.verify_signature(b"x", signature, [base64.b64encode(public).decode()])
+    assert not update_manifest.verify_signature(b"y", signature, [base64.b64encode(public).decode()])
+
+
+def _check_update_helper():
+    """The packaged update helper starts and answers, so an update is not found to be
+    impossible only when a user tries one."""
+    if not bundle.is_frozen():
+        return
+    import subprocess
+
+    done = subprocess.run([str(bundle.resource_path(updater.HELPER_NAME)), "--help"], capture_output=True, timeout=120)
+    if done.returncode != 0:
+        raise RuntimeError(f"the update helper exited {done.returncode}")
 
 
 CHECKS = {
@@ -98,6 +130,8 @@ CHECKS = {
     "storage": _check_storage,
     "tray": _check_tray,
     "files": _check_files,
+    "update signing": _check_update_signing,
+    "update helper": _check_update_helper,
 }
 
 

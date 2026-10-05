@@ -51,6 +51,15 @@ export function deleteJson(url, options) {
   return fetchJson(url, { method: 'DELETE', ...options })
 }
 
+export function putJson(url, body, options) {
+  return fetchJson(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    ...options,
+  })
+}
+
 export function patchJson(url, body, options) {
   return fetchJson(url, {
     method: 'PATCH',

@@ -463,11 +463,11 @@ saves confirmed good calls as well.
 ## Distribution / packaging
 
 Status: built. A pushed tag (`v0.1.0`) builds a Windows zip and, for each Mac, a disk image (what people
-install from) and a zip (for the planned in-app updater) on GitHub Actions and makes a
+install from) and a zip (for the in-app updater) on GitHub Actions and makes a
 draft release (`.github/workflows/release.yml`); `CLAUDE.md`, "Packaging and release", is the working
 description and `INSTALL.md` is the user's guide. What was decided: a hidden app with a tray / menu-bar
 icon (no console), unsigned builds (ad-hoc signed on Mac) with a first-launch guide, targets Windows plus
-macOS Apple Silicon and Intel, a public repo, a once-a-day update notice that can be switched off, and
+macOS Apple Silicon and Intel, a public repo, an always-on update check with a signed in-app update (`CLAUDE.md`, "Updates"; `RELEASING.md`), and
 the FSL-1.1-MIT license (free for any use except a competing commercial product; each version becomes MIT
 after two years). Still open: verifying on real Macs (the reopen handler is untested off a Mac), how the
 Windows SmartScreen and antivirus warnings go on a first release, Apple signing and a Windows certificate
@@ -494,16 +494,11 @@ acceptable UX. Plan:
   OS's zipped `--onedir` output as an asset on a GitHub Release.
 - **Distribution**: users download the release asset for their OS directly from the
   GitHub Releases page — no `git clone`, no terminal.
-- **Update checks**: on launch, the app calls the GitHub Releases API
-  (`GET /repos/<owner>/<repo>/releases/latest`, unauthenticated — fine at this
-  request volume) and compares the returned tag to the running app's embedded
-  version string. If newer, show a banner/notice in the UI with a link to the new
-  release download (and changelog/release notes). Full silent self-download-and-
-  replace is deliberately out of scope for v1 — a running executable can't safely
-  overwrite itself (especially on Windows), so keep the update flow to "notify + one
-  link to click," which matches the target user's comfort level anyway. If this
-  becomes annoying later, revisit with a proper updater (e.g. PyUpdater) once the
-  app is stable enough to be worth the added complexity.
+- **Update checks**: superseded by the signed in-app updater (see `CLAUDE.md`, "Updates"). The app always checks
+  GitHub for a signed release manifest, downloads a newer version in the background and installs it when the
+  user clicks, or at the next start if they turned on automatic installing. The original v1 idea (a notice and
+  one link, because a running executable cannot overwrite itself) was replaced by a separate helper program that
+  swaps the folders after the app has quit.
 - **Lessons carried over from a prior project** (Flask +
   React/Tailwind, already has a working PyInstaller setup at
   `backend/pyinstaller.spec`) — real gotchas worth not rediscovering the hard way:

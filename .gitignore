@@ -31,3 +31,7 @@ logs/
 .claude/settings.local.json
 .pytest_cache/
 **/__pycache__/
+
+# Release signing keys belong outside the repository; this is only a safety net.
+update-signing*
+*.pem

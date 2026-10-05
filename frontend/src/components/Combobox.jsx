@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { PAGE_SIZE } from '../lib/paging'
 
 // Type-to-filter dropdown used for every picker in the app.
 //
@@ -16,6 +17,7 @@ import { ChevronDown } from 'lucide-react'
 //   asPlaceholder when selected, the label is shown as placeholder text and the
 //                 field reads as empty, so clicking lists everything and typing
 //                 filters from scratch instead of editing the label
+// A long list is drawn PAGE_SIZE options at a time; the next page is added on scrolling to the end.
 // value: the selected option's value, or null/undefined for none.
 // subtle: a shade lighter gray for the text and icons, for secondary controls.
 // searchable: false makes it a plain click-and-choose picker (read-only field,
@@ -36,6 +38,8 @@ export default function Combobox({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState(0)
+  const [count, setCount] = useState(PAGE_SIZE)
+  const sentinelRef = useRef(null)
   const ref = useRef(null)
   const listRef = useRef(null)
 
@@ -50,6 +54,8 @@ export default function Combobox({
     })
   }, [options, query])
 
+  const shown = visible.slice(0, count)
+  const hasMore = visible.length > count
   const selected = options.find((o) => o.value === value)
   const showGroups = new Set(options.map((o) => o.group).filter(Boolean)).size > 1
 
@@ -67,10 +73,28 @@ export default function Combobox({
     if (open) listRef.current?.children[highlight]?.scrollIntoView({ block: 'nearest' })
   }, [open, highlight])
 
+  // Adds the next page when the end of the open list scrolls into view (a new observer
+  // reports at once, so a page that still ends inside the box goes on to the next).
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!open || !hasMore || !node || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setCount((c) => c + PAGE_SIZE)
+      },
+      { root: listRef.current, rootMargin: '100px 0px' }
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [open, hasMore, count])
+
   const openFresh = () => {
     if (open) return
     setQuery('')
-    setHighlight(Math.max(0, options.findIndex((o) => o.value === value)))
+    const at = Math.max(0, options.findIndex((o) => o.value === value))
+    setHighlight(at)
+    // Enough rows to include the selected one, so it can be highlighted and scrolled to.
+    setCount(Math.max(PAGE_SIZE, Math.ceil((at + 1) / PAGE_SIZE) * PAGE_SIZE))
     setOpen(true)
   }
 
@@ -85,7 +109,11 @@ export default function Combobox({
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (!open) openFresh()
-      else setHighlight((h) => Math.min(h + 1, visible.length - 1))
+      else {
+        // Arrowing past the last drawn row draws the next page.
+        if (highlight + 1 >= count && hasMore) setCount((c) => c + PAGE_SIZE)
+        setHighlight((h) => Math.min(h + 1, visible.length - 1))
+      }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setHighlight((h) => Math.max(h - 1, 0))
@@ -127,6 +155,7 @@ export default function Combobox({
         onClick={openFresh}
         onChange={(e) => {
           setQuery(e.target.value)
+          setCount(PAGE_SIZE)
           setOpen(true)
           setHighlight(0)
         }}
@@ -156,7 +185,7 @@ export default function Combobox({
           onMouseDown={(e) => e.preventDefault()}
           className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border border-gray-200 bg-surface py-1 shadow-lg"
         >
-          {visible.map((option, i) => {
+          {shown.map((option, i) => {
             const showHeading = showGroups && option.group && option.group !== visible[i - 1]?.group
             return (
               <li
@@ -209,6 +238,7 @@ export default function Combobox({
               </li>
             )
           })}
+          {hasMore ? <li ref={sentinelRef} aria-hidden="true" className="h-px" /> : null}
           {visible.every((o) => o.pinned) && query.trim() ? (
             <li className="px-3 py-2 text-sm text-gray-400">{emptyText}</li>
           ) : null}

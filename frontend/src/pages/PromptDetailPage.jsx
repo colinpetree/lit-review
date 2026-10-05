@@ -6,6 +6,7 @@ import { ScoreBadge } from '../components/PaperCard'
 import EditableCardHeader from '../components/EditableCardHeader'
 import AutoGrowTextarea from '../components/AutoGrowTextarea'
 import ConfirmModal from '../components/ConfirmModal'
+import InfiniteList from '../components/InfiniteList'
 import useSavedState from '../lib/useSavedState'
 import useUnsavedChangesWarning from '../lib/useUnsavedChangesWarning'
 import { deleteJson, fetchJson, patchJson } from '../lib/api'
@@ -189,8 +190,11 @@ export default function PromptDetailPage() {
       {prompt.examples.length === 0 ? (
         <p className="mt-4 text-sm text-gray-500">No examples yet.</p>
       ) : null}
-      <ul className="mt-4 flex flex-col gap-3">
-        {prompt.examples.map((ex) => (
+      <InfiniteList
+        className="mt-4 flex flex-col gap-3"
+        items={prompt.examples}
+        resetKey={prompt.id}
+        renderItem={(ex) => (
           <li key={ex.id} className="rounded-lg border border-gray-200 p-4">
             <div className="flex items-start justify-between gap-4">
               <h3 className="font-medium text-gray-800">{ex.title}</h3>
@@ -220,8 +224,8 @@ export default function PromptDetailPage() {
               ) : null}
             </p>
           </li>
-        ))}
-      </ul>
+        )}
+      />
 
       {removingExample ? (
         <ConfirmModal

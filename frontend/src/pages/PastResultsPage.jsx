@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
+import InfiniteList from '../components/InfiniteList'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import RunMenu from '../components/RunMenu'
 import { deleteJson, fetchJson } from '../lib/api'
@@ -70,8 +71,12 @@ export default function PastResultsPage() {
       {runs && runs.length > 0 && visible.length === 0 ? (
         <p className="text-sm text-gray-500">No results match these filters.</p>
       ) : null}
-      <div className="flex flex-col gap-3">
-        {visible.map((run) => (
+      <InfiniteList
+        as="div"
+        className="flex flex-col gap-3"
+        items={visible}
+        resetKey={JSON.stringify([filter, sort])}
+        renderItem={(run) => (
           <div key={run.id} className="relative">
             <Link to={`/results/${run.id}`}>
               <Card className="hover:border-gray-300">
@@ -100,8 +105,8 @@ export default function PastResultsPage() {
               onDelete={() => deleteRun(run.id)}
             />
           </div>
-        ))}
-      </div>
+        )}
+      />
     </PageShell>
   )
 }

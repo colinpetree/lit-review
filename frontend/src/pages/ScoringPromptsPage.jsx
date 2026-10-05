@@ -9,6 +9,7 @@ import PromptFormModal from '../components/PromptFormModal'
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import ListFilterBar from '../components/ListFilterBar'
+import InfiniteList from '../components/InfiniteList'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, sortByCreated } from '../lib/listFilter'
 
 export default function ScoringPromptsPage() {
@@ -91,8 +92,12 @@ export default function ScoringPromptsPage() {
       {prompts && prompts.length > 0 && visible.length === 0 ? (
         <p className="text-sm text-gray-500">No prompts match these filters.</p>
       ) : null}
-      <div className="flex flex-col gap-3">
-        {visible.map((p) => (
+      <InfiniteList
+        as="div"
+        className="flex flex-col gap-3"
+        items={visible}
+        resetKey={JSON.stringify([filter, sort])}
+        renderItem={(p) => (
           <div key={p.id} className="relative">
             <Link to={`/prompts/${p.id}`}>
               <Card className="hover:border-gray-300">
@@ -111,8 +116,8 @@ export default function ScoringPromptsPage() {
               ]}
             />
           </div>
-        ))}
-      </div>
+        )}
+      />
 
       {dialog?.type === 'create' ? (
         <PromptFormModal heading="New prompt" onSave={createPrompt} onClose={() => setDialog(null)} />

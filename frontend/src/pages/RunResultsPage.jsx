@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { PageShell, BackLink, Card } from '../components/ui'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
+import InfiniteList from '../components/InfiniteList'
 import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
 import { exportMenuItems } from '../lib/exportFile'
@@ -366,8 +367,11 @@ export default function RunResultsPage() {
         <p className="mt-4 text-sm text-gray-500">No papers match the current filters.</p>
       ) : null}
 
-      <ul className="mt-4 flex flex-col gap-3">
-        {visibleResults.map((paper, index) => (
+      <InfiniteList
+        className="mt-4 flex flex-col gap-3"
+        items={visibleResults}
+        resetKey={JSON.stringify([run.id, filter])}
+        renderItem={(paper, index) => (
           <PaperCard
             key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}
             result={paper}
@@ -376,8 +380,8 @@ export default function RunResultsPage() {
             onToggleRead={toggleRead}
             onSetRelevance={setRelevance}
           />
-        ))}
-      </ul>
+        )}
+      />
     </PageShell>
   )
 }

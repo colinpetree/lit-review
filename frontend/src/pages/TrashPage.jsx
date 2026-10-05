@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PageShell, BackLink, Card } from '../components/ui'
 import ConfirmModal from '../components/ConfirmModal'
+import InfiniteList from '../components/InfiniteList'
 import { deleteJson, fetchJson, postJson } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 
@@ -119,14 +120,17 @@ export default function TrashPage() {
             <p key={line}>{line}</p>
           ))}
           {notice.kept.length ? (
-            <ul className="mt-3 flex flex-col gap-3 pl-5">
-              {notice.kept.map((item, i) => (
+            <InfiniteList
+              className="mt-3 flex flex-col gap-3 pl-5"
+              items={notice.kept}
+              resetKey={notice.lines.join('|')}
+              renderItem={(item, i) => (
                 <li key={i} className="list-disc">
                   <span className="block font-medium">{item.name}</span>
                   <span className="block text-gray-500">{item.reason}</span>
                 </li>
-              ))}
-            </ul>
+              )}
+            />
           ) : null}
         </div>
       ) : null}
@@ -141,34 +145,40 @@ export default function TrashPage() {
                 <h2 className="text-lg font-semibold text-gray-800">{group.title}</h2>
                 {group.note ? <p className="text-xs text-gray-400">{group.note}</p> : null}
               </div>
-              {group.items.map((item) => (
-                <Card key={item.id} className="flex items-start justify-between gap-4 !p-4">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-gray-800">{item.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {item.detail}
-                      {formatDateTime(item.deletedAt) ? ` · deleted ${formatDateTime(item.deletedAt)}` : ''}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => restore(group.kind, item)}
-                      disabled={restoring}
-                      className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-                    >
-                      Restore
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirm({ kind: group.kind, id: item.id, name: item.name })}
-                      className="rounded-md px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
-                    >
-                      Delete permanently
-                    </button>
-                  </div>
-                </Card>
-              ))}
+              <InfiniteList
+                as="div"
+                className="flex flex-col gap-3"
+                items={group.items}
+                resetKey={group.kind}
+                renderItem={(item) => (
+                  <Card key={item.id} className="flex items-start justify-between gap-4 !p-4">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-gray-800">{item.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {item.detail}
+                        {formatDateTime(item.deletedAt) ? ` · deleted ${formatDateTime(item.deletedAt)}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => restore(group.kind, item)}
+                        disabled={restoring}
+                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                      >
+                        Restore
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirm({ kind: group.kind, id: item.id, name: item.name })}
+                        className="rounded-md px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                      >
+                        Delete permanently
+                      </button>
+                    </div>
+                  </Card>
+                )}
+              />
             </section>
           ))}
       </div>

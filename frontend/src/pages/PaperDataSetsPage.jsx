@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
+import InfiniteList from '../components/InfiniteList'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
@@ -69,8 +70,12 @@ export default function PaperDataSetsPage() {
       {datasets && datasets.length > 0 && visible.length === 0 ? (
         <p className="text-sm text-gray-500">No datasets match these filters.</p>
       ) : null}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {visible.map((d) => {
+      <InfiniteList
+        as="div"
+        className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+        items={visible}
+        resetKey={JSON.stringify([filter, sort])}
+        renderItem={(d) => {
           const yearRange = formatYearRange(d.oldest_year, d.newest_year, d.newest_publication_date)
           return (
             <div key={d.id} className="relative">
@@ -99,8 +104,8 @@ export default function PaperDataSetsPage() {
               />
             </div>
           )
-        })}
-      </div>
+        }}
+      />
     </PageShell>
   )
 }

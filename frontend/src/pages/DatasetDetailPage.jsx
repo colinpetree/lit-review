@@ -4,6 +4,7 @@ import { PageShell, Card, BackLink } from '../components/ui'
 import Spinner, { StageIndicator } from '../components/Spinner'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
+import InfiniteList from '../components/InfiniteList'
 import { DEFAULT_PAPER_SORT, EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive, sortPapers } from '../lib/paperFilter'
 import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
@@ -491,8 +492,11 @@ export default function DatasetDetailPage() {
           <p className="mt-4 text-sm text-gray-500">No papers match the current filters.</p>
         ) : null}
 
-        <ul className="mt-4 flex flex-col gap-3">
-          {visiblePapers.map((paper, index) => (
+        <InfiniteList
+          className="mt-4 flex flex-col gap-3"
+          items={visiblePapers}
+          resetKey={JSON.stringify([dataset.id, filter, sort])}
+          renderItem={(paper, index) => (
             <PaperCard
               key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}
               result={paper}
@@ -500,8 +504,8 @@ export default function DatasetDetailPage() {
               onToggleExclude={toggleExclude}
               onToggleRead={toggleRead}
             />
-          ))}
-        </ul>
+          )}
+        />
       </div>
     </PageShell>
   )

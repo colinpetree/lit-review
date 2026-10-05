@@ -37,10 +37,10 @@ SHADOW_BLUR = 14  # Gaussian radius (about a 28 px blur)
 SHADOW_OPACITY = 0.5
 
 # The macOS menu-bar icon: a 36 px canvas shown at 18 points (2x), holding the cap about
-# 30 px (15 points) wide. A first guess to tune on a real Mac next to its neighbours
+# 36 px (18 points) wide, filling the canvas. Tune on a real Mac next to its neighbours
 # (Wi-Fi, battery): change MENU_GLYPH_WIDTH_PX and rebuild.
 MENU_CANVAS_PX = 36
-MENU_GLYPH_WIDTH_PX = 30
+MENU_GLYPH_WIDTH_PX = 36
 MENU_ALPHA_FLOOR = 32  # a pixel counts as part of the glyph above this alpha, for its bounding box
 
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]

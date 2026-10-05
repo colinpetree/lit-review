@@ -42,7 +42,10 @@ MAX_NOTICE_CHARS = 1000
 # leaked key can be rotated by an ordinary release. Filled in by packaging/make_update_key.py;
 # while it is empty no manifest verifies and the app only shows the old "a new version exists"
 # notice.
-PUBLIC_KEYS = []
+PUBLIC_KEYS = [
+    "zNOux9BUehAh0gixqsOypcRtKlK/XRJKf9Li3ML36Qw=",
+    "OMoSgJBSd0Ns/vgkqeqqW0anD6NfDdGxnJaljICFf0s=",
+]
 
 PLATFORMS = ("windows", "macos-apple-silicon", "macos-intel")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.zip$")

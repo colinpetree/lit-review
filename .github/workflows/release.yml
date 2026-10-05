@@ -217,10 +217,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           name="Lit-Review-$VERSION-${{ matrix.asset }}"
-          rm -rf dmg && mkdir dmg
-          ditto "dist/Lit Review.app" "dmg/Lit Review.app"
-          ln -s /Applications dmg/Applications
-          hdiutil create -volname "Lit Review" -srcfolder dmg -format UDZO "out/$name.dmg"
+          # dmgbuild writes the window layout (app on the left, Applications on the right)
+          # without driving Finder, so it works on a headless runner.
+          python -m pip install dmgbuild==1.6.5
+          dmgbuild -s packaging/macos/dmg-settings.py -D app="dist/Lit Review.app" "Lit Review" "out/$name.dmg"
           hdiutil verify "out/$name.dmg"
           mnt="$(mktemp -d)"
           cleanup() { hdiutil detach "$mnt" -quiet || hdiutil detach "$mnt" -force -quiet || true; }

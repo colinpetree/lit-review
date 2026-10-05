@@ -397,9 +397,12 @@ class TestMacDiskImage:
     def test_the_image_is_made_on_macs_only_from_the_signed_app_after_the_smoke_test(self):
         step = self.step("Make the Mac disk image")
         assert "if: runner.os == 'macOS'" in step
-        assert 'hdiutil create -volname "Lit Review" -srcfolder dmg -format UDZO' in step
-        assert 'ditto "dist/Lit Review.app" "dmg/Lit Review.app"' in step  # the same app as the zip
-        assert "ln -s /Applications dmg/Applications" in step
+        assert 'dmgbuild -s packaging/macos/dmg-settings.py -D app="dist/Lit Review.app" "Lit Review"' in step
+        settings = (Path(__file__).resolve().parents[2] / "packaging" / "macos" / "dmg-settings.py").read_text()
+        assert 'symlinks = {"Applications": "/Applications"}' in settings
+        assert 'format = "UDZO"' in settings
+        left, right = (settings.index("app_name: ("), settings.index('"Applications": ('))
+        assert int(settings[left:].split("(")[1].split(",")[0]) < int(settings[right:].split("(")[1].split(",")[0])  # app left, Applications right
         assert self.WORKFLOW.index("Sign the macOS app ad hoc") < self.WORKFLOW.index("Run the built app")
         assert self.WORKFLOW.index("Run the built app") < self.WORKFLOW.index("Make the Mac disk image")
 

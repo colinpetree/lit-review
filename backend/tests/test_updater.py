@@ -258,7 +258,7 @@ class TestStage:
         install = self.setup_install(tmp_path)
         asset = um.Asset("windows", "u.zip", 1, 1000, SHA)
         checked = []
-        new = updater.stage(self.zip_of(tmp_path), asset, "0.2.0", install, Path("app.exe"), check=lambda exe, v: checked.append((exe, v)))
+        new = updater.stage(self.zip_of(tmp_path), asset, "0.2.0", install, Path("app.exe"), check=lambda exe, v: checked.append((exe, v)), verify=lambda app: None)
         assert new == install.with_name("Lit Review.new") and (new / "app.exe").read_text() == "new"
         assert checked == [(new / "app.exe", "0.2.0")]
         assert not install.with_name("Lit Review.staging").exists()
@@ -271,14 +271,14 @@ class TestStage:
             raise updater.UpdateError("failed its self-check")
 
         with pytest.raises(updater.UpdateError, match="self-check"):
-            updater.stage(self.zip_of(tmp_path), um.Asset("windows", "u.zip", 1, 1000, SHA), "0.2.0", install, Path("app.exe"), check=check)
+            updater.stage(self.zip_of(tmp_path), um.Asset("windows", "u.zip", 1, 1000, SHA), "0.2.0", install, Path("app.exe"), check=check, verify=lambda app: None)
         assert not install.with_name("Lit Review.new").exists() and not install.with_name("Lit Review.staging").exists()
 
     def test_a_zip_without_the_program_file_is_refused(self, tmp_path):
         install = self.setup_install(tmp_path)
         z = make_zip(tmp_path / "u.zip", {"Lit Review/readme.txt": "x"})
         with pytest.raises(updater.UpdateError, match="program file"):
-            updater.stage(z, um.Asset("windows", "u.zip", 1, 1000, SHA), "0.2.0", install, Path("app.exe"), check=lambda *a: None)
+            updater.stage(z, um.Asset("windows", "u.zip", 1, 1000, SHA), "0.2.0", install, Path("app.exe"), check=lambda *a: None, verify=lambda app: None)
         assert not install.with_name("Lit Review.staging").exists()
 
     def test_an_older_leftover_is_replaced(self, tmp_path):
@@ -286,8 +286,45 @@ class TestStage:
         stale = install.with_name("Lit Review.new")
         stale.mkdir()
         (stale / "stale.txt").write_text("x")
-        new = updater.stage(self.zip_of(tmp_path), um.Asset("windows", "u.zip", 1, 1000, SHA), "0.2.0", install, Path("app.exe"), check=lambda *a: None)
+        new = updater.stage(self.zip_of(tmp_path), um.Asset("windows", "u.zip", 1, 1000, SHA), "0.2.0", install, Path("app.exe"), check=lambda *a: None, verify=lambda app: None)
         assert not (new / "stale.txt").exists()
+
+
+class TestMacSignature:
+    """The codesign step, with the tool itself faked so this runs the same on every OS."""
+
+    def stage_with(self, tmp_path, monkeypatch, returncode):
+        install = tmp_path / "apps" / "Lit Review.app"
+        install.mkdir(parents=True)
+        z = make_zip(tmp_path / "u.zip", {"Lit Review.app/Contents/MacOS/Lit Review": "new"})
+        ran = []
+
+        class Done:
+            pass
+
+        def fake_run(cmd, **kwargs):
+            ran.append(cmd)
+            done = Done()
+            done.returncode = returncode
+            return done
+
+        monkeypatch.setattr(updater.subprocess, "run", fake_run)
+        monkeypatch.setattr(updater.sys, "platform", "darwin")
+        checked = []
+        return ran, checked, lambda: updater.stage(
+            z, um.Asset("macos-intel", "u.zip", 1, 1000, SHA), "0.2.0", install, Path("Contents/MacOS/Lit Review"),
+            check=lambda exe, v: checked.append(v), extract=lambda zp, dest: zipfile.ZipFile(zp).extractall(dest))
+
+    def test_on_a_mac_the_unpacked_app_is_verified_before_the_self_check(self, tmp_path, monkeypatch):
+        ran, checked, go = self.stage_with(tmp_path, monkeypatch, 0)
+        new = go()
+        assert ran[0][:2] == ["codesign", "--verify"] and ran[0][-1] == str(new) and checked == ["0.2.0"]
+
+    def test_a_broken_signature_removes_the_staged_copy_and_skips_the_self_check(self, tmp_path, monkeypatch):
+        ran, checked, go = self.stage_with(tmp_path, monkeypatch, 1)
+        with pytest.raises(updater.UpdateError, match="signature"):
+            go()
+        assert checked == [] and not (tmp_path / "apps" / "Lit Review.app.new").exists()
 
 
 class TestSelfCheck:

@@ -390,7 +390,15 @@ def self_check(executable, expected_version):
         raise UpdateError(f"the downloaded build is version {data.get('version')}, not {expected_version}")
 
 
-def stage(zip_path, asset, expected_version, install, exe_rel, *, check=self_check, extract=None):
+def verify_mac_signature(app):
+    """`codesign --verify` on an unpacked Mac app: the ad hoc signature must have survived the
+    download and unpacking, or Apple Silicon would refuse to run it."""
+    done = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True, timeout=120)
+    if done.returncode:
+        raise UpdateError("the new app's signature did not verify")
+
+
+def stage(zip_path, asset, expected_version, install, exe_rel, *, check=self_check, extract=None, verify=None):
     """Unpack the zip next to `install` as `<install>.new` and prove it. Returns that folder."""
     top = safe_members(zip_path, asset.unpacked_size)
     parent = install.parent
@@ -411,10 +419,10 @@ def stage(zip_path, asset, expected_version, install, exe_rel, *, check=self_che
         raise
     shutil.rmtree(work, ignore_errors=True)
     try:
-        if sys.platform == "darwin":
-            done = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(new)], capture_output=True, timeout=120)
-            if done.returncode:
-                raise UpdateError("the new app's signature did not verify")
+        if verify is not None:
+            verify(new)
+        elif sys.platform == "darwin":
+            verify_mac_signature(new)
         check(new / exe_rel, expected_version)
     except Exception:
         shutil.rmtree(new, ignore_errors=True)

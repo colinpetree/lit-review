@@ -33,7 +33,7 @@ def test_client_fixture_talks_to_the_app_on_its_real_host(client):
     response = client.get("/api/datasets")
     assert response.status_code == 200
     assert response.get_json() == {"datasets": []}
-    assert response.request.host == "127.0.0.1:5175"
+    assert response.request.host == "127.0.0.1:8100"
 
 
 OUTSIDE = ("93.184.216.34", 80)

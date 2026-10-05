@@ -80,8 +80,8 @@ class TestToken:
 class TestWritesAreAtomic:
     def test_no_temporary_files_are_left_behind(self, tmp_path):
         access.load_or_create_token(tmp_path)
-        access.write_instance(tmp_path, 5175, "a")
-        access.write_instance(tmp_path, 5176, "b")
+        access.write_instance(tmp_path, 8100, "a")
+        access.write_instance(tmp_path, 8101, "b")
         assert sorted(p.name for p in tmp_path.iterdir()) == sorted([access.INSTANCE_FILE, access.TOKEN_FILE])
 
     def test_a_failed_write_leaves_the_old_secret_untouched_and_no_debris(self, tmp_path, monkeypatch):
@@ -99,7 +99,7 @@ class TestWritesAreAtomic:
         assert [p.name for p in tmp_path.iterdir()] == [access.TOKEN_FILE]  # and the temp file was cleaned up
 
     def test_a_failed_record_write_leaves_the_old_record(self, tmp_path, monkeypatch):
-        access.write_instance(tmp_path, 5175, "old")
+        access.write_instance(tmp_path, 8100, "old")
 
         def fail(src, dst):
             raise OSError("disk full")
@@ -107,23 +107,23 @@ class TestWritesAreAtomic:
         with monkeypatch.context() as scoped:
             scoped.setattr(access.os, "replace", fail)
             with pytest.raises(OSError):
-                access.write_instance(tmp_path, 5176, "new")
+                access.write_instance(tmp_path, 8101, "new")
 
-        assert access.read_instance(tmp_path) == {"port": 5175, "id": "old"}
+        assert access.read_instance(tmp_path) == {"port": 8100, "id": "old"}
         assert [p.name for p in tmp_path.iterdir()] == [access.INSTANCE_FILE]
 
     @pytest.mark.skipif(WINDOWS, reason="POSIX modes")
     def test_on_mac_and_linux_the_files_are_readable_by_their_owner_only(self, tmp_path):
         access.load_or_create_token(tmp_path)
-        access.write_instance(tmp_path, 5175, "x")
+        access.write_instance(tmp_path, 8100, "x")
         for name in (access.TOKEN_FILE, access.INSTANCE_FILE):
             assert stat.S_IMODE((tmp_path / name).stat().st_mode) == 0o600
 
 
 class TestInstanceRecord:
     def test_it_round_trips(self, tmp_path):
-        access.write_instance(tmp_path, 5176, "abc123")
-        assert access.read_instance(tmp_path) == {"port": 5176, "id": "abc123"}
+        access.write_instance(tmp_path, 8101, "abc123")
+        assert access.read_instance(tmp_path) == {"port": 8101, "id": "abc123"}
 
     def test_a_missing_record_is_none(self, tmp_path):
         assert access.read_instance(tmp_path) is None
@@ -138,17 +138,17 @@ class TestInstanceRecord:
             "42",
             '"text"',
             "{}",
-            '{"port": 5175}',
+            '{"port": 8100}',
             '{"id": "x"}',
-            '{"port": "5175", "id": "x"}',
-            '{"port": 5175.5, "id": "x"}',
+            '{"port": "8100", "id": "x"}',
+            '{"port": 8100.5, "id": "x"}',
             '{"port": true, "id": "x"}',
             '{"port": 0, "id": "x"}',
             '{"port": 70000, "id": "x"}',
             '{"port": -1, "id": "x"}',
-            '{"port": 5175, "id": ""}',
-            '{"port": 5175, "id": 7}',
-            '{"port": 5175, "id": null}',
+            '{"port": 8100, "id": ""}',
+            '{"port": 8100, "id": 7}',
+            '{"port": 8100, "id": null}',
         ],
     )
     def test_a_damaged_or_odd_record_is_none(self, tmp_path, content):
@@ -160,10 +160,10 @@ class TestInstanceRecord:
         assert access.read_instance(tmp_path) is None
 
     def test_clearing_removes_only_its_own_record(self, tmp_path):
-        access.write_instance(tmp_path, 5175, "old")
-        access.write_instance(tmp_path, 5176, "new")  # a newer copy took over the file
+        access.write_instance(tmp_path, 8100, "old")
+        access.write_instance(tmp_path, 8101, "new")  # a newer copy took over the file
         access.clear_instance(tmp_path, "old")
-        assert access.read_instance(tmp_path) == {"port": 5176, "id": "new"}
+        assert access.read_instance(tmp_path) == {"port": 8101, "id": "new"}
         access.clear_instance(tmp_path, "new")
         assert access.read_instance(tmp_path) is None
 
@@ -172,36 +172,36 @@ class TestInstanceRecord:
         access.clear_instance(tmp_path / "no" / "such" / "folder", "whatever")
 
     def test_writing_again_replaces_it(self, tmp_path):
-        for port in (5175, 5176, 5177):
+        for port in (8100, 8101, 8102):
             access.write_instance(tmp_path, port, f"id{port}")
-        assert access.read_instance(tmp_path)["port"] == 5177
+        assert access.read_instance(tmp_path)["port"] == 8102
 
     def test_it_is_plain_json(self, tmp_path):
-        access.write_instance(tmp_path, 5175, "x")
-        assert json.loads((tmp_path / access.INSTANCE_FILE).read_text(encoding="utf-8")) == {"port": 5175, "id": "x"}
+        access.write_instance(tmp_path, 8100, "x")
+        assert json.loads((tmp_path / access.INSTANCE_FILE).read_text(encoding="utf-8")) == {"port": 8100, "id": "x"}
 
 
 class TestLaunchUrl:
     def test_with_a_secret_it_is_the_private_link_with_the_secret_in_the_fragment(self):
-        assert access.launch_url(5175, "SECRET") == "http://127.0.0.1:5175/#token=SECRET"
+        assert access.launch_url(8100, "SECRET") == "http://localhost:8100/#token=SECRET"
 
     def test_the_secret_is_after_the_hash_so_a_browser_never_sends_it_to_a_server(self):
         from urllib.parse import urlparse
 
-        parsed = urlparse(access.launch_url(5175, "SECRET"))
+        parsed = urlparse(access.launch_url(8100, "SECRET"))
         assert "SECRET" not in parsed.path + parsed.query  # what actually goes over the wire
         assert parsed.fragment == "token=SECRET"
 
     def test_without_one_it_is_the_plain_address(self):
-        assert access.launch_url(5176) == "http://127.0.0.1:5176"
-        assert access.launch_url(5176, None) == "http://127.0.0.1:5176"
-        assert access.launch_url(5176, "") == "http://127.0.0.1:5176"
+        assert access.launch_url(8101) == "http://localhost:8101"
+        assert access.launch_url(8101, None) == "http://localhost:8101"
+        assert access.launch_url(8101, "") == "http://localhost:8101"
 
     def test_a_real_token_survives_being_put_in_a_url(self, tmp_path):
         from urllib.parse import parse_qs, urlparse
 
         token = access.load_or_create_token(tmp_path)
-        assert parse_qs(urlparse(access.launch_url(5175, token)).fragment)["token"] == [token]
+        assert parse_qs(urlparse(access.launch_url(8100, token)).fragment)["token"] == [token]
 
 
 class TestNothingLeftOfThePermissionHelpers:
@@ -224,4 +224,4 @@ class TestNothingLeftOfThePermissionHelpers:
         monkeypatch.setattr(subprocess, "run", forbidden)
         monkeypatch.setattr(subprocess, "Popen", forbidden)
         access.load_or_create_token(tmp_path)
-        access.write_instance(tmp_path, 5175, "x")
+        access.write_instance(tmp_path, 8100, "x")

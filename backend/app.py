@@ -79,8 +79,8 @@ MAX_DATASET_NAME_CHARS = 120
 
 STATIC_DIR = bundle.resource_path("static")
 # LIT_REVIEW_PORT is for tests only, so launching real copies never touches the
-# port a real app is using. The Vite dev proxy (vite.config.js) assumes 5175.
-PORT = int(os.environ.get("LIT_REVIEW_PORT") or 5175)
+# port a real app is using. The Vite dev proxy (vite.config.js) assumes 8100.
+PORT = int(os.environ.get("LIT_REVIEW_PORT") or 8100)
 
 # Python's mimetypes (and the Windows registry it reads) may not know .webp or
 # the web font types, in which case send_from_directory serves them as
@@ -1821,14 +1821,14 @@ def hand_over_to_running_copy(state_dir, wait_seconds=RUNNING_COPY_WAIT_SECONDS)
         record = access.read_instance(state_dir)
         if record and check_port(record["port"], instance=record["id"]) == "ours":
             token = access.load_or_create_token(state_dir)
-            print(f"Lit Review is already running. Opening it at http://127.0.0.1:{record['port']}")
+            print(f"Lit Review is already running. Opening it at http://localhost:{record['port']}")
             _open_browser(record["port"], token)
             return 0
         if record is None and time.monotonic() - started >= LEGACY_GRACE_SECONDS:
             state, reply = probe_port(PORT)
             if state == "ours" and "instance" not in reply:
                 print(
-                    f"An older version of Lit Review is already running. Opening it at http://127.0.0.1:{PORT}\n"
+                    f"An older version of Lit Review is already running. Opening it at http://localhost:{PORT}\n"
                     "(Close it and start Lit Review again to use the latest version.)"
                 )
                 _open_browser(PORT)
@@ -1984,7 +1984,7 @@ def main(argv=None):
     # logged (and a packaged app has no console to show it on; its tray menu opens
     # the signed-in page instead).
     stop_hint = "use the tray icon" if use_tray else "press Ctrl+C"
-    print(f"Lit Review is running at http://127.0.0.1:{port}  ({stop_hint} to stop)")
+    print(f"Lit Review is running at http://localhost:{port}  ({stop_hint} to stop)")
     print(f"If your browser does not open, use this private link (only you can use it):\n  {access.launch_url(port, token)}")
     try:
         if use_tray:

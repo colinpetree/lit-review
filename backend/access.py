@@ -87,8 +87,8 @@ def launch_url(port, token=None):
     it for that address (browsers keep page storage apart per address and port), and
     removes it from the address bar."""
     if token:
-        return f"http://127.0.0.1:{port}/#token={token}"
-    return f"http://127.0.0.1:{port}"
+        return f"http://localhost:{port}/#token={token}"
+    return f"http://localhost:{port}"
 
 
 def write_instance(directory, port, instance_id):

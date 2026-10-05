@@ -119,7 +119,7 @@ class TestLogFile:
             raise RuntimeError("https://api.example/x?key=SECRET2 refused")
         except RuntimeError:
             logger.exception("lookup failed")
-        logger.error("link %s", "http://127.0.0.1:5175/#token=SECRET3")
+        logger.error("link %s", "http://127.0.0.1:8100/#token=SECRET3")
         text = log.read_text(encoding="utf-8")
         assert "SECRET" not in text
         assert "REDACTED" in text and "lookup failed" in text

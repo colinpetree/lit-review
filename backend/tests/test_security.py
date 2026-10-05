@@ -13,14 +13,14 @@ GOOD_HOST = f"http://127.0.0.1:{app_module.PORT}"
 
 
 class TestHostGuard:
-    @pytest.mark.parametrize("host", ["evil.example", "evil.example:5175", "127.0.0.1:9999", "localhost", "127.0.0.1"])
+    @pytest.mark.parametrize("host", ["evil.example", "evil.example:8100", "127.0.0.1:9999", "localhost", "127.0.0.1"])
     def test_wrong_host_is_refused_on_any_route(self, client, host):
         for path in ("/api/datasets", "/", "/anything"):
             response = client.get(path, base_url=f"http://{host}")
             assert response.status_code == 403, (host, path)
         assert client.post("/api/prompts", json={}, base_url=f"http://{host}").status_code == 403
 
-    @pytest.mark.parametrize("host", ["127.0.0.1:5175", "localhost:5175", "LOCALHOST:5175"])
+    @pytest.mark.parametrize("host", ["127.0.0.1:8100", "localhost:8100", "LOCALHOST:8100"])
     def test_our_own_names_work(self, client, host):
         assert client.get("/api/datasets", base_url=f"http://{host}").status_code == 200
 
@@ -28,7 +28,7 @@ class TestHostGuard:
         client.post(
             "/api/prompts",
             json={"name": "x", "description": "y"},
-            base_url="http://evil.example:5175",
+            base_url="http://evil.example:8100",
         )
         assert db.list_prompts() == []
 
@@ -40,11 +40,11 @@ class TestOriginGuard:
         "origin",
         [
             "https://evil.example",
-            "http://evil.example:5175",
+            "http://evil.example:8100",
             "null",
             "http://localhost:3000",
-            "https://127.0.0.1:5175",  # wrong scheme
-            "http://127.0.0.1:5175.evil.example",
+            "https://127.0.0.1:8100",  # wrong scheme
+            "http://127.0.0.1:8100.evil.example",
             "",
         ],
     )
@@ -58,7 +58,7 @@ class TestOriginGuard:
         response = getattr(client, method)("/api/prompts/1", headers={"Origin": "https://evil.example"})
         assert response.status_code == 403
 
-    @pytest.mark.parametrize("origin", [GOOD_HOST, "http://localhost:5175", "HTTP://LOCALHOST:5175"])
+    @pytest.mark.parametrize("origin", [GOOD_HOST, "http://localhost:8100", "HTTP://LOCALHOST:8100"])
     def test_our_own_origin_is_accepted(self, client, origin):
         response = client.post("/api/prompts", json=self.BODY, headers={"Origin": origin})
         assert response.status_code == 200
@@ -117,7 +117,7 @@ class TestSecurityHeaders:
         assert headers["Referrer-Policy"] == "no-referrer"
 
     def test_headers_are_on_refused_requests_too(self, client):
-        response = client.get("/api/datasets", base_url="http://evil.example:5175")
+        response = client.get("/api/datasets", base_url="http://evil.example:8100")
         assert response.status_code == 403
         assert response.headers["X-Frame-Options"] == "DENY"
 

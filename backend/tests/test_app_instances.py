@@ -373,7 +373,7 @@ class TestAnOlderCopyStillRunning:
 
             assert code == 0, copy.output
             assert "older version of Lit Review is already running" in copy.output
-            assert f"Would open http://127.0.0.1:{launcher.port}" in copy.output
+            assert f"Would open http://localhost:{launcher.port}" in copy.output
             assert "#token=" not in copy.output  # the older copy asks for no secret
             assert "is running at" not in copy.output  # and nothing new was started
             assert elapsed < app_module.RUNNING_COPY_WAIT_SECONDS  # it did not wait out the full time

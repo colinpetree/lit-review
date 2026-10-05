@@ -59,7 +59,7 @@ class TestAnOlderCopy:
         assert app_module.LEGACY_GRACE_SECONDS <= waited < app_module.LEGACY_GRACE_SECONDS + 1
         out = capsys.readouterr().out
         assert "An older version of Lit Review is already running" in out
-        assert f"http://127.0.0.1:{app_module.PORT}" in out
+        assert f"http://localhost:{app_module.PORT}" in out
         assert "latest version" in out
 
     def test_it_is_not_opened_before_the_grace_period_is_up(self, state_dir, monkeypatch, opened):

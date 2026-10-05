@@ -125,7 +125,7 @@ guarded (built; details and rationale in CLAUDE.md, "Architecture"):
   POST/PATCH/DELETE are refused; responses carry anti-framing and `no-store` headers. No CORS.
 - **Per-user access secret**: a random secret in `access.token`, sent as a Bearer header (not a
   cookie, because cookies are not port-scoped). The browser is opened on a `#token=` link.
-- **One copy per user**: a lock file, a port chosen per copy (5175 up, 20 ports) and an
+- **One copy per user**: a lock file, a port chosen per copy (8100 up, 20 ports) and an
   exclusive bind on Windows, so a second launch opens the running copy instead of starting
   another.
 - **One slow job per run or dataset**: scoring and abstract lookup return 409 if one is already
@@ -141,7 +141,7 @@ guarded (built; details and rationale in CLAUDE.md, "Architecture"):
   (+ detail), Evaluate Papers, Scoring Prompts (+ detail), Results (+ run results) and
   Settings, under a shared layout. `vite build` writes straight into `backend/static`,
   which Flask serves, so the shipped app is a single Flask process (no separate frontend dev
-  server needed at runtime; in dev, `npm run dev` proxies `/api` to Flask on 5175).
+  server needed at runtime; in dev, `npm run dev` proxies `/api` to Flask on 8100).
 - **DB**: SQLite via stdlib `sqlite3` (no ORM), a short-lived connection per call and a
   module lock serializing writes. The file lives in the platformdirs user-data dir, not the
   repo. Schema changes to existing tables go through an idempotent ALTER-based `_migrate`,

@@ -32,7 +32,7 @@ packaging. The maintainer (secondary user) works from source as described below.
 **Backend** (from `backend/`, using the existing `.venv`):
 ```
 pip install -r requirements.txt
-python app.py                     # http://127.0.0.1:5175, opens browser
+python app.py                     # http://localhost:8100, opens browser
 ```
 Every line in `requirements.txt` is pinned to the version that was tested (the provider SDKs
 use newer parameters, such as `output_config` in `providers/anthropic.py`, that an older
@@ -46,7 +46,7 @@ self-check after any SDK bump, since the SDKs import pieces lazily.
 **Frontend** (from `frontend/`):
 ```
 npm install
-npm run dev       # Vite dev server with HMR, proxies /api to Flask on 5175
+npm run dev       # Vite dev server with HMR, proxies /api to Flask on 8100
 npm run build     # outputs to backend/static, which Flask serves
 npm run lint      # oxlint
 ```
@@ -169,11 +169,11 @@ frontend server at runtime. `vite build` writes straight into `backend/static`, 
 rebuild is required for Flask to pick up frontend changes. The catch-all route in
 `backend/app.py` is `safe_join`-guarded and falls back to `index.html` so client-side
 routes survive refresh. An unknown `/api/...` path is a JSON 404, not the app page. In dev, run
-Flask on 5175 (hardcoded) next to `npm run dev`.
+Flask on 8100 (hardcoded) next to `npm run dev`.
 
 **Request guard (do not weaken).** The app listens on 127.0.0.1 only, but a website open in the
 user's own browser can still reach it. `reject_foreign_requests` in `app.py` therefore refuses
-any request whose `Host` is not `127.0.0.1:5175` or `localhost:5175` (DNS rebinding) and any
+any request whose `Host` is not `127.0.0.1:8100` or `localhost:8100` (DNS rebinding) and any
 POST/PATCH/DELETE whose `Origin` is present and is not one of those (a plain cross-site POST
 needs no preflight, and routes like `/process` and `/find-abstracts` take no body, so the
 JSON-only body parsing does not protect them). A request with no `Origin` is allowed (curl,
@@ -226,7 +226,7 @@ letters). On macOS and Linux the files come out owner-only anyway, since `mkstem
 way. The thing the OS does *not* separate is the network port: the operating system keeps accounts'
 files apart but not their ports, so another signed-in user could otherwise open this app on
 127.0.0.1, which is what the secret is for. The app opens the browser on
-`http://127.0.0.1:PORT/#token=...`. The part after the `#` is never sent to any server, so it is in
+`http://localhost:PORT/#token=...`. The part after the `#` is never sent to any server, so it is in
 no request, log, or Referer. `main.jsx` calls `captureTokenFromLocation()` first: it keeps the secret
 in that page's `localStorage` (and in memory, if storage is blocked) and strips it from the address
 bar. Every API call goes through `apiFetch` in `lib/api.js`, which sends `Authorization: Bearer
@@ -247,7 +247,7 @@ authenticates (a test asserts that too). Verified in real headless Chrome: the l
 reload stays signed in, another port in the same browser does not get the secret, and an unrelated
 local web server sees no secret, cookie or authorization header. Tests use the `client` fixture,
 which sends the header; `anonymous` (in `test_auth.py`) is a stranger. Dev server: the Flask
-console prints the private link; open it with `127.0.0.1:5175` replaced by `localhost:5173` (the Vite
+console prints the private link; open it with `localhost:8100` replaced by `localhost:5173` (the Vite
 dev origin) once, and the dev server's page keeps the secret for its own origin; the proxy forwards
 the header.
 
@@ -263,7 +263,7 @@ the header.
    record and asks for no secret: if there is still no record after `LEGACY_GRACE_SECONDS` and the
    default port answers as Lit Review *without an instance id* (only such an older copy does), that
    is the copy and it is opened as it is, instead of waiting out the full time and failing.
-2. **A port per copy** (`start_server`): from 5175 up to 20 ports. A port with anything listening
+2. **A port per copy** (`start_server`): from 8100 up to 20 ports. A port with anything listening
    is skipped, including another user's copy of this app (it needs its owner's secret, so it is no
    use here); a port that cannot be bound is skipped too, which handles two users launching at the
    same moment and both choosing the same one. So two people signed in at once each get their own
@@ -288,7 +288,7 @@ launch by `db.ensure_ready()` and the lock/secret writes, and explained plainly
 (`_data_folder_problem`, exit 1), not as a traceback or as errors on the first request.
 
 Tests that start real copies (`tests/test_app_instances.py`, about 80 s) use the test-only switches
-`LIT_REVIEW_PORT` (a spare port, never 5175), `LIT_REVIEW_NO_BROWSER=1` (print "Would open <url>"
+`LIT_REVIEW_PORT` (a spare port, never 8100), `LIT_REVIEW_NO_BROWSER=1` (print "Would open <url>"
 instead of opening a browser) and the data/config dir overrides, via `tests/procutil.py` (`Copy`
 kills the whole process tree, since the venv's `python.exe` on Windows is a launcher for the real
 interpreter). Two data folders stand for two users. Never reload the `app` module in a test: it

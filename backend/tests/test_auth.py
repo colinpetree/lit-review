@@ -106,7 +106,7 @@ class TestTheApiIsClosedWithoutTheSecret:
         assert (real.status_code, real.get_json()) == (made_up.status_code, made_up.get_json())
 
     def test_the_ordering_of_checks_is_host_origin_then_secret(self, anonymous):
-        assert anonymous.get("/api/datasets", base_url="http://evil.example:5175").status_code == 403
+        assert anonymous.get("/api/datasets", base_url="http://evil.example:8100").status_code == 403
         assert anonymous.post("/api/prompts", json={}, headers={"Origin": "https://evil.example"}).status_code == 403
         assert anonymous.get("/api/datasets").status_code == 401
 
@@ -210,12 +210,12 @@ class TestTheRightHeader:
         assert anonymous.get("/api/datasets", headers=bearer(f"Bearer   {TEST_TOKEN}  ")).status_code == 200
 
     def test_it_works_on_either_loopback_name(self, client):
-        assert client.get("/api/datasets", base_url="http://localhost:5175").status_code == 200
-        assert client.get("/api/datasets", base_url="http://127.0.0.1:5175").status_code == 200
+        assert client.get("/api/datasets", base_url="http://localhost:8100").status_code == 200
+        assert client.get("/api/datasets", base_url="http://127.0.0.1:8100").status_code == 200
 
     def test_the_guard_against_other_sites_still_comes_first(self, client):
         assert client.post("/api/prompts", json={"name": "a", "description": "b"}, headers={"Origin": "https://evil.example"}).status_code == 403
-        assert client.get("/api/datasets", base_url="http://evil.example:5175").status_code == 403
+        assert client.get("/api/datasets", base_url="http://evil.example:8100").status_code == 403
 
 
 class TestNoCookieIsEverSet:

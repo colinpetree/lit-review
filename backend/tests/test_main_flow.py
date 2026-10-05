@@ -243,21 +243,21 @@ class TestHandOver:
 
         out = capsys.readouterr().out
         assert "already running" in out
-        assert f"Would open http://127.0.0.1:5188/#token={token}" in out
+        assert f"Would open http://localhost:5188/#token={token}" in out
         assert calls == [(5188, "id-1")]  # asked about that copy specifically, not the default port
 
     def test_it_never_uses_the_default_port_when_the_record_says_another(self, state_dir, monkeypatch, capsys):
         access.write_instance(state_dir, app_module.PORT + 7, "id-1")
         monkeypatch.setattr(app_module, "check_port", lambda port, instance=None: "ours")
         app_module.hand_over_to_running_copy(state_dir, wait_seconds=5)
-        assert f"127.0.0.1:{app_module.PORT + 7}/#token=" in capsys.readouterr().out
+        assert f"localhost:{app_module.PORT + 7}/#token=" in capsys.readouterr().out
 
     def test_it_waits_for_a_copy_that_has_not_written_its_record_yet(self, state_dir, monkeypatch, capsys):
         records = iter([None, None, None])
         monkeypatch.setattr(app_module.access, "read_instance", lambda d: next(records, {"port": 5190, "id": "late"}))
         monkeypatch.setattr(app_module, "check_port", lambda port, instance=None: "ours")
         assert app_module.hand_over_to_running_copy(state_dir, wait_seconds=60) == 0
-        assert "127.0.0.1:5190/#token=" in capsys.readouterr().out
+        assert "localhost:5190/#token=" in capsys.readouterr().out
 
     def test_it_waits_for_a_copy_that_has_a_record_but_is_not_answering_yet(self, state_dir, monkeypatch, capsys):
         access.write_instance(state_dir, 5188, "id-1")
@@ -349,8 +349,8 @@ class TestMain:
         assert access.read_instance(state_dir) is None  # its record is removed on the way out
         single_instance.acquire(state_dir / "instance.lock").release()  # and the lock is free again
         out = capsys.readouterr().out
-        assert f"Lit Review is running at http://127.0.0.1:{port}" in out
-        assert f"http://127.0.0.1:{port}/#token={token}" in out  # the private link, if no browser opens
+        assert f"Lit Review is running at http://localhost:{port}" in out
+        assert f"http://localhost:{port}/#token={token}" in out  # the private link, if no browser opens
 
     def test_the_browser_is_asked_to_open_the_signed_in_link(self, state_dir, fake_server):
         app_module.main()

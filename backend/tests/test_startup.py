@@ -27,7 +27,7 @@ class TestHealthRoute:
         assert set(body) == {"app", "instance"}  # nothing private rides along
 
     def test_it_is_behind_the_request_guard(self, client):
-        assert client.get("/api/health", base_url="http://evil.example:5175").status_code == 403
+        assert client.get("/api/health", base_url="http://evil.example:8100").status_code == 403
 
 
 class TestCheckPort:

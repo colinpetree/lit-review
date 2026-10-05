@@ -12,7 +12,7 @@ from pathlib import Path
 import app as app_module
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-REAL_PORT = 5175  # a real app may be running here; tests must never touch it
+REAL_PORT = 8100  # a real app may be running here; tests must never touch it
 RUNNING_AT = re.compile(r"Lit Review is running at http://127\.0\.0\.1:(\d+)")
 
 

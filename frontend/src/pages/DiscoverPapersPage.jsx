@@ -205,7 +205,7 @@ export default function DiscoverPapersPage() {
             <AutoGrowTextarea
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder="e.g. peatland carbon cycling"
+              placeholder="Describe the topic in a sentence or two"
               maxLength={4000}
               rows={3}
               className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"

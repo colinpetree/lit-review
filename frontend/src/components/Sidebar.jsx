@@ -17,14 +17,20 @@ export default function Sidebar() {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-stone-200 bg-sidebar">
       <div className="border-b border-stone-200 px-3 py-4">
-        <span className="flex items-center gap-2.5 px-3 text-sm font-semibold text-stone-700">
+        <Link to="/" className="flex cursor-pointer items-center gap-2.5 px-3 text-sm font-semibold text-stone-700">
           <GraduationCap size={18} />
-          {inSettings ? 'Lit Review Settings' : 'Lit Review'}
-        </span>
+          Lit Review
+        </Link>
       </div>
       <nav className="mt-3 flex-1 overflow-auto px-3 space-y-1">
+        {inSettings && (
+          <div className="flex items-center gap-2.5 px-3 pb-1 text-sm font-semibold text-stone-700">
+            <SETTINGS_ITEM.icon size={16} />
+            Settings
+          </div>
+        )}
         {items.map((item) => (
-          <NavLink key={item.to} to={item.to} className={linkClass}>
+          <NavLink key={item.to} to={item.to} className={(state) => `${linkClass(state)}${inSettings ? ' ml-3' : ''}`}>
             <item.icon size={16} />
             {item.label}
           </NavLink>

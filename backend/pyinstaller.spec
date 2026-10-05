@@ -2,7 +2,8 @@
 """PyInstaller recipe for the packaged Lit Review (a folder per OS: Lit Review.exe
 on Windows, Lit Review.app on macOS). Build from the repo root, after
 `npm run build` in frontend/ (it writes backend/static) and
-`python packaging/make_icons.py` (it writes packaging/build/):
+`python packaging/make_icons.py` and `python packaging/make_notices.py` (both write
+packaging/build/):
 
     pyinstaller backend/pyinstaller.spec --noconfirm
 
@@ -62,6 +63,17 @@ datas += [(str(SPEC_DIR / "static"), "static")]  # the built frontend
 for tray_image in ("tray.png", "trayTemplate.png"):  # Windows tray icon, macOS menu-bar icon
     if (ICON_DIR / tray_image).is_file():
         datas += [(str(ICON_DIR / tray_image), ".")]
+
+# The app's license and the third-party notices travel inside the app, in a `licenses` folder
+# (Settings, License and Notices reads the notices from there; see notices.py), rather than
+# loose beside it in the zip. They are added here, before the Mac app is signed, so the
+# signature covers them. The notices are made by packaging/make_notices.py, which the
+# workflow runs before this build; a build without them would ship without the notices that
+# the software it carries asks for, so it stops instead.
+NOTICES = ROOT / "packaging" / "build" / "THIRD_PARTY_NOTICES.txt"
+if not NOTICES.is_file():
+    raise SystemExit(f"{NOTICES} is missing: run `python packaging/make_notices.py` before building")
+datas += [(str(ROOT / "LICENSE"), "licenses"), (str(NOTICES), "licenses")]
 
 if sys.platform == "win32":
     exe_icon = ICON_DIR / "LitReview.ico"

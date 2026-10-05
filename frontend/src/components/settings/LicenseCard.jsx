@@ -11,8 +11,16 @@ export default function LicenseCard() {
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-700">License</p>
         <p className="text-xs text-gray-400">
-          Lit Review is free to use for any purpose, including at work. You may not use its code to offer a competing
-          commercial product or service. Copyright 2026 Colin Petree.
+          <a
+            href="https://github.com/colinpetree/lit-review"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 underline-offset-2 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            Lit Review
+          </a>{' '}
+          is free to use for any purpose, including at work. You may not use its code to offer a competing commercial
+          product or service. Copyright 2026 Colin Petree.
         </p>
         <button
           type="button"

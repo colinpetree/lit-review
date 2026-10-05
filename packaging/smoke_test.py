@@ -98,6 +98,13 @@ def main(exe):
             raise SystemExit(f"FAIL: /api/about said {about}")
         print("signed-in API ok, version", about["version"])
 
+        # The license notices travel inside the app; the Settings page reads them here.
+        status, body = get(f"{base}/api/notices", token)
+        notices = json.loads(body).get("text", "")
+        if status != 200 or len(notices) < 10_000 or "Lit Review includes" not in notices:
+            raise SystemExit(f"FAIL: /api/notices gave status {status} and {len(notices)} characters")
+        print("third-party notices ok:", len(notices), "characters")
+
         # A second launch must hand over to the first, not start another.
         second = subprocess.run([exe], env=env, timeout=90)
         if second.returncode != 0 or first.poll() is not None:

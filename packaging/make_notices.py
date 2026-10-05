@@ -2,8 +2,9 @@
 
 The app bundles other people's code (the Python packages in backend/requirements.txt
 and what they need, and the npm packages built into the page, including the fonts
-and the Lucide icon used as the logo). Most licenses ask for their notice to travel
-with copies, so the release zips include this file next to the app's own LICENSE.
+and the Lucide icon used as the logo), and the Python runtime with the native libraries
+inside it. Most licenses ask for their notice to travel with copies, so the build puts
+this file inside the app, next to the app's own LICENSE, and Settings shows it.
 
     python packaging/make_notices.py [--out PATH]
 
@@ -136,12 +137,62 @@ def npm_entries():
     return sorted(entries)
 
 
+# Native libraries that the Python runtime and the wheels carry inside them. They are not Python
+# packages, so nothing above finds them; this is a fixed list of the usual ones (not read from
+# the build), each with its license and where it comes from. The Windows-only one is left out
+# of the other builds.
+NATIVE_LIBRARIES = [
+    ("OpenSSL", "Apache-2.0", "https://www.openssl.org/source/license.html"),
+    ("SQLite", "public domain", "https://www.sqlite.org/copyright.html"),
+    ("zlib", "zlib license", "https://zlib.net/zlib_license.html"),
+    ("Expat", "MIT", "https://github.com/libexpat/libexpat/blob/master/expat/COPYING"),
+    ("libffi", "MIT", "https://github.com/libffi/libffi/blob/master/LICENSE"),
+    ("bzip2", "bzip2 license (BSD-style)", "https://sourceware.org/bzip2/"),
+    ("XZ Utils (liblzma)", "public domain / 0BSD", "https://tukaani.org/xz/"),
+]
+if sys.platform == "win32":
+    NATIVE_LIBRARIES.append(
+        ("Microsoft Visual C++ runtime", "Microsoft redistribution terms", "https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files")
+    )
+
+
+def python_license_text():
+    """The text of the Python license shipped with this interpreter, or "" if it is not found."""
+    import sysconfig
+
+    stdlib = sysconfig.get_path("stdlib")
+    folders = [Path(sys.base_prefix), Path(sys.base_prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"]
+    folders += [Path(stdlib)] if stdlib else []
+    for folder in folders:
+        for name in ("LICENSE.txt", "LICENSE"):
+            path = folder / name
+            if path.is_file():
+                return path.read_text(encoding="utf-8", errors="replace").strip()
+    return ""
+
+
+def runtime_entries():
+    """The Python runtime itself, and the native libraries bundled inside it and the wheels."""
+    version = ".".join(str(n) for n in sys.version_info[:3])
+    entries = [
+        (
+            f"Python {version}",
+            "Python Software Foundation License",
+            [python_license_text() or "The Python license: https://docs.python.org/3/license.html"],
+        )
+    ]
+    for name, license_name, url in NATIVE_LIBRARIES:
+        entries.append((name, license_name, [f"May be included in the Python runtime or in a package above. License: {url}"]))
+    return entries
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", default=str(ROOT / "packaging" / "build" / "THIRD_PARTY_NOTICES.txt"))
     args = parser.parse_args()
 
     sections = [
+        ("Python runtime and the native libraries bundled with it", runtime_entries()),
         ("Python packages", python_entries()),
         ("Packages built into the web page (npm)", npm_entries()),
     ]

@@ -164,7 +164,7 @@ gitignored.
   as a foreground layer: `packaging/make_glyph_svg.py` writes the committed `packaging/macos/glyph-*.svg`, **filled outlines, not strokes**, because Icon Composer's per-layer Fill colours a layer's shapes and flooded a stroke-only cap)
   is compiled by the workflow's `icon` job (`xcrun actool`, Xcode 26 on `macos-latest`) into `Assets.car`,
   which the Mac builds copy into `Contents/Resources` **before signing** and name with `CFBundleIconName`
-  (`pyinstaller.spec` sets it only when the compiled file exists, so without the `.icon` nothing changes).
+  (`pyinstaller.spec` sets it only when the compiled file exists, so a local build without it keeps the classic icon; the release workflow requires it and fails if the `.icon` is missing or does not compile).
   Bundle id `io.github.colinpetree.lit-review` (changing it makes macOS treat a release as a new app).
   Builds are signed ad hoc only; the first-launch "Open Anyway" step is in INSTALL.md.
 - **Workflow** (`.github/workflows/release.yml`): `prepare` checks the tag is `vN.N.N` and on `main`;
@@ -176,10 +176,17 @@ gitignored.
   and the Mac legs skipping `test_app_instances.py` are the first things to check if CI misbehaves.
 - **Docs for users:** `README.md`, `INSTALL.md` (plain language: no terminal, first-launch steps per OS,
   where data lives), `packaging/release-notes.md` (the release body). License: FSL-1.1-MIT (source-available: free for any use except a competing commercial product, each version turns MIT after 2 years; the author's choice, so do not swap it for a permissive license without asking); the bundled software's
-  licenses ship as `THIRD_PARTY_NOTICES.txt`, with `LICENSE`, in each zip. Settings, "License and Notices" is
-  a page with a card (`LicenseCard`, `LicenseModal`): the modal shows the repo's `LICENSE` embedded at
+  licenses ship as `THIRD_PARTY_NOTICES.txt` (made by `packaging/make_notices.py`: Python packages, npm
+  packages, and the Python runtime with its native libraries), which with `LICENSE` is **inside the app** in a
+  `licenses` folder (data files in `pyinstaller.spec`, added before the Mac signature; the spec stops if the notices
+  were not made), so the zips hold only the app. The zip step lists where the files landed. Settings, "License and
+  Notices" is a page with two cards. `LicenseCard` (`LicenseModal`): the modal shows the repo's `LICENSE` embedded at
   build time (`?raw` import, so `vite.config.js` lets the dev server read the repo root), and the card lists what
-  is sent to AI companies and databases. If a new feature sends data somewhere new, update those notices.
+  is sent to AI companies and databases. `ThirdPartyCard` (`ThirdPartyNoticesModal`): reads the packaged notices from
+  `GET /api/notices` (`notices.py`: two fixed paths, 2 MB cap, never a path from the request; 404 with a plain
+  message in a source run until `make_notices.py` has been run), fetched once and kept (`lib/notices.js`); both
+  modals share `TextModal`. The self-check and the smoke test fail a packaged build without them. If a new
+  feature sends data somewhere new, update those notices.
 
 ## Architecture
 

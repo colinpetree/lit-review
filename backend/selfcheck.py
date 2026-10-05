@@ -82,6 +82,9 @@ def _check_files():
         # Without them the tray falls back to a stand-in or, on a Mac, to the large stock
         # icon, which is easy to miss and looks wrong, so a packaged build must have them.
         required += [("tray.png",), ("trayTemplate.png",)]
+        # The license and notices travel inside the app (Settings shows them), so a
+        # packaged build without them would ship without what its libraries ask for.
+        required += [("licenses", "LICENSE"), ("licenses", "THIRD_PARTY_NOTICES.txt")]
     for parts in required:
         path = bundle.resource_path(*parts)
         if not path.is_file():

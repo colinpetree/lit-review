@@ -23,5 +23,7 @@ Your datasets, results, prompts and API keys are kept when you update to a newer
 
 `SHA256SUMS.txt` lets you check that a download is intact.
 
+Lit Review is under the [Functional Source License (FSL-1.1-MIT)](https://github.com/colinpetree/lit-review/blob/main/LICENSE). The licenses of the software it includes are in the app, under **Settings → License and Notices**.
+
 ## What changed
 

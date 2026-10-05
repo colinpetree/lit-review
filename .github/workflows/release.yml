@@ -45,37 +45,32 @@ jobs:
 
   # macOS 26 ("Liquid Glass") draws an app icon from a layered Icon Composer package compiled
   # into Assets.car. Xcode 26 (which has `actool`) is on macos-latest but may not be on the
-  # Intel runner, so it is compiled once here and both Mac builds use the result. With no
-  # packaging/macos/AppIcon.icon in the repo this does nothing and the builds are unchanged.
+  # Intel runner, so it is compiled once here and both Mac builds use the result. The icon is
+  # part of every release: if it cannot be compiled, or packaging/macos/AppIcon.icon is gone,
+  # this job fails and so does the release, rather than shipping the classic icon unnoticed.
   icon:
     runs-on: macos-latest
-    outputs:
-      has_icon: ${{ steps.compile.outputs.has_icon }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Compile the layered icon, if there is one
-        id: compile
+      - name: Compile the layered icon
         shell: bash
         run: |
-          if [ ! -d packaging/macos/AppIcon.icon ]; then
-            echo "No packaging/macos/AppIcon.icon yet: the Mac builds keep the classic icon."
-            echo "has_icon=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          test -d packaging/macos/AppIcon.icon || { echo "::error::packaging/macos/AppIcon.icon is missing"; exit 1; }
           xcodebuild -version
           mkdir icon-out
-          xcrun actool packaging/macos/AppIcon.icon --compile icon-out --app-icon AppIcon             --include-all-app-icons --enable-on-demand-resources NO --development-region en             --target-device mac --minimum-deployment-target 26.0 --platform macosx             --output-partial-info-plist icon-out/partial.plist --output-format human-readable-text
+          xcrun actool packaging/macos/AppIcon.icon --compile icon-out --app-icon AppIcon \
+            --include-all-app-icons --enable-on-demand-resources NO --development-region en \
+            --target-device mac --minimum-deployment-target 26.0 --platform macosx \
+            --output-partial-info-plist icon-out/partial.plist --output-format human-readable-text
           echo "--- what actool wrote"
           ls -l icon-out
           cat icon-out/partial.plist
-          test -f icon-out/Assets.car
+          test -f icon-out/Assets.car || { echo "::error::actool did not make Assets.car"; exit 1; }
           echo "--- what is in Assets.car"
-          xcrun assetutil --info icon-out/Assets.car | head -60
-          echo "has_icon=true" >> "$GITHUB_OUTPUT"
+          xcrun assetutil --info icon-out/Assets.car | sed -n '1,60p'
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: steps.compile.outputs.has_icon == 'true'
         with:
           name: app-icon
           path: icon-out/Assets.car
@@ -158,10 +153,10 @@ jobs:
         if: runner.os == 'macOS'
         run: iconutil -c icns packaging/build/LitReview.iconset -o packaging/build/LitReview.icns
 
-      # The compiled Liquid Glass icon, when there is one. It goes in packaging/build so the
+      # The compiled Liquid Glass icon. It goes in packaging/build so the
       # spec (which then names it in Info.plist) and the copy below can find it.
       - name: Get the compiled macOS 26 icon
-        if: runner.os == 'macOS' && needs.icon.outputs.has_icon == 'true'
+        if: runner.os == 'macOS'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: app-icon
@@ -176,11 +171,11 @@ jobs:
       # Assets.car must be a real file in Contents/Resources, and it must be there before the
       # signature is made, or the signature would not cover it.
       - name: Put the macOS 26 icon in the app
-        if: runner.os == 'macOS' && needs.icon.outputs.has_icon == 'true'
+        if: runner.os == 'macOS'
         run: |
           cp packaging/build/Assets.car "dist/Lit Review.app/Contents/Resources/Assets.car"
-          plutil -p "dist/Lit Review.app/Contents/Info.plist" | grep -E "CFBundleIcon"
-          ls -l "dist/Lit Review.app/Contents/Resources" | head -20
+          plutil -p "dist/Lit Review.app/Contents/Info.plist" | grep "CFBundleIconName"
+          ls -l "dist/Lit Review.app/Contents/Resources" | sed -n '1,20p'
 
       # An unsigned download can be reported as "damaged" if its signature is broken, so the
       # build is signed ad hoc (free; the first-launch prompt still appears and the guide covers it).
@@ -193,18 +188,22 @@ jobs:
       - name: Run the built app (self-check, then a real launch)
         run: python packaging/smoke_test.py "${{ matrix.exe }}"
 
+      # The license and the third-party notices are inside the app (pyinstaller.spec puts them in
+      # its `licenses` folder, before the signature), so the zip holds only the app. The listings
+      # show where they landed and what the zip's top level is (for the Mac, only the .app).
       - name: Zip it
         run: |
           mkdir out
           name="Lit-Review-$VERSION-${{ matrix.asset }}"
+          echo "--- where the license files are inside the app"
+          python -c "import pathlib; hits = list(pathlib.Path('dist').rglob('licenses/THIRD_PARTY_NOTICES.txt')); print(*hits, sep='\n'); raise SystemExit(0 if hits else '::error::the notices file is not in the app')"
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp LICENSE packaging/build/THIRD_PARTY_NOTICES.txt "dist/Lit Review/"
             python -c "import shutil; shutil.make_archive('out/$name', 'zip', root_dir='dist', base_dir='Lit Review')"
+            python -m zipfile -l "out/$name.zip" | grep -E "Lit Review/(Lit Review.exe|_internal/licenses)" || true
           else
-            mkdir staging
-            ditto "dist/Lit Review.app" "staging/Lit Review.app"
-            cp LICENSE packaging/build/THIRD_PARTY_NOTICES.txt staging/
-            ditto -c -k --sequesterRsrc staging "out/$name.zip"
+            ditto -c -k --sequesterRsrc --keepParent "dist/Lit Review.app" "out/$name.zip"
+            echo "--- the zip's top level (it must be only Lit Review.app)"
+            unzip -Z1 "out/$name.zip" | cut -d/ -f1 | sort -u
           fi
           ls -l out
 

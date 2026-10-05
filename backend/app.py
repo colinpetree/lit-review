@@ -35,6 +35,7 @@ import db
 import export
 import llm
 import logfile
+import notices
 import openalex
 import search_sources
 import single_instance
@@ -286,6 +287,16 @@ def about():
             "packaged": bundle.is_frozen(),
         }
     )
+
+
+@app.get("/api/notices")
+def third_party_notices():
+    """The licenses of the software Lit Review includes, read from the file the build
+    shipped (notices.py), for Settings, License and Notices."""
+    try:
+        return jsonify({"text": notices.read_notices()})
+    except notices.NoticesUnavailable as exc:
+        return jsonify({"error": str(exc)}), exc.status
 
 
 @app.get("/api/update-check")

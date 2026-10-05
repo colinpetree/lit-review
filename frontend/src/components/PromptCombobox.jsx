@@ -3,7 +3,7 @@ import Combobox from './Combobox'
 
 export const NEW_PROMPT = 'new'
 
-// Picker for a saved scoring prompt. value is NEW_PROMPT or a prompt id.
+// Picker for a saved grading prompt. value is NEW_PROMPT or a prompt id.
 // "New prompt" is always the first option and stays visible while filtering.
 export default function PromptCombobox({ prompts, value, onChange }) {
   const options = useMemo(

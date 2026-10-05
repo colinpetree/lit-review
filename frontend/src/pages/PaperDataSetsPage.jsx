@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { PageShell, Card } from '../components/ui'
+import { PageShell, Card, TextLink } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
@@ -45,12 +45,12 @@ export default function PaperDataSetsPage() {
     <PageShell
       title="Paper Datasets"
       icon={navIcon('/datasets')}
-      description="Groups of paper abstracts that serve as datasets for an AI model to score and rank each paper according to your research criteria."
+      description="Groups of paper abstracts that serve as datasets for an AI model to grade and rank each paper according to your research criteria."
     >
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {datasets && datasets.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No datasets yet - run a search from Discover Papers to create one.
+          No datasets yet - run a search from <TextLink to="/discover">Discover Papers</TextLink> to create one.
         </p>
       ) : null}
       {datasets && datasets.length > 0 ? (

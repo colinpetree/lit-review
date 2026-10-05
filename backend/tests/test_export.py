@@ -40,11 +40,11 @@ class TestCsv:
         assert row["doi"] == "10.1000/abc"
         assert row["read"] == "yes" and row["source"] == "openalex"
         assert row["abstract"] == "Line one.\nLine two."
-        assert "score" not in row
+        assert "grade" not in row
 
     def test_a_runs_export_has_the_score_columns(self):
         (row,) = rows(export.to_csv([SCORED], scored=True))
-        assert (row["score"], row["rationale"], row["relevance"]) == ("82", "Directly on topic.", "relevant")
+        assert (row["grade"], row["rationale"], row["relevance"]) == ("82", "Directly on topic.", "relevant")
 
     def test_a_retracted_paper_is_marked(self):
         rows_ = rows(export.to_csv([PAPER, {**PAPER, "is_retracted": True}]))
@@ -61,7 +61,7 @@ class TestCsv:
 
     def test_a_number_is_not_turned_into_text(self):
         (row,) = rows(export.to_csv([{**SCORED, "score": -3}], scored=True))
-        assert row["score"] == "-3"
+        assert row["grade"] == "-3"
 
     def test_missing_fields_are_empty_cells(self):
         (row,) = rows(export.to_csv([{"id": 1, "title": "Bare"}]))
@@ -93,11 +93,11 @@ class TestRis:
         assert values["TI"] == PAPER["title"] and values["PY"] == "2024" and values["DA"] == "2024/03/05"
         assert values["DO"] == "10.1000/abc"
         assert values["AB"] == "Line one. Line two."
-        assert values["N1"] == "Relevance score: 82. Directly on topic."
+        assert values["N1"] == "Relevance grade: 82. Directly on topic."
 
     def test_a_retracted_paper_is_flagged_in_the_note_with_its_score(self):
         (record,) = parse_ris(export.to_ris([{**SCORED, "is_retracted": True}]))
-        assert dict(record)["N1"] == "RETRACTED. Relevance score: 82. Directly on topic."
+        assert dict(record)["N1"] == "RETRACTED. Relevance grade: 82. Directly on topic."
         (record,) = parse_ris(export.to_ris([{**PAPER, "is_retracted": True}]))
         assert dict(record)["N1"] == "RETRACTED."
 
@@ -191,7 +191,7 @@ class TestRoutes:
     def test_a_run_export_has_scores_for_the_scored_papers_only(self, client, run_with_results):
         r = self.post(client, f"/api/analysis-runs/{run_with_results['run']}/export", {"format": "csv"})
         got = rows(r.data)
-        assert [row["score"] for row in got] == ["90", "70", "40"]
+        assert [row["grade"] for row in got] == ["90", "70", "40"]
 
     def test_the_paper_ids_chosen_are_exported_in_the_order_sent(self, client, run_with_results):
         ids = run_with_results["ids"]

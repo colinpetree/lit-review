@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { postJson } from './api'
 
-// Wait this long after the last change before asking, so typing the scoring prompt does
+// Wait this long after the last change before asking, so typing the grading prompt does
 // not send a request per key.
 const DEBOUNCE_MS = 600
 

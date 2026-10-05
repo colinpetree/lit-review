@@ -26,18 +26,18 @@ export default function RunResultsPage() {
   const [limitInput, setLimitInput] = useState(null)
   const [raising, setRaising] = useState(false)
   // /results/:id is one long-lived route element - React Router doesn't
-  // remount it on a param-only change, so a "Resume scoring" loop started
+  // remount it on a param-only change, so a "Resume grading" loop started
   // on one run keeps running (and keeps calling setRun) even after the
   // user navigates to a different run's id. Aborting the leftover request
   // when id changes stops both the stale network calls and the stale
   // setRun calls that would otherwise overwrite the newly-loaded run.
   const activeRequestRef = useRef(null)
-  // The user's latest Read/relevance choice per paper id. A scoring response
+  // The user's latest Read/relevance choice per paper id. A grading response
   // can be built before a save lands and would show the old value, so every
-  // scoring update is re-overlaid with these.
+  // grading update is re-overlaid with these.
   const editsRef = useRef(new Map())
-  // Same idea for a rename made while scoring (the AI prompt title can also
-  // change the name in a scoring response, until the user picks one).
+  // Same idea for a rename made while grading (the AI prompt title can also
+  // change the name in a grading response, until the user picks one).
   const renamedRef = useRef(null)
   const withEdits = (r) => ({
     ...r,
@@ -94,7 +94,7 @@ export default function RunResultsPage() {
     }
   }
 
-  // Raise a run's spending limit and carry on scoring.
+  // Raise a run's spending limit and carry on grading.
   const raiseLimit = async (amount) => {
     setActionError(null)
     setRaising(true)
@@ -301,7 +301,7 @@ export default function RunResultsPage() {
           <div className="flex flex-col gap-1.5">
             <p className="text-sm font-medium text-gray-500">Spending limit</p>
             <p className="text-sm text-gray-800">
-              {formatUsd(run.max_usd)} for scoring, {formatUsd(run.scoring_cost)} spent so far. A limit is checked
+              {formatUsd(run.max_usd)} for grading, {formatUsd(run.scoring_cost)} spent so far. A limit is checked
               before each batch of 20 papers, so a run can pass it by up to one batch.
             </p>
           </div>
@@ -310,9 +310,9 @@ export default function RunResultsPage() {
         {run.limit_reached ? (
           <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
             <p className="text-sm text-amber-900 dark:text-amber-200">
-              Scoring paused: this run reached its spending limit of {formatUsd(run.max_usd)}.{' '}
-              {run.remaining.toLocaleString()} paper{run.remaining === 1 ? ' is' : 's are'} not scored yet. Everything
-              scored so far is kept.
+              Grading paused: this run reached its spending limit of {formatUsd(run.max_usd)}.{' '}
+              {run.remaining.toLocaleString()} paper{run.remaining === 1 ? ' is' : 's are'} not graded yet. Everything
+              graded so far is kept.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <label htmlFor="new-limit" className="text-sm text-amber-900 dark:text-amber-200">
@@ -339,7 +339,7 @@ export default function RunResultsPage() {
 
         {resuming ? (
           <StageIndicator
-            label={`Scoring papers… ${Math.max(run.candidate_papers.length - run.remaining, 0)} done, ${run.remaining} remaining`}
+            label={`Grading papers… ${Math.max(run.candidate_papers.length - run.remaining, 0)} done, ${run.remaining} remaining`}
           />
         ) : run.remaining > 0 && !run.limit_reached ? (
           <button
@@ -349,8 +349,8 @@ export default function RunResultsPage() {
           >
             {run.status === 'completed'
               ? // Papers came back (or were added) after the run finished.
-                `Score ${run.remaining} new paper${run.remaining === 1 ? '' : 's'}`
-              : `Resume scoring (${run.remaining} unscored)`}
+                `Grade ${run.remaining} new paper${run.remaining === 1 ? '' : 's'}`
+              : `Resume grading (${run.remaining} ungraded)`}
           </button>
         ) : null}
       </Card>

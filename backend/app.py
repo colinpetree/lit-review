@@ -1457,12 +1457,12 @@ def export_dataset(dataset_id):
 def process_analysis_run(run_id):
     with _exclusive("run", run_id) as acquired:
         if not acquired:
-            return jsonify({"error": "This run is already being scored. Wait for it to finish."}), 409
+            return jsonify({"error": "This run is already being graded. Wait for it to finish."}), 409
         return _process_run_chunk(run_id)
 
 
 def _process_run_chunk(run_id):
-    """Score one chunk of the run's unscored papers (the caller holds the run's
+    """Grade one chunk of the run's ungraded papers (the caller holds the run's
     lock, so the unscored set can't be taken by a second request meanwhile)."""
     run_row = db.get_analysis_run(run_id)
     if not run_row:
@@ -1599,7 +1599,7 @@ def remove_prompt_example(prompt_id, example_id):
 
 @app.patch("/api/analysis-runs/<int:run_id>/results/<int:paper_id>")
 def update_run_result(run_id, paper_id):
-    """Set the user's relevance call on one scored paper in this run."""
+    """Set the user's relevance call on one graded paper in this run."""
     if not db.get_analysis_run(run_id):
         return jsonify({"error": "analysis run not found"}), 404
     relevance = _json_body().get("relevance")
@@ -1625,7 +1625,7 @@ def mark_run_example(run_id):
 
     result = db.get_run_result(run_id, paper_id)
     if not result or result["score"] is None or not result["rationale"]:
-        return jsonify({"error": "that paper has no score in this run"}), 400
+        return jsonify({"error": "that paper has no grade in this run"}), 400
 
     db.add_prompt_example(prompt["id"], paper_id, run_id, result["score"], result["rationale"])
     return jsonify({"ok": True, "prompt_id": prompt["id"]})
@@ -1888,9 +1888,9 @@ def _confirm_quit():
         return True
     return ui.confirm(
         "Lit Review",
-        "Lit Review is still working (searching, looking up abstracts or scoring papers).\n\n"
-        "If you quit now, what it is doing is lost, and a scoring step you have already "
-        "been charged for may be wasted. Scored papers so far are kept.\n\n"
+        "Lit Review is still working (searching, looking up abstracts or grading papers).\n\n"
+        "If you quit now, what it is doing is lost, and a grading step you have already "
+        "been charged for may be wasted. Graded papers so far are kept.\n\n"
         "Quit anyway?",
     )
 

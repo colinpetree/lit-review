@@ -43,7 +43,7 @@ export default function LicenseCard() {
             missing abstract.
           </li>
           <li>
-            The AI company and each research database bill or limit you under their own terms. Scores and rationales are AI
+            The AI company and each research database bill or limit you under their own terms. Grades and rationales are AI
             judgments and can be wrong. Read the papers before relying on them.
           </li>
           <li>

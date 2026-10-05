@@ -23,11 +23,11 @@ import { dateBounds, dateRangeError } from '../lib/dateRange'
 const isSourceAvailable = (source, providers, pubmedEnabled) =>
   (source.id !== 'pubmed' || pubmedEnabled) && (!source.key || Boolean(providers?.[source.key]))
 
-// Discover Papers only retrieves papers into a dataset - it never scores or
-// evaluates them. Relevance scoring is a separate, deliberate step the user
+// Discover Papers only retrieves papers into a dataset - it never grades or
+// evaluates them. Relevance grading is a separate, deliberate step the user
 // takes on the Evaluate Papers page (against whatever grading criteria they
 // choose there, which may differ from this retrieval question) - a dataset
-// fresh out of Discover Papers should show no scores at all.
+// fresh out of Discover Papers should show no grades at all.
 const STAGE_LABELS = {
   query: 'Processing query…',
   retrieval: 'Searching the paper databases…',

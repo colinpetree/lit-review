@@ -45,7 +45,7 @@ Do not open Lit Review from inside the disk window or from your Downloads folder
 Lit Review needs two kinds of key, both from the companies that provide the service. Open **Settings** (in the left-hand menu) and paste them in:
 
 1. A free **OpenAlex** key (it gives you a larger daily allowance for searches).
-2. A key for **one AI provider**: Anthropic (Claude), OpenAI, or Google (Gemini). The AI company charges you for what it scores, based on your use. Lit Review shows an estimate before every run and can stop a run at a limit you set in **Settings → AI Integrations**.
+2. A key for **one AI provider**: Anthropic (Claude), OpenAI, or Google (Gemini). The AI company charges you for what it grades, based on your use. Lit Review shows an estimate before every run and can stop a run at a limit you set in **Settings → AI Integrations**.
 
 The other research databases (Semantic Scholar, Elsevier/Scopus, Springer Nature) are optional. Each card in Settings explains where to get its key.
 
@@ -55,12 +55,12 @@ Then go to **Discover Papers**, describe your research question, and follow the 
 
 - Lit Review keeps running after you close its browser tab. You will see its icon near the clock (Windows, where it may be hidden behind the small **^** arrow) or in the menu bar at the top of the screen (Mac).
 - To open it again, double-click **Lit Review** again (your browser opens on the copy that is already running), or use the icon's **Open Lit Review**.
-- To quit, use the icon's **Quit** (on a Mac you can also press **Cmd+Q**). If it is in the middle of searching or scoring, it asks first.
-- Closing the tab does not stop a search or scoring run that is already going, so do not quit until it is finished unless you mean to.
+- To quit, use the icon's **Quit** (on a Mac you can also press **Cmd+Q**). If it is in the middle of searching or grading, it asks first.
+- Closing the tab does not stop a search or grading run that is already going, so do not quit until it is finished unless you mean to.
 
 ## Your data
 
-Your datasets, results and prompts are kept in your own user folder, not in the program folder, so **updating or deleting the program does not delete your work**. **Settings → About and Updates** shows the exact folder. By default:
+Your datasets, results and prompts are kept in your own user folder, not in the program folder, so **updating or deleting the program does not delete your work**. **Settings → Software and Updates** shows the exact folder. By default:
 
 - Windows: `C:\Users\<you>\AppData\Local\Lit Review`
 - Mac: `~/Library/Application Support/Lit Review`
@@ -77,7 +77,7 @@ When a new version is available, Lit Review shows a notice at the top of the pag
 - **Windows says it cannot start or a file is missing:** make sure you extracted the whole zip (step 2 above).
 - **A Mac message says Lit Review is running from the installer:** you opened it from inside the disk window or from Downloads. Drag **Lit Review** into your **Applications** folder (or Documents), eject the disk, and open it from there.
 - **The browser shows "not connected":** open Lit Review again from its icon, which opens a connected window.
-- **Anything else:** the log is in the **Log folder** shown in **Settings → About and Updates**. The icon's **Open log folder** shows it. Send that file to whoever is helping you.
+- **Anything else:** the log is in the **Log folder** shown in **Settings → Software and Updates**. The icon's **Open log folder** shows it. Send that file to whoever is helping you.
 
 ## Removing it
 

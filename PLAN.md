@@ -138,7 +138,7 @@ guarded (built; details and rationale in CLAUDE.md, "Architecture"):
   `webbrowser.open()`, so there's no separate "installer" UX — just run the script.
 - **Frontend**: React 19 + Vite + Tailwind v3 + react-router, with lucide icons and
   self-hosted Source Sans 3 / Source Code Pro fonts. Pages: Discover Papers, Paper Datasets
-  (+ detail), Evaluate Papers, Scoring Prompts (+ detail), Results (+ run results) and
+  (+ detail), Evaluate Papers, Grading Prompts (+ detail), Results (+ run results) and
   Settings, under a shared layout. `vite build` writes straight into `backend/static`,
   which Flask serves, so the shipped app is a single Flask process (no separate frontend dev
   server needed at runtime; in dev, `npm run dev` proxies `/api` to Flask on 8100).
@@ -430,12 +430,12 @@ saves confirmed good calls as well.
 - Does a prompt belong to one dataset, or is it reusable across datasets?
 
 **Decided design.**
-- **Scoring Prompts page** (sidebar link). Lists prompts; each card has a more-horizontal
+- **Grading Prompts page** (sidebar link). Lists prompts; each card has a more-horizontal
   menu with Edit (name and description) and Delete (soft delete, like runs and datasets).
   A detail page lists the prompt's examples; removing an example is the only change
   allowed there. Examples are never added from the prompt itself.
 - **Prompts are reusable across datasets** and not tied to one. A run picks a prompt.
-- **Creating prompts.** (1) "New prompt" on the Scoring Prompts page: a modal with a title
+- **Creating prompts.** (1) "New prompt" on the Grading Prompts page: a modal with a title
   and the ideal research paper contents. (2) Running an evaluation on Evaluate with the "New prompt"
   option and ideal research paper contents. In case 2 the first scoring call of the run also
   returns a 2-4 word title, and the server names the prompt with it (a placeholder of

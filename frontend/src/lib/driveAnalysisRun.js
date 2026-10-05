@@ -1,8 +1,8 @@
 import { postJson } from './api'
 
-// Merges a run's scored results onto its full candidate_papers list, so
-// still-unscored papers stay visible (without a score badge) instead of
-// only showing whatever's scored so far - the same merge-not-replace idea
+// Merges a run's graded results onto its full candidate_papers list, so
+// still-ungraded papers stay visible (without a grade badge) instead of
+// only showing whatever's graded so far - the same merge-not-replace idea
 // the single-dataset flow used, generalized to a run's candidate_papers
 // field since a multi-dataset run has no single source paper list to merge
 // onto otherwise.
@@ -13,7 +13,7 @@ export function mergeRunResults(run) {
   return { ...run, results: merged }
 }
 
-// The server scores one chunk of a run at a time (409 = busy). Stopping a
+// The server grades one chunk of a run at a time (409 = busy). Stopping a
 // request in the browser does not stop the server's call to the AI model, so
 // after Stop then Resume the old chunk is often still running: wait for it
 // instead of failing, for about a minute.
@@ -35,7 +35,7 @@ function sleep(ms, signal) {
   })
 }
 
-// Repeatedly processes one scoring chunk at a time until the run is
+// Repeatedly processes one grading chunk at a time until the run is
 // completed, calling onUpdate after every chunk with the merged run object.
 export async function driveAnalysisRun(runId, signal, onUpdate, { busyRetryMs = BUSY_RETRY_MS } = {}) {
   let run

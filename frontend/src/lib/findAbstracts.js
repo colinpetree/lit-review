@@ -2,7 +2,7 @@ import { postJson } from './api'
 
 // Calls the dataset's find-abstracts endpoint until every paper that has a DOI,
 // no abstract and no completed lookup yet has been tried, like
-// driveAnalysisRun does for scoring. The server is stateless, so this sends
+// driveAnalysisRun does for grading. The server is stateless, so this sends
 // back the paper ids already tried and the sources that failed.
 //
 // onProgress({ filled, checked, filledCount, attempted, total, sourceErrors,

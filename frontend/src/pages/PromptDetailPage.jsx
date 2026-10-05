@@ -147,14 +147,14 @@ export default function PromptDetailPage() {
 
   if (error) {
     return (
-      <PageShell title="Scoring Prompt">
+      <PageShell title="Grading Prompt">
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       </PageShell>
     )
   }
   if (!prompt) {
     return (
-      <PageShell title="Scoring Prompt">
+      <PageShell title="Grading Prompt">
         <p className="text-sm text-gray-500">Loading…</p>
       </PageShell>
     )
@@ -172,7 +172,7 @@ export default function PromptDetailPage() {
 
   return (
     <PageShell>
-      <BackLink to="/prompts">Back to Scoring Prompts</BackLink>
+      <BackLink to="/prompts">Back to Grading Prompts</BackLink>
 
       <div className="mt-4">
         <PromptDetailsCard
@@ -185,7 +185,7 @@ export default function PromptDetailPage() {
       <h2 className="mt-8 text-lg font-semibold text-gray-800">Examples</h2>
       <p className="mt-1 text-sm text-gray-500">
         Add examples from a run&apos;s results with Mark as example. Only the {prompt.example_limit} most recent
-        are used when scoring.
+        are used when grading.
       </p>
       {prompt.examples.length === 0 ? (
         <p className="mt-4 text-sm text-gray-500">No examples yet.</p>

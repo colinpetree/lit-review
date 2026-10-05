@@ -117,11 +117,11 @@ function EditForm({ result, onSave, onCancel }) {
 }
 
 // onUpdate enables the Edit action. onMarkExample (run results only) enables
-// "Mark as example" for a scored paper that isn't already one. onToggleExclude
+// "Mark as example" for a graded paper that isn't already one. onToggleExclude
 // (dataset page only) enables the Exclude/Include toggle; an excluded paper
 // (result.excluded) is shown grayed out. onToggleRead enables Mark as read/unread
 // (global to the paper). onSetRelevance (run results only) enables the
-// Relevant/Neutral/Not Relevant choice for a scored paper.
+// Relevant/Neutral/Not Relevant choice for a graded paper.
 const RELEVANCE_CHOICES = [
   { value: 'relevant', label: 'Relevant', icon: ThumbsUp },
   { value: 'neutral', label: 'Neutral', icon: CircleSlash2 },
@@ -317,7 +317,7 @@ export default function PaperCard({
       {markingExample ? (
         <ConfirmModal
           title="Mark as example?"
-          message="This paper's score and reasoning will be added as a good example for this run's prompt. Future runs of the prompt will compare papers against it."
+          message="This paper's grade and reasoning will be added as a good example for this run's prompt. Future runs of the prompt will compare papers against it."
           confirmLabel="Mark as example"
           busyLabel="Saving..."
           onConfirm={() => onMarkExample(result)}

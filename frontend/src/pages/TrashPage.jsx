@@ -16,7 +16,7 @@ function sections(trash) {
     {
       kind: 'run',
       title: 'Result runs',
-      items: trash.runs.map((r) => ({ id: r.id, name: r.name, detail: plural(r.result_count, 'scored paper'), deletedAt: r.deleted_at })),
+      items: trash.runs.map((r) => ({ id: r.id, name: r.name, detail: plural(r.result_count, 'graded paper'), deletedAt: r.deleted_at })),
     },
     {
       kind: 'dataset',
@@ -30,7 +30,7 @@ function sections(trash) {
     },
     {
       kind: 'prompt',
-      title: 'Scoring prompts',
+      title: 'Grading prompts',
       items: trash.prompts.map((p) => ({
         id: p.id,
         name: p.name,

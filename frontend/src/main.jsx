@@ -8,7 +8,7 @@ import DiscoverPapersPage from './pages/DiscoverPapersPage'
 import PaperDataSetsPage from './pages/PaperDataSetsPage'
 import DatasetDetailPage from './pages/DatasetDetailPage'
 import EvaluatePapersPage from './pages/EvaluatePapersPage'
-import ScoringPromptsPage from './pages/ScoringPromptsPage'
+import GradingPromptsPage from './pages/GradingPromptsPage'
 import PromptDetailPage from './pages/PromptDetailPage'
 import PastResultsPage from './pages/PastResultsPage'
 import RunResultsPage from './pages/RunResultsPage'
@@ -28,7 +28,7 @@ createRoot(document.getElementById('root')).render(
           <Route path="datasets" element={<PaperDataSetsPage />} />
           <Route path="datasets/:id" element={<DatasetDetailPage />} />
           <Route path="evaluate" element={<EvaluatePapersPage />} />
-          <Route path="prompts" element={<ScoringPromptsPage />} />
+          <Route path="prompts" element={<GradingPromptsPage />} />
           <Route path="prompts/:id" element={<PromptDetailPage />} />
           <Route path="results" element={<PastResultsPage />} />
           <Route path="results/:id" element={<RunResultsPage />} />

@@ -5,7 +5,7 @@ import { Bot, ChartColumn, Database, FlaskConical, HardDrive, Info, Library, Lis
 export const NAV_ITEMS = [
   { to: '/discover', label: 'Discover Papers', icon: Search },
   { to: '/datasets', label: 'Paper Datasets', icon: Database },
-  { to: '/prompts', label: 'Scoring Prompts', icon: ListChecks },
+  { to: '/prompts', label: 'Grading Prompts', icon: ListChecks },
   { to: '/evaluate', label: 'Evaluate Papers', icon: FlaskConical },
   { to: '/results', label: 'Results', icon: ChartColumn },
 ]
@@ -20,7 +20,7 @@ export const SETTINGS_NAV = [
   { id: 'databases', label: 'Research Databases', icon: Library },
   { id: 'data', label: 'Your Data', icon: HardDrive },
   { id: 'appearance', label: 'Appearance', icon: Palette },
-  { id: 'about', label: 'About and Updates', icon: Info },
+  { id: 'about', label: 'Software and Updates', icon: Info },
   { id: 'license', label: 'License and Notices', icon: Scale },
 ]
 

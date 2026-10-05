@@ -6,7 +6,7 @@ import SettingsSection from './SettingsSection'
 export default function AboutSection() {
   return (
     <SettingsPanel
-      title="About and Updates"
+      title="Software and Updates"
       id="about"
       description="Your version, where your data and log are stored, and whether Lit Review checks for updates."
     >

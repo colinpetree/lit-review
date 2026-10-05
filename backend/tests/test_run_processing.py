@@ -73,7 +73,7 @@ class TestOneRequestAtATime:
         second = process(client, run_id)
 
         assert second.status_code == 409
-        assert "already being scored" in second.get_json()["error"]
+        assert "already being graded" in second.get_json()["error"]
         assert len(slow_model.calls) == 1  # the refused request never reached the model
 
         slow_model.release.set()

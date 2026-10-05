@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { PageShell, Card } from '../components/ui'
+import { PageShell, Card, TextLink } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
@@ -46,12 +46,12 @@ export default function PastResultsPage() {
     <PageShell
       title="Results"
       icon={navIcon('/results')}
-      description="Saved results from previous runs where the AI judge scored papers based on your research criteria."
+      description="Saved results from previous runs where the AI judge graded papers based on your research criteria."
     >
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {runs && runs.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No evaluation runs yet - run one from Evaluate Papers.
+          No evaluation results yet - run an evaluation from <TextLink to="/evaluate">Evaluate Papers</TextLink>.
         </p>
       ) : null}
       {runs && runs.length > 0 ? (
@@ -90,7 +90,7 @@ export default function PastResultsPage() {
                     <span>{formatDateTime(run.completed_at || run.created_at)} ·</span>
                     <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} costNote={RUN_COST_NOTE} />
                   </div>
-                  {/* Only a run with papers still unscored gets a label; finished is the normal case. This
+                  {/* Only a run with papers still ungraded gets a label; finished is the normal case. This
                       counts the papers, not the status, which can lag (excluded since) or be stale (restored). */}
                   {run.unscored_count > 0 ? (
                     <span className="shrink-0 font-medium text-amber-600 dark:text-amber-400">Incomplete</span>

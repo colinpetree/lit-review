@@ -1,6 +1,6 @@
 // What the Evaluate Papers form remembers between visits: the AI model from the
 // last run. Kept separately from Discover Papers' (lib/discoverSettings.js),
-// since scoring papers often calls for a different model than writing search
+// since grading papers often calls for a different model than writing search
 // queries. The datasets and the criteria are deliberately not remembered. Kept in
 // this browser's localStorage, which can be missing or throw (private window,
 // blocked site data), so every access is guarded and the form just uses its default.

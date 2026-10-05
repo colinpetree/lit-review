@@ -38,13 +38,13 @@ def _doi(paper):
 
 def _note(paper):
     """A free-text note for formats with no column of their own: a warning if the paper
-    was retracted (so it is not cited unaware) and the AI's score and reasoning, as one
+    was retracted (so it is not cited unaware) and the AI's grade and reasoning, as one
     line. '' for a paper with neither."""
     parts = []
     if paper.get("is_retracted"):
         parts.append("RETRACTED.")
     if paper.get("score") is not None:
-        score = f"Relevance score: {paper['score']}"
+        score = f"Relevance grade: {paper['score']}"
         if paper.get("rationale"):
             score += f". {_squash(paper['rationale'])}"
         parts.append(score)
@@ -65,10 +65,10 @@ def _cell(value):
 
 def to_csv(papers, scored=False):
     """UTF-8 bytes with a byte order mark (so Excel reads accents) and CRLF line ends.
-    `scored` adds the score, reasoning and relevance columns (a run's results)."""
+    `scored` adds the grade, reasoning and relevance columns (a run's results)."""
     columns = ["title", "authors", "year", "publication_date", "venue", "doi", "url", "abstract"]
     if scored:
-        columns += ["score", "rationale", "relevance"]
+        columns += ["grade", "rationale", "relevance"]
     columns += ["retracted", "read", "source"]
 
     out = io.StringIO(newline="")
@@ -84,7 +84,7 @@ def to_csv(papers, scored=False):
             "doi": _doi(paper),
             "url": paper.get("url"),
             "abstract": paper.get("abstract"),
-            "score": paper.get("score"),
+            "grade": paper.get("score"),
             "rationale": paper.get("rationale"),
             "relevance": paper.get("relevance"),
             "retracted": "yes" if paper.get("is_retracted") else "no",

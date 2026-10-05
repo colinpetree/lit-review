@@ -55,7 +55,7 @@ describe('driveAnalysisRun', () => {
   })
 
   describe('when the server says the run is busy (409)', () => {
-    const busy = () => respond({ error: 'This run is already being scored.' }, 409)
+    const busy = () => respond({ error: 'This run is already being graded.' }, 409)
     const fast = { busyRetryMs: 1 }
 
     it('waits and tries again instead of failing, then carries on', async () => {

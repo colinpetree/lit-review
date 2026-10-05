@@ -131,7 +131,7 @@ gitignored.
   the same database and keys as a source run: do not change that name (a test pins it).
 - **Version:** `version.py` says `0.0.0-dev`; the workflow rewrites it from the tag, so the tag is the
   one place a version is decided. `GET /api/about` returns the version and the data and log folders
-  (Settings, "About and Updates"). A dev version never offers an update.
+  (Settings, "Software and Updates"). A dev version never offers an update.
 - **`--self-check`** (`selfcheck.py`): imports every provider module (from `llm.PROVIDERS`), builds each
   SDK client with a dummy key, loads the certificate stores, checks `static/index.html`, and writes JSON
   to `LIT_REVIEW_SELFCHECK_FILE`, exit code 0/1 (a windowed exe has no stdout). It cannot see
@@ -634,7 +634,7 @@ renders `components/SettingsModal.jsx`: a list of links on the left and, on the 
 scrolling page with a divider (`<hr>`, large gap above and below) between them. A link scrolls to its section and the
 list highlights whichever section is being read; the X, Escape or a click outside closes it. The sections are
 `ai` (AI Integrations: the spending card, then the key cards), `databases` (Research Databases: PubMed switch and
-key cards), `data` (Your Data: backup, restore, a link to Deleted Items), `appearance`, `about` (About and Updates)
+key cards), `data` (Your Data: backup, restore, a link to Deleted Items), `appearance`, `about` (Software and Updates)
 and `license` (License and Notices). Each is a `components/settings/*Section.jsx` built on `SettingsPanel` (its id
 picks the title icon), with its cards beside it. `SETTINGS_NAV` in `lib/navItems.js` lists them (id, label, icon), so
 a new section needs a row there and an entry in `SECTIONS` in `SettingsModal.jsx`. Anything that sends the user to add

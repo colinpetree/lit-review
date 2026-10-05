@@ -31,6 +31,18 @@ export function BackLink({ to, onClick, children }) {
   )
 }
 
+// An inline link to another page, for pointing a new user at where to go next.
+export function TextLink({ to, children }) {
+  return (
+    <Link
+      to={to}
+      className="text-blue-600 underline-offset-2 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+    >
+      {children}
+    </Link>
+  )
+}
+
 export function Card({ className = '', children }) {
   return (
     <div className={`bg-surface rounded-lg border border-gray-200 shadow-sm p-6 ${className}`}>

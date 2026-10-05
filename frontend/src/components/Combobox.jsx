@@ -24,6 +24,7 @@ import { PAGE_SIZE } from '../lib/paging'
 //   pointer cursor, always shows the selected label) for short fixed lists.
 // blurOnChoose: take focus out of the field after a choice (for multi-select
 //   pickers, where the field stays empty and the cursor would just sit there).
+// disabled: a greyed field that can't be focused or opened (nothing to choose from yet).
 export default function Combobox({
   options,
   value,
@@ -33,6 +34,7 @@ export default function Combobox({
   subtle = false,
   blurOnChoose = false,
   searchable = true,
+  disabled = false,
 }) {
   const inputRef = useRef(null)
   const [open, setOpen] = useState(false)
@@ -161,13 +163,14 @@ export default function Combobox({
         }}
         onKeyDown={onKeyDown}
         readOnly={!searchable}
+        disabled={disabled}
         // Tabbing (or clicking) away closes the list. Option and scrollbar
         // mousedowns are prevented below, so they never blur the input.
         onBlur={() => setOpen(false)}
         className={`w-full rounded-md border border-gray-300 py-2 pr-9 text-sm ${
           // With an icon, the text sits 1px lower so it lines up with it (same height overall).
           selected?.icon ? 'pl-9 pb-[7px] pt-[9px]' : 'pl-3'
-        } ${searchable ? '' : 'pick-field cursor-pointer select-none caret-transparent'} ${subtle ? 'text-gray-600' : ''} ${
+        } ${disabled ? 'opacity-60' : ''} ${searchable ? '' : 'pick-field cursor-pointer select-none caret-transparent'} ${subtle ? 'text-gray-600' : ''} ${
           darkPlaceholder ? (subtle ? 'placeholder:text-gray-600' : 'placeholder:text-gray-700') : ''
         }`}
       />

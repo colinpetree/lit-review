@@ -41,14 +41,14 @@ export default function AiIntegrationsSection() {
     <SettingsPanel
       title="AI Integrations"
       id="ai"
-      description="Lit Review uses AI to write search queries and to score papers. Add a key from at least one company below. They bill you directly for what you use."
+      description="Lit Review uses AI to write search queries and to grade papers. Add a key from at least one company below. They bill you directly for what you use."
     >
       <div className="flex flex-col gap-8">
         {keyStatus?.store_error && <KeyStoreNotice />}
 
         <SettingsSection
           title="Spending"
-          description="Lit Review shows a cost estimate before each scoring run. Choose when it should ask first."
+          description="Lit Review shows a cost estimate before each evaluation is run. Choose when it should ask first."
         >
           <SpendCard />
         </SettingsSection>

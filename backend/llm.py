@@ -451,7 +451,7 @@ def _score_call(grading_prompt, candidates, ai_api, model, examples=None, want_t
         title = _clean_title(parsed.get("title"))
     rows = parsed.get("scores") if isinstance(parsed, dict) else None
     if not isinstance(rows, list):
-        raise LLMError("The AI returned scores in an unexpected format.")
+        raise LLMError("The AI returned grades in an unexpected format.")
     scores = {}
     for row in rows:
         # A malformed row is skipped and the paper is retried by score_batch

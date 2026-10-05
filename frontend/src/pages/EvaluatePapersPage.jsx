@@ -4,7 +4,7 @@ import { useSettingsModal } from '../components/SettingsModalProvider'
 import { X } from 'lucide-react'
 import Checkbox from '../components/Checkbox'
 import Combobox from '../components/Combobox'
-import { PageShell, Card } from '../components/ui'
+import { PageShell, Card, TextLink } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import { StageIndicator } from '../components/Spinner'
 import AiModelSelect, { hasConfiguredProvider, defaultAiChoice, usableAiChoice } from '../components/AiModelSelect'
@@ -32,7 +32,7 @@ export default function EvaluatePapersPage() {
   // they're actually looking for, which can (and often should) differ from
   // whatever question retrieved the dataset in the first place.
   const [gradingPrompt, setGradingPrompt] = useState('')
-  // Retracted papers are not scored (and paid for) unless the user asks for them.
+  // Retracted papers are not graded (and paid for) unless the user asks for them.
   const [includeRetracted, setIncludeRetracted] = useState(false)
   // NEW_PROMPT (write the ideal research paper contents below) or a saved prompt's id.
   const [promptChoice, setPromptChoice] = useState(NEW_PROMPT)
@@ -49,7 +49,7 @@ export default function EvaluatePapersPage() {
   const [pricing, setPricing] = useState(false)
   // Aborts a prior in-flight submission before starting a new one - guards
   // against a rapid double-submit (double-click, double Enter) firing two
-  // real analysis runs (and paying for LLM scoring twice) before the
+  // real analysis runs (and paying for LLM grading twice) before the
   // submit button's disabled state has re-rendered.
   const activeRequestRef = useRef(null)
 
@@ -171,7 +171,7 @@ export default function EvaluatePapersPage() {
       navigate(`/results/${run.id}`)
     } catch (err) {
       if (err.name === 'AbortError') return
-      // The run's spending limit stopped it: not a failure. What was scored is saved, and
+      // The run's spending limit stopped it: not a failure. What was graded is saved, and
       // the run page offers to raise the limit and carry on.
       if (err.limitReached && createdId !== null) {
         navigate(`/results/${createdId}`)
@@ -199,6 +199,7 @@ export default function EvaluatePapersPage() {
                   value={null}
                   onChange={toggle}
                   blurOnChoose
+                  disabled={datasets?.length === 0}
                   placeholder={
                     chosen.length
                       ? `${chosen.length} dataset${chosen.length === 1 ? '' : 's'} selected`
@@ -232,12 +233,12 @@ export default function EvaluatePapersPage() {
               </p>
             ) : null}
             {datasets && datasets.length === 0 ? (
-              <p className="mt-1 text-sm text-gray-500">No datasets yet - create one from Discover Papers.</p>
+              <p className="mt-1 text-sm text-gray-500">No datasets yet - create one from <TextLink to="/discover">Discover Papers</TextLink>.</p>
             ) : null}
           </div>
 
           <div>
-            <span className="block text-sm font-medium text-gray-700">Scoring prompt</span>
+            <span className="block text-sm font-medium text-gray-700">Grading prompt</span>
             <div className="mt-1 max-w-xs">
               <PromptCombobox prompts={prompts} value={promptChoice} onChange={setPromptChoice} />
             </div>
@@ -289,8 +290,8 @@ export default function EvaluatePapersPage() {
             <StageIndicator
               label={
                 progress
-                  ? `Scoring papers… ${progress.processed} done, ${progress.remaining} remaining`
-                  : 'Scoring papers…'
+                  ? `Grading papers… ${progress.processed} done, ${progress.remaining} remaining`
+                  : 'Grading papers…'
               }
             />
           ) : null}
@@ -332,7 +333,7 @@ export default function EvaluatePapersPage() {
             confirming.threshold === 0
               ? 'and you asked to be asked before every run'
               : `more than the ${formatUsd(confirming.threshold)} you asked to be asked about`
-          }. Scoring stops at about ${formatUsd(confirming.limit)}, and can pass that by up to one batch of 20 papers. You can raise the limit later from the run.`}
+          }. Grading stops at about ${formatUsd(confirming.limit)}, and can pass that by up to one batch of 20 papers. You can raise the limit later from the run.`}
           confirmLabel="Run evaluation"
           // Not awaited: the modal closes now and the page shows the run's progress.
           onConfirm={() => {

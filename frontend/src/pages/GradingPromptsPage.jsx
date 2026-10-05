@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
-import { PageShell, Card } from '../components/ui'
+import { PageShell, Card, TextLink } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import MoreMenu from '../components/MoreMenu'
 import ConfirmModal from '../components/ConfirmModal'
@@ -12,7 +12,7 @@ import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, sortByCreated } from '../lib/listFilter'
 
-export default function ScoringPromptsPage() {
+export default function GradingPromptsPage() {
   const [prompts, setPrompts] = useState(null)
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
@@ -56,9 +56,9 @@ export default function ScoringPromptsPage() {
 
   return (
     <PageShell
-      title="Scoring Prompts"
+      title="Grading Prompts"
       icon={navIcon('/prompts')}
-      description="Refine and re-use paper scoring prompts from previous runs to save time and get better results."
+      description="Refine and re-use paper grading prompts from previous evaluations to save time and get better results."
     >
       <button
         type="button"
@@ -74,7 +74,7 @@ export default function ScoringPromptsPage() {
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {prompts && prompts.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No prompts yet - create one here, or run an evaluation from Evaluate Papers.
+          No prompts yet - create one here, or run an evaluation from <TextLink to="/evaluate">Evaluate Papers</TextLink>.
         </p>
       ) : null}
       {prompts && prompts.length > 0 ? (

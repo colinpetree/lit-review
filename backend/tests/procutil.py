@@ -13,7 +13,7 @@ import app as app_module
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REAL_PORT = 8100  # a real app may be running here; tests must never touch it
-RUNNING_AT = re.compile(r"Lit Review is running at http://127\.0\.0\.1:(\d+)")
+RUNNING_AT = re.compile(r"Lit Review is running at http://(?:localhost|127\.0\.0\.1):(\d+)")
 
 
 def free_port():

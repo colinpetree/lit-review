@@ -1,16 +1,16 @@
-// Where "Back to Lit Review" goes: the last page the user was on outside Settings.
+// Where the Deleted Items page's way back goes: the last page the user was on before it.
 
 const STORAGE_KEY = 'lit-review-last-app-path'
 export const DEFAULT_APP_PATH = '/discover'
 
 let memoryPath = null
 
-const isSettingsPath = (pathname) => pathname === '/settings' || pathname.startsWith('/settings/')
+const isTrashPath = (pathname) => pathname === '/trash'
 
 // Storage can be missing or throw (a private window, blocked site data), so the path is
 // also held in memory for as long as the page stays open.
 export function rememberAppPath({ pathname, search = '' }) {
-  if (isSettingsPath(pathname)) return
+  if (isTrashPath(pathname)) return
   const path = pathname + search
   memoryPath = path
   try {
@@ -29,7 +29,7 @@ export function lastAppPath() {
   }
   const path = memoryPath ?? stored
   // Only ever an in-app path: anything else (stale or tampered storage) is ignored.
-  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || isSettingsPath(path)) {
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || isTrashPath(path)) {
     return DEFAULT_APP_PATH
   }
   return path

@@ -1,11 +1,10 @@
-import { PageShell } from '../../components/ui'
-import { navIcon } from '../../lib/navItems'
+import SettingsPanel from './SettingsPanel'
 import useApiKeys from '../../lib/useApiKeys'
-import ProviderKeyCard from '../../components/settings/ProviderKeyCard'
-import SettingsSection from '../../components/settings/SettingsSection'
-import SpendCard from '../../components/settings/SpendCard'
-import KeyStoreNotice from '../../components/settings/KeyStoreNotice'
-import { AnthropicIcon, GeminiIcon, OpenAIIcon } from '../../components/ProviderIcons'
+import ProviderKeyCard from './ProviderKeyCard'
+import SettingsSection from './SettingsSection'
+import SpendCard from './SpendCard'
+import KeyStoreNotice from './KeyStoreNotice'
+import { AnthropicIcon, GeminiIcon, OpenAIIcon } from '../ProviderIcons'
 import { modelNameList } from '../../lib/models'
 
 const AI_PROVIDERS = [
@@ -35,13 +34,13 @@ const AI_PROVIDERS = [
   },
 ]
 
-export default function AiIntegrationsPage() {
+export default function AiIntegrationsSection() {
   const { keyStatus, saveKey, deleteKey } = useApiKeys()
 
   return (
-    <PageShell
+    <SettingsPanel
       title="AI Integrations"
-      icon={navIcon('/settings/ai')}
+      id="ai"
       description="Lit Review uses AI to write search queries and to score papers. Add a key from at least one company below. They bill you directly for what you use."
     >
       <div className="flex flex-col gap-8">
@@ -74,6 +73,6 @@ export default function AiIntegrationsPage() {
           ))}
         </SettingsSection>
       </div>
-    </PageShell>
+    </SettingsPanel>
   )
 }

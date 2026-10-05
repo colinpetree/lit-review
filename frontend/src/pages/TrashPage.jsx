@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Trash2 } from 'lucide-react'
 import { PageShell, BackLink, Card } from '../components/ui'
 import ConfirmModal from '../components/ConfirmModal'
 import InfiniteList from '../components/InfiniteList'
 import { deleteJson, fetchJson, postJson } from '../lib/api'
 import { formatDateTime } from '../lib/format'
+import { lastAppPath } from '../lib/lastAppPath'
+import { useSettingsModal } from '../components/SettingsModalProvider'
 
 const plural = (n, one, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
@@ -41,8 +44,9 @@ function sections(trash) {
 const KIND_LABEL = { run: 'result run', dataset: 'dataset', prompt: 'prompt' }
 
 // What was deleted but is still kept. Anything here can be restored, or removed for good
-// (which cannot be undone). Reached from Settings, not the sidebar.
+// (which cannot be undone). Reached from Settings, Your Data, not the sidebar.
 export default function TrashPage() {
+  const { openSettings } = useSettingsModal()
   const [trash, setTrash] = useState(null)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null) // { lines: [text], kept: [{ name, reason }] } | null
@@ -86,7 +90,7 @@ export default function TrashPage() {
 
   if (!trash) {
     return (
-      <PageShell title="Deleted Items">
+      <PageShell title="Deleted Items" icon={Trash2}>
         {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : <p className="text-sm text-gray-500">Loading…</p>}
       </PageShell>
     )
@@ -99,7 +103,8 @@ export default function TrashPage() {
   return (
     <PageShell
       title="Deleted Items"
-      description="Datasets, prompts and result runs you deleted are kept here, hidden from the rest of the app, until you remove them for good. Restore brings one back as it was. Delete permanently removes it, and cannot be undone. Spending already recorded is not affected."
+      icon={Trash2}
+      description="Deleted datasets, prompts and result runs are kept here until you delete them permanently."
       actions={
         total ? (
           <button
@@ -112,7 +117,9 @@ export default function TrashPage() {
         ) : null
       }
     >
-      <BackLink to="/settings/data">Back to Your Data</BackLink>
+      <BackLink to={lastAppPath()} onClick={() => openSettings('data')}>
+        Back to Your Data
+      </BackLink>
       {error ? <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {notice ? (
         <div className="mt-4 text-sm text-gray-700">

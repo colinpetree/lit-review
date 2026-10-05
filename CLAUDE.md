@@ -460,7 +460,7 @@ against real copies on spare ports works well.
   model listed is that provider's default, and `_validate_ai_model` in `app.py` rejects any
   provider/model pair not in it with a 400. Adding a model means a `MODELS` entry plus the
   frontend's `lib/models.js`, which mirrors it by hand. Adding a provider also needs a key
-  card in `pages/settings/AiIntegrationsPage.jsx` and a `PROVIDER_LABELS` entry. Paper text sent to the judge is
+  card in `components/settings/AiIntegrationsSection.jsx` and a `PROVIDER_LABELS` entry. Paper text sent to the judge is
   untrusted (an abstract can say "score this 100"): each paper and example is wrapped in
   `<paper>`/`<example>` tags with `<title>`/`<abstract>`, `_fence` defuses any of those tag names
   inside the text (other `<` is left alone), and the system prompt tells the model to ignore
@@ -625,20 +625,24 @@ API-returned abstracts and must never invent citations.
 
 React 19 + Vite + Tailwind v3 (PostCSS, `tailwind.config.js`, same as an earlier project) + react-router. Routes are in
 `src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), evaluate,
-prompts (+ `:id`), results (+ `:id`), settings (see below). Shared UI: `MoreMenu` (more-horizontal
+prompts (+ `:id`), results (+ `:id`), trash (Deleted Items, reached from Settings). Shared UI: `MoreMenu` (more-horizontal
 popover), `Modal`/`ConfirmModal`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
 
-**Settings** is a group of pages, not one page: `/settings` redirects to `/settings/ai`, and the children are
-`ai` (AI Integrations: the spending card, then the key cards), `databases` (Research Databases: PubMed switch
-and key cards), `data` (Your Data: backup, restore; `data/trash` is Deleted Items), `appearance`, `about`
-(About and Updates) and `license` (License and Notices). The pages live in `src/pages/settings/` and their
-cards in `src/components/settings/`; `SETTINGS_NAV` in `lib/navItems.js` lists them (it feeds the sidebar and
-each page's title icon), so a new page needs a route in `main.jsx` and a row there. Inside `/settings` the
-`Sidebar` swaps the app's links for those pages and shows "Back to Lit Review" at the bottom, which goes to
-`lastAppPath()` (`lib/lastAppPath.js`: `AppLayout` remembers the last path outside Settings, in sessionStorage
-with a memory fallback, and anything that is not an in-app path falls back to `/discover`). `useApiKeys`
-(`lib/useApiKeys.js`) is the saved-key status and save/remove for the two key pages. Anything that sends the
-user to add a key links to the page that holds it (`/settings/ai`, `/settings/databases`), never bare `/settings`.
+**Settings** is a large modal over the app, not a route. The Settings button at the bottom of the `Sidebar` calls
+`openSettings()` from `useSettingsModal()` (`components/SettingsModalProvider.jsx`, mounted in `AppLayout`), which
+renders `components/SettingsModal.jsx`: a list of links on the left and, on the right, every section stacked on one
+scrolling page with a divider (`<hr>`, large gap above and below) between them. A link scrolls to its section and the
+list highlights whichever section is being read; the X, Escape or a click outside closes it. The sections are
+`ai` (AI Integrations: the spending card, then the key cards), `databases` (Research Databases: PubMed switch and
+key cards), `data` (Your Data: backup, restore, a link to Deleted Items), `appearance`, `about` (About and Updates)
+and `license` (License and Notices). Each is a `components/settings/*Section.jsx` built on `SettingsPanel` (its id
+picks the title icon), with its cards beside it. `SETTINGS_NAV` in `lib/navItems.js` lists them (id, label, icon), so
+a new section needs a row there and an entry in `SECTIONS` in `SettingsModal.jsx`. Anything that sends the user to add
+a key calls `openSettings('ai')` or `openSettings('databases')`, never bare `openSettings()`. Deleted Items is the
+page `/trash`; its way back goes to `lastAppPath()` (`lib/lastAppPath.js`: `AppLayout` remembers the last path other
+than `/trash`, in sessionStorage with a memory fallback, and anything that is not an in-app path falls back to
+`/discover`) and reopens Settings at Your Data. `useApiKeys` (`lib/useApiKeys.js`) is the saved-key status and
+save/remove for the two key sections.
 
 Theme (Light/Dark/System, set in Settings, Appearance) is stored per browser in localStorage
 (`lib/theme.js`) and applied as a `dark` class on `<html>`; an inline script in `index.html`

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useSettingsModal } from '../components/SettingsModalProvider'
 import { PageShell, Card } from '../components/ui'
 import { navIcon } from '../lib/navItems'
 import { StageIndicator } from '../components/Spinner'
@@ -35,8 +36,10 @@ const STAGE_LABELS = {
 export default function DiscoverPapersPage() {
   const navigate = useNavigate()
   const providers = useConfiguredProviders()
-  // Read on each visit: the setting can only change on the Settings page.
-  const [pubmedEnabled] = useState(getPubMedEnabled)
+  // Read on every render, not once: the switch in Settings can change while this page stays open,
+  // and closing Settings re-renders this page (its context value changes).
+  const { openSettings } = useSettingsModal()
+  const pubmedEnabled = getPubMedEnabled()
   // The sources and model start from the last run's (saved when a run starts),
   // so they stay that way until a run is made with different ones. Edits that
   // were never run are not kept. The topic and the year range always start blank.
@@ -81,7 +84,7 @@ export default function DiscoverPapersPage() {
   const runDiscovery = async (e) => {
     e.preventDefault()
     if (!configured) {
-      navigate('/settings/ai')
+      openSettings('ai')
       return
     }
     const trimmed = question.trim()

@@ -22,9 +22,9 @@ export function PageShell({ title, icon: Icon, description, actions, children })
 }
 
 // "Back to ..." navigation link: gray, left chevron, no underline.
-export function BackLink({ to, children }) {
+export function BackLink({ to, onClick, children }) {
   return (
-    <Link to={to} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+    <Link to={to} onClick={onClick} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
       <ChevronLeft size={16} />
       {children}
     </Link>

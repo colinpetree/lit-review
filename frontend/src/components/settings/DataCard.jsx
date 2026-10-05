@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Database } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useSettingsModal } from '../SettingsModalProvider'
 import { Card } from '../ui'
 import ConfirmModal from '../ConfirmModal'
 import { downloadBackup, restoreBackup } from '../../lib/dataFiles'
@@ -9,6 +10,7 @@ import { downloadBackup, restoreBackup } from '../../lib/dataFiles'
 // to the trash. A restore replaces all current data, so it is confirmed first and the
 // replaced data is kept by the server as a file.
 export default function DataCard() {
+  const { closeSettings } = useSettingsModal()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [picked, setPicked] = useState(null) // the file chosen to restore, awaiting confirmation
@@ -73,11 +75,11 @@ export default function DataCard() {
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-700">Deleted items</p>
         <p className="text-xs text-gray-400">
-          Datasets, prompts and result runs you delete are kept, hidden from the rest of the app, until you remove them for good.
-          Bring one back, or delete it permanently.
+          Deleted datasets, prompts and result runs are kept here until you delete them permanently.
         </p>
         <Link
-          to="/settings/data/trash"
+          to="/trash"
+          onClick={closeSettings}
           className="self-start text-sm text-blue-600 underline-offset-2 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
         >
           View or restore deleted items

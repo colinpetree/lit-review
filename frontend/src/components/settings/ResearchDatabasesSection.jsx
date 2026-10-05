@@ -1,11 +1,10 @@
-import { PageShell } from '../../components/ui'
-import { navIcon } from '../../lib/navItems'
+import SettingsPanel from './SettingsPanel'
 import useApiKeys from '../../lib/useApiKeys'
-import ProviderKeyCard from '../../components/settings/ProviderKeyCard'
-import PubMedCard from '../../components/settings/PubMedCard'
-import SettingsSection from '../../components/settings/SettingsSection'
-import KeyStoreNotice from '../../components/settings/KeyStoreNotice'
-import { ElsevierIcon, OpenAlexIcon, SemanticScholarIcon, SpringerNatureIcon } from '../../components/ProviderIcons'
+import ProviderKeyCard from './ProviderKeyCard'
+import PubMedCard from './PubMedCard'
+import SettingsSection from './SettingsSection'
+import KeyStoreNotice from './KeyStoreNotice'
+import { ElsevierIcon, OpenAlexIcon, SemanticScholarIcon, SpringerNatureIcon } from '../ProviderIcons'
 
 const PAPER_DB_KEY_PROVIDERS = [
   {
@@ -47,13 +46,13 @@ const PAPER_DB_KEY_PROVIDERS = [
   },
 ]
 
-export default function ResearchDatabasesPage() {
+export default function ResearchDatabasesSection() {
   const { keyStatus, saveKey, deleteKey } = useApiKeys()
 
   return (
-    <PageShell
+    <SettingsPanel
       title="Research Databases"
-      icon={navIcon('/settings/databases')}
+      id="databases"
       description="Where Lit Review searches for papers and looks up missing abstracts. OpenAlex is the main one, and a free key is recommended. More databases find more papers."
     >
       <div className="flex flex-col gap-8">
@@ -78,6 +77,6 @@ export default function ResearchDatabasesPage() {
           ))}
         </SettingsSection>
       </div>
-    </PageShell>
+    </SettingsPanel>
   )
 }

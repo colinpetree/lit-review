@@ -1,14 +1,13 @@
-import { PageShell } from '../../components/ui'
-import { navIcon } from '../../lib/navItems'
-import AboutCard from '../../components/settings/AboutCard'
-import UpdatesCard from '../../components/settings/UpdatesCard'
-import SettingsSection from '../../components/settings/SettingsSection'
+import SettingsPanel from './SettingsPanel'
+import AboutCard from './AboutCard'
+import UpdatesCard from './UpdatesCard'
+import SettingsSection from './SettingsSection'
 
-export default function AboutPage() {
+export default function AboutSection() {
   return (
-    <PageShell
+    <SettingsPanel
       title="About and Updates"
-      icon={navIcon('/settings/about')}
+      id="about"
       description="Your version, where your data and log are stored, and whether Lit Review checks for updates."
     >
       <div className="flex flex-col gap-8">
@@ -19,6 +18,6 @@ export default function AboutPage() {
           <UpdatesCard />
         </SettingsSection>
       </div>
-    </PageShell>
+    </SettingsPanel>
   )
 }

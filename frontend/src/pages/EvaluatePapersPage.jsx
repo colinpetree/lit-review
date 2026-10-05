@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSettingsModal } from '../components/SettingsModalProvider'
 import { X } from 'lucide-react'
 import Checkbox from '../components/Checkbox'
 import Combobox from '../components/Combobox'
@@ -20,6 +21,7 @@ import { formatUsd, getSpendThreshold, limitFor, needsConfirmation } from '../li
 
 export default function EvaluatePapersPage() {
   const navigate = useNavigate()
+  const { openSettings } = useSettingsModal()
   const [searchParams] = useSearchParams()
   const preselectedId = searchParams.get('dataset')
   const providers = useConfiguredProviders()
@@ -113,7 +115,7 @@ export default function EvaluatePapersPage() {
   const runEvaluation = async (e) => {
     e.preventDefault()
     if (!configured) {
-      navigate('/settings/ai')
+      openSettings('ai')
       return
     }
     if (!runRequest) return

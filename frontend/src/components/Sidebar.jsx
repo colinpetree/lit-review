@@ -1,18 +1,15 @@
-import { Link, NavLink, useLocation } from 'react-router-dom'
-import { ChevronLeft, GraduationCap } from 'lucide-react'
-import { NAV_ITEMS, SETTINGS_ITEM, SETTINGS_NAV } from '../lib/navItems'
-import { lastAppPath } from '../lib/lastAppPath'
+import { Link, NavLink } from 'react-router-dom'
+import { GraduationCap } from 'lucide-react'
+import { NAV_ITEMS, SETTINGS_ITEM } from '../lib/navItems'
+import { useSettingsModal } from './SettingsModalProvider'
 
 const linkClass = ({ isActive }) =>
   `flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors ${
     isActive ? 'bg-stone-200 text-stone-700 font-medium' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-200/60'
   }`
 
-// Opening Settings swaps the app's links for the settings pages, with a way back at the bottom.
 export default function Sidebar() {
-  const { pathname } = useLocation()
-  const inSettings = pathname === '/settings' || pathname.startsWith('/settings/')
-  const items = inSettings ? SETTINGS_NAV : NAV_ITEMS
+  const { openSettings } = useSettingsModal()
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-stone-200 bg-sidebar">
@@ -23,31 +20,19 @@ export default function Sidebar() {
         </Link>
       </div>
       <nav className="mt-3 flex-1 overflow-auto px-3 space-y-1">
-        {inSettings && (
-          <div className="flex items-center gap-2.5 px-3 pb-1 text-sm font-semibold text-stone-700">
-            <SETTINGS_ITEM.icon size={16} />
-            Settings
-          </div>
-        )}
-        {items.map((item) => (
-          <NavLink key={item.to} to={item.to} className={(state) => `${linkClass(state)}${inSettings ? ' ml-3' : ''}`}>
+        {NAV_ITEMS.map((item) => (
+          <NavLink key={item.to} to={item.to} className={linkClass}>
             <item.icon size={16} />
             {item.label}
           </NavLink>
         ))}
       </nav>
       <div className="shrink-0 px-3 pb-3">
-        {inSettings ? (
-          <Link to={lastAppPath()} className={linkClass({ isActive: false })}>
-            <ChevronLeft size={16} />
-            Back to Lit Review
-          </Link>
-        ) : (
-          <NavLink to={SETTINGS_ITEM.to} className={linkClass}>
-            <SETTINGS_ITEM.icon size={16} />
-            {SETTINGS_ITEM.label}
-          </NavLink>
-        )}
+        {/* Settings is a dialog over the app, not a page, so this is a button. */}
+        <button type="button" onClick={() => openSettings()} className={`${linkClass({ isActive: false })} w-full text-left`}>
+          <SETTINGS_ITEM.icon size={16} />
+          {SETTINGS_ITEM.label}
+        </button>
       </div>
     </aside>
   )

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { PageShell, Card, BackLink } from '../components/ui'
 import Spinner, { StageIndicator } from '../components/Spinner'
 import PaperCard from '../components/PaperCard'
@@ -16,6 +16,7 @@ import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
 import { summarizeRetrieval } from '../lib/retrieval'
 import SearchCompletenessModal from '../components/SearchCompletenessModal'
+import { useSettingsModal } from '../components/SettingsModalProvider'
 
 // Whether every paper the sources reported for the searches was retrieved, with the
 // numbers per source and search behind it. A search that stopped short says why,
@@ -120,6 +121,7 @@ const isLookupCandidate = (p) => isMissingAbstract(p) && !p.abstract_checked
 export default function DatasetDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { openSettings } = useSettingsModal()
   const providers = useConfiguredProviders()
   const [dataset, setDataset] = useState(null)
   const [error, setError] = useState(null)
@@ -456,9 +458,9 @@ export default function DatasetDetailPage() {
                   <>
                     Missing abstracts are looked up automatically. Add {keylessPublishers.join(' and ')} API{' '}
                     {keylessPublishers.length === 1 ? 'key' : 'keys'} in{' '}
-                    <Link to="/settings/databases" className="underline">
+                    <button type="button" onClick={() => openSettings('databases')} className="underline">
                       Settings
-                    </Link>{' '}
+                    </button>{' '}
                     to find more, or you can update them manually.
                   </>
                 )}

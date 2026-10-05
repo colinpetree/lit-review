@@ -35,17 +35,15 @@ describe('lastAppPath', () => {
     expect(lastAppPath()).toBe('/results')
   })
 
-  it('ignores settings pages, so Back skips over them', () => {
+  it('ignores the Deleted Items page, so Back skips over it', () => {
     rememberAppPath({ pathname: '/evaluate', search: '' })
-    rememberAppPath({ pathname: '/settings/ai' })
-    rememberAppPath({ pathname: '/settings/data/trash' })
-    rememberAppPath({ pathname: '/settings' })
+    rememberAppPath({ pathname: '/trash' })
     expect(lastAppPath()).toBe('/evaluate')
   })
 
-  it('does not treat a path that only starts with the word settings as settings', () => {
-    rememberAppPath({ pathname: '/settingsfoo' })
-    expect(lastAppPath()).toBe('/settingsfoo')
+  it('does not treat a path that only starts with the word trash as that page', () => {
+    rememberAppPath({ pathname: '/trashfoo' })
+    expect(lastAppPath()).toBe('/trashfoo')
   })
 
   it('works from memory when storage throws', () => {
@@ -60,7 +58,7 @@ describe('lastAppPath', () => {
     expect(lastAppPath()).toBe('/results/4')
   })
 
-  it.each(['https://evil.example/', '//evil.example', 'datasets', '/settings/ai', 42])(
+  it.each(['https://evil.example/', '//evil.example', 'datasets', '/trash', 42])(
     'ignores a stored value that is not an in-app path (%s)',
     (value) => {
       stubStorage({ 'lit-review-last-app-path': value })

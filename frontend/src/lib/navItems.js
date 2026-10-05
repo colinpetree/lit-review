@@ -10,17 +10,18 @@ export const NAV_ITEMS = [
   { to: '/results', label: 'Results', icon: ChartColumn },
 ]
 
-// The button at the bottom of the main sidebar. It opens SETTINGS_NAV[0].
-export const SETTINGS_ITEM = { to: '/settings', label: 'Settings', icon: Settings }
+// The button at the bottom of the main sidebar. It opens the settings modal.
+export const SETTINGS_ITEM = { label: 'Settings', icon: Settings }
 
-// The settings sidebar, top to bottom. API keys come first because a new user needs them first.
+// The sections of the settings modal, top to bottom (the id is also what openSettings takes
+// and the end of each section's element id). API keys come first because a new user needs them first.
 export const SETTINGS_NAV = [
-  { to: '/settings/ai', label: 'AI Integrations', icon: Bot },
-  { to: '/settings/databases', label: 'Research Databases', icon: Library },
-  { to: '/settings/data', label: 'Your Data', icon: HardDrive },
-  { to: '/settings/appearance', label: 'Appearance', icon: Palette },
-  { to: '/settings/about', label: 'About and Updates', icon: Info },
-  { to: '/settings/license', label: 'License and Notices', icon: Scale },
+  { id: 'ai', label: 'AI Integrations', icon: Bot },
+  { id: 'databases', label: 'Research Databases', icon: Library },
+  { id: 'data', label: 'Your Data', icon: HardDrive },
+  { id: 'appearance', label: 'Appearance', icon: Palette },
+  { id: 'about', label: 'About and Updates', icon: Info },
+  { id: 'license', label: 'License and Notices', icon: Scale },
 ]
 
-export const navIcon = (to) => [...NAV_ITEMS, ...SETTINGS_NAV, SETTINGS_ITEM].find((item) => item.to === to)?.icon
+export const navIcon = (to) => NAV_ITEMS.find((item) => item.to === to)?.icon

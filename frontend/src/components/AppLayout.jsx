@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
+import { SettingsModalProvider } from './SettingsModalProvider'
 import { rememberAppPath } from '../lib/lastAppPath'
 import UpdateBanner from './UpdateBanner'
 import { useThemeSync } from '../lib/theme'
@@ -10,25 +11,27 @@ import { NOT_CONNECTED_MESSAGE } from '../lib/session'
 export default function AppLayout() {
   useThemeSync()
   const notConnected = useNotConnected()
-  // So "Back to Lit Review" in Settings knows where to return to.
+  // So the Deleted Items page knows where its way back goes.
   const { pathname, search } = useLocation()
   useEffect(() => rememberAppPath({ pathname, search }), [pathname, search])
   return (
-    <div className="flex h-screen bg-page">
-      <Sidebar />
-      {/* The page scrolls here, so it keeps the browser's own scrollbar (see index.css). */}
-      <main className="page-scroll flex-1 overflow-auto">
-        {notConnected ? (
-          <p
-            role="alert"
-            className="mx-auto mt-4 max-w-3xl rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200"
-          >
-            {NOT_CONNECTED_MESSAGE}
-          </p>
-        ) : null}
-        <UpdateBanner />
-        <Outlet />
-      </main>
-    </div>
+    <SettingsModalProvider>
+      <div className="flex h-screen bg-page">
+        <Sidebar />
+        {/* The page scrolls here, so it keeps the browser's own scrollbar (see index.css). */}
+        <main className="page-scroll flex-1 overflow-auto">
+          {notConnected ? (
+            <p
+              role="alert"
+              className="mx-auto mt-4 max-w-3xl rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200"
+            >
+              {NOT_CONNECTED_MESSAGE}
+            </p>
+          ) : null}
+          <UpdateBanner />
+          <Outlet />
+        </main>
+      </div>
+    </SettingsModalProvider>
   )
 }

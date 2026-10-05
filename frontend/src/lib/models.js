@@ -1,7 +1,7 @@
 // Mirrors the model ids in backend/llm.py's MODELS (per provider) - kept in
 // sync by hand since there's no shared schema between the two. Adding a
 // provider or model here also means adding it to the backend, and a key card
-// for the provider in pages/settings/AiIntegrationsPage.jsx.
+// for the provider in components/settings/AiIntegrationsSection.jsx.
 import { AnthropicIcon, GeminiIcon, OpenAIIcon } from '../components/ProviderIcons'
 
 export const PROVIDER_LABELS = {

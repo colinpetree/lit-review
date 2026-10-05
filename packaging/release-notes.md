@@ -1,12 +1,12 @@
 ## Download
 
-Pick the file for your computer under **Assets** below, and follow [the install guide](https://github.com/colinpetree/lit-review/blob/main/INSTALL.md).
+Pick the file for your computer, and follow [the install guide](https://github.com/colinpetree/lit-review/blob/main/INSTALL.md).
 
 | Your computer | Download |
 |---|---|
-| Windows 10 or 11 | `Lit-Review-…-windows.zip` |
-| Mac with an Apple chip (M1, M2, M3, M4 or newer) | `Lit-Review-…-macos-apple-silicon.dmg` |
-| Mac with an Intel chip | `Lit-Review-…-macos-intel.dmg` |
+| Windows 10 or 11 | [Lit-Review-{{VERSION}}-Windows.zip](https://github.com/colinpetree/lit-review/releases/download/v{{VERSION}}/Lit-Review-{{VERSION}}-Windows.zip) |
+| Mac with an Apple chip (M1, M2, M3, M4 or newer) | [Lit-Review-{{VERSION}}-macOS-Apple-Silicon.dmg](https://github.com/colinpetree/lit-review/releases/download/v{{VERSION}}/Lit-Review-{{VERSION}}-macOS-Apple-Silicon.dmg) |
+| Mac with an Intel chip | [Lit-Review-{{VERSION}}-macOS-Intel.dmg](https://github.com/colinpetree/lit-review/releases/download/v{{VERSION}}/Lit-Review-{{VERSION}}-macOS-Intel.dmg) |
 
 The Mac `.zip` files are for Lit Review's own update feature. You can ignore them.
 

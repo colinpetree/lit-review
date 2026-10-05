@@ -10,9 +10,9 @@ Open the **[latest release](https://github.com/colinpetree/lit-review/releases/l
 
 | Your computer | File |
 |---|---|
-| Windows 10 or 11 | `Lit-Review-…-windows.zip` |
-| Mac with an Apple chip (M1, M2, M3, M4 or newer) | `Lit-Review-…-macos-apple-silicon.dmg` |
-| Mac with an Intel chip | `Lit-Review-…-macos-intel.dmg` |
+| Windows 10 or 11 | `Lit-Review-…-Windows.zip` |
+| Mac with an Apple chip (M1, M2, M3, M4 or newer) | `Lit-Review-…-macOS-Apple-Silicon.dmg` |
+| Mac with an Intel chip | `Lit-Review-…-macOS-Intel.dmg` |
 
 Not sure which Mac you have? Click the Apple menu in the top-left corner, then **About This Mac**. It says either "Chip: Apple M…" or "Processor: Intel".
 

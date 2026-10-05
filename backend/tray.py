@@ -18,6 +18,7 @@ import sys
 import time
 
 import bundle
+import mac_app
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +101,13 @@ def register_reopen(callback):
         return None
 
 
+def _menu_template_path():
+    """The macOS menu-bar picture (a plain cap on transparent), or None if it was not
+    shipped (a source run without built icons), in which case the stock icon stays."""
+    path = bundle.resource_path("trayTemplate.png")
+    return path if path.is_file() else None
+
+
 class Tray:
     def __init__(self, open_app, open_logs, confirm_quit):
         try:
@@ -109,13 +117,19 @@ class Tray:
         self._icon = None
         self._stopping = False
         self._reopen = None
+        self._mac = None  # the macOS delegate, kept alive for the loop's life
+        self._mac_actions = None
         self._open_app = open_app
         self._open_logs = open_logs
         self._confirm_quit = confirm_quit
         self._pystray = pystray
 
     def _quit(self, icon, item):
-        if self._confirm_quit():
+        if self._mac_actions is not None:
+            # macOS runs this on the thread that drives the menu bar, so the question is
+            # asked on another one (same path as Cmd+Q and the Dock's Quit).
+            self._mac_actions.terminate_requested(False)
+        elif self._confirm_quit():
             icon.stop()
 
     def run(self):
@@ -129,11 +143,19 @@ class Tray:
             self._icon = pystray.Icon("lit-review", _icon_image(), TOOLTIP, menu)
         except Exception as exc:  # noqa: BLE001
             raise TrayUnavailable(str(exc)) from exc
-        self._reopen = register_reopen(self._open_app)  # kept alive for the loop's life
+        if sys.platform == "darwin":
+            self._mac_actions = mac_app.MacActions(self._open_app, self._open_logs, self._confirm_quit, self.stop)
+            self._mac = mac_app.install(self._mac_actions)
+            if self._mac is None:  # could not be installed: keep the older Dock-click handling
+                self._reopen = register_reopen(self._open_app)
         self._icon.run(setup=self._setup)
 
     def _setup(self, icon):
         icon.visible = True
+        if sys.platform == "darwin":
+            image = _menu_template_path()
+            if image is not None:
+                mac_app.set_menu_bar_image(icon, image)
         if self._stopping:  # stop() came before the loop was running
             icon.stop()
 

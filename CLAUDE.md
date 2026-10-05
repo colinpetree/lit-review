@@ -94,7 +94,7 @@ The primary user gets a double-click app, not source. Build, from the repo root,
 building for (PyInstaller cannot cross-compile; CI builds all three):
 ```
 cd frontend; npm run build                  # writes backend/static
-python packaging/make_icons.py              # packaging/build/: LitReview.ico, tray.png, LitReview.iconset
+python packaging/make_icons.py              # packaging/build/: LitReview.ico, tray.png, trayTemplate.png, LitReview.iconset
 python packaging/make_notices.py            # THIRD_PARTY_NOTICES.txt (licenses of what is bundled)
 pyinstaller backend/pyinstaller.spec --noconfirm     # needs backend/requirements-build.txt
 python packaging/smoke_test.py "dist/Lit Review/Lit Review.exe"   # self-check, then a real launch
@@ -124,7 +124,7 @@ gitignored.
   nothing) keeps warnings and errors in `<data dir>/logs/lit-review.log` (1 MB x 3), every line
   passed through `source_http.redact` (it hides `key=`, `api_key=` and `token=` values). Request lines
   are not kept. Tray: "Open log folder".
-- **Finding files:** `bundle.resource_path` (static files, `tray.png`): `sys._MEIPASS` when frozen,
+- **Finding files:** `bundle.resource_path` (static files, `tray.png`, `trayTemplate.png`): `sys._MEIPASS` when frozen,
   the backend folder otherwise. Never use `__file__` for a shipped file. The data and key folders still
   come from platformdirs with app name `lit-review` (`credentials.APP_NAME`), so a packaged copy sees
   the same database and keys as a source run: do not change that name (a test pins it).
@@ -141,13 +141,32 @@ gitignored.
   banner (`UpdateBanner`, `lib/updateCheck.js`) and Settings has a per-browser switch; off means the
   page never calls it. A draft or pre-release is invisible to it, so a draft release is not offered.
   Needs the repo to be **public**.
-- **macOS specifics:** double-clicking an already running .app does not start a second process (Launch
-  Services sends it a "reopen" Apple event), so the hand-over used on Windows never runs;
-  `tray.register_reopen` listens for the event and opens the browser. This is **untested off a Mac**:
-  verify it on a real Mac (double-click twice). The app is a normal Dock app, not menu-bar only
-  (`LSUIElement` is off), so Cmd+Q and the Dock menu should work (also unverified). Bundle id
-  `io.github.colinpetree.lit-review` (changing it makes macOS treat a release as a new app). Builds
-  are signed ad hoc only; the first-launch "Open Anyway" step is in INSTALL.md.
+- **macOS specifics** (`mac_app.py`, wired in by `tray.Tray.run`; all of it is **untested off a Mac**, so a
+  new build needs a look on a real one). The behaviour is in `MacActions` (plain Python, tested anywhere in
+  `tests/test_mac_app.py`); `install()` is the thin AppKit layer, wrapped in `try/except` so a failure leaves
+  the app working as before (and falls back to the older `tray.register_reopen` Apple-event handler).
+  The app is a normal Dock app (`LSUIElement` off). An app delegate gives it: a **Dock menu** ("Open Lit
+  Review", "Open log folder"), **reopen** (a click on the Dock icon, or opening the app a second time, opens
+  the browser: Launch Services never starts a second process of a running .app, so the Windows hand-over
+  does not apply; ignored for 4 s after launch), a minimal **main menu** so Cmd+Q has something to trigger,
+  and **quit routing**: Cmd+Q and the Dock's Quit land in `applicationShouldTerminate:`, which always answers
+  "cancel" (so AppKit never ends the process under `main()`) and asks `_confirm_quit` on a worker thread
+  (the dialog waits on `osascript`, and the main thread runs the menu bar); if the user agrees `Tray.stop()`
+  ends the loop and `main()` cleans up normally. A quit **sent by the system** (log out, restart, shut down,
+  recognised by the Apple event's `'why?'` attribute) is answered "terminate now", because cancelling it
+  makes macOS say the app interrupted the log out. The menu-bar picture is `trayTemplate.png` (made by
+  `packaging/make_icons.py:menu_template`: a plain black cap on transparent, 36 px shown at 18 points, as a
+  "template" image the system recolours for light, dark and Liquid Glass bars; the cap's width is
+  `MENU_GLYPH_WIDTH_PX`, a first guess to tune on a Mac). pystray would otherwise squeeze the full-colour logo
+  into a 22 px square, so `mac_app.set_menu_bar_image` swaps it once the icon is visible (on the main thread,
+  through pystray's private `_status_item`). **Liquid Glass app icon (macOS 26):** the classic `.icns` stays for
+  macOS 11 to 15; a layered icon authored in Apple's Icon Composer as `packaging/macos/AppIcon.icon` (the cap
+  as a foreground layer: `packaging/make_glyph_svg.py` writes the committed `packaging/macos/glyph-*.svg`, **filled outlines, not strokes**, because Icon Composer's per-layer Fill colours a layer's shapes and flooded a stroke-only cap)
+  is compiled by the workflow's `icon` job (`xcrun actool`, Xcode 26 on `macos-latest`) into `Assets.car`,
+  which the Mac builds copy into `Contents/Resources` **before signing** and name with `CFBundleIconName`
+  (`pyinstaller.spec` sets it only when the compiled file exists, so without the `.icon` nothing changes).
+  Bundle id `io.github.colinpetree.lit-review` (changing it makes macOS treat a release as a new app).
+  Builds are signed ad hoc only; the first-launch "Open Anyway" step is in INSTALL.md.
 - **Workflow** (`.github/workflows/release.yml`): `prepare` checks the tag is `vN.N.N` and on `main`;
   `build` (Windows, macOS arm64, `macos-15-intel`) installs the pinned requirements first, runs the frontend
   and backend tests, builds, ad-hoc signs the Mac app, runs `smoke_test.py` on the built app, and zips

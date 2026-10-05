@@ -69,9 +69,20 @@ def _check_tray():
     import PIL.Image  # noqa: F401
     import pystray  # noqa: F401
 
+    if sys.platform == "darwin":
+        # What mac_app.py needs at run time (pystray itself already imports the first two).
+        import AppKit  # noqa: F401
+        import Foundation  # noqa: F401
+        from PyObjCTools import AppHelper  # noqa: F401
+
 
 def _check_files():
-    for parts in (("static", "index.html"),):
+    required = [("static", "index.html")]
+    if bundle.is_frozen():
+        # Without them the tray falls back to a stand-in or, on a Mac, to the large stock
+        # icon, which is easy to miss and looks wrong, so a packaged build must have them.
+        required += [("tray.png",), ("trayTemplate.png",)]
+    for parts in required:
         path = bundle.resource_path(*parts)
         if not path.is_file():
             raise FileNotFoundError(f"missing {path}")

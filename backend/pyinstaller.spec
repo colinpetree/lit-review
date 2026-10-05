@@ -59,8 +59,9 @@ hiddenimports += ["pystray._darwin"] if sys.platform == "darwin" else []
 
 datas += collect_data_files("certifi")  # HTTPS fails once frozen without the certificate bundle
 datas += [(str(SPEC_DIR / "static"), "static")]  # the built frontend
-if (ICON_DIR / "tray.png").is_file():
-    datas += [(str(ICON_DIR / "tray.png"), ".")]
+for tray_image in ("tray.png", "trayTemplate.png"):  # Windows tray icon, macOS menu-bar icon
+    if (ICON_DIR / tray_image).is_file():
+        datas += [(str(ICON_DIR / tray_image), ".")]
 
 if sys.platform == "win32":
     exe_icon = ICON_DIR / "LitReview.ico"
@@ -95,20 +96,30 @@ exe = EXE(
 )
 coll = COLLECT(exe, a.binaries, a.datas, upx=False, name=APP_NAME)
 
+# macOS 26 draws an app icon in "Liquid Glass" from a layered icon compiled into Assets.car
+# (CI makes it from packaging/macos/AppIcon.icon and puts it in ICON_DIR). The key below
+# tells the system to look for it; the .icns stays for macOS 11 to 15. Without the compiled
+# file the key is left out, so a build without it behaves exactly as before. The workflow
+# also copies Assets.car into Contents/Resources after this build and before signing.
+ASSETS_CAR = ICON_DIR / "Assets.car"
+
 if sys.platform == "darwin":
+    mac_info_plist = {
+        "CFBundleName": APP_NAME,
+        "CFBundleDisplayName": APP_NAME,
+        "CFBundleShortVersionString": __version__,
+        "NSHighResolutionCapable": True,
+        "LSMinimumSystemVersion": "11.0",
+        # A normal app with a Dock icon (Cmd+Q and the Dock menu quit it). Menu-bar only
+        # would be "LSUIElement": True, but then there is no Dock icon to click.
+    }
+    if ASSETS_CAR.is_file():
+        mac_info_plist["CFBundleIconName"] = "AppIcon"
     app = BUNDLE(
         coll,
         name=f"{APP_NAME}.app",
         icon=str(exe_icon) if exe_icon and exe_icon.is_file() else None,
         bundle_identifier=BUNDLE_ID,
         version=__version__,
-        info_plist={
-            "CFBundleName": APP_NAME,
-            "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": __version__,
-            "NSHighResolutionCapable": True,
-            "LSMinimumSystemVersion": "11.0",
-            # A normal app with a Dock icon (Cmd+Q and the Dock menu quit it). Menu-bar only
-            # would be "LSUIElement": True, but then there is no Dock icon to click.
-        },
+        info_plist=mac_info_plist,
     )

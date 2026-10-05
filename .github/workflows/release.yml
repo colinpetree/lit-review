@@ -43,8 +43,46 @@ jobs:
             echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
           fi
 
+  # macOS 26 ("Liquid Glass") draws an app icon from a layered Icon Composer package compiled
+  # into Assets.car. Xcode 26 (which has `actool`) is on macos-latest but may not be on the
+  # Intel runner, so it is compiled once here and both Mac builds use the result. With no
+  # packaging/macos/AppIcon.icon in the repo this does nothing and the builds are unchanged.
+  icon:
+    runs-on: macos-latest
+    outputs:
+      has_icon: ${{ steps.compile.outputs.has_icon }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Compile the layered icon, if there is one
+        id: compile
+        shell: bash
+        run: |
+          if [ ! -d packaging/macos/AppIcon.icon ]; then
+            echo "No packaging/macos/AppIcon.icon yet: the Mac builds keep the classic icon."
+            echo "has_icon=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          xcodebuild -version
+          mkdir icon-out
+          xcrun actool packaging/macos/AppIcon.icon --compile icon-out --app-icon AppIcon             --include-all-app-icons --enable-on-demand-resources NO --development-region en             --target-device mac --minimum-deployment-target 26.0 --platform macosx             --output-partial-info-plist icon-out/partial.plist --output-format human-readable-text
+          echo "--- what actool wrote"
+          ls -l icon-out
+          cat icon-out/partial.plist
+          test -f icon-out/Assets.car
+          echo "--- what is in Assets.car"
+          xcrun assetutil --info icon-out/Assets.car | head -60
+          echo "has_icon=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.compile.outputs.has_icon == 'true'
+        with:
+          name: app-icon
+          path: icon-out/Assets.car
+          if-no-files-found: error
+
   build:
-    needs: prepare
+    needs: [prepare, icon]
     name: Build (${{ matrix.asset }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -120,11 +158,29 @@ jobs:
         if: runner.os == 'macOS'
         run: iconutil -c icns packaging/build/LitReview.iconset -o packaging/build/LitReview.icns
 
+      # The compiled Liquid Glass icon, when there is one. It goes in packaging/build so the
+      # spec (which then names it in Info.plist) and the copy below can find it.
+      - name: Get the compiled macOS 26 icon
+        if: runner.os == 'macOS' && needs.icon.outputs.has_icon == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: app-icon
+          path: packaging/build
+
       - name: List third-party licenses
         run: python packaging/make_notices.py
 
       - name: Build the app
         run: pyinstaller backend/pyinstaller.spec --noconfirm
+
+      # Assets.car must be a real file in Contents/Resources, and it must be there before the
+      # signature is made, or the signature would not cover it.
+      - name: Put the macOS 26 icon in the app
+        if: runner.os == 'macOS' && needs.icon.outputs.has_icon == 'true'
+        run: |
+          cp packaging/build/Assets.car "dist/Lit Review.app/Contents/Resources/Assets.car"
+          plutil -p "dist/Lit Review.app/Contents/Info.plist" | grep -E "CFBundleIcon"
+          ls -l "dist/Lit Review.app/Contents/Resources" | head -20
 
       # An unsigned download can be reported as "damaged" if its signature is broken, so the
       # build is signed ad hoc (free; the first-launch prompt still appears and the guide covers it).

@@ -10,6 +10,7 @@ import { exportMenuItems } from '../lib/exportFile'
 import { formatUsd } from '../lib/spendSetting'
 import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
+import { StageIndicator } from '../components/Spinner'
 import ModelBadge from '../components/ModelBadge'
 import RunMenu from '../components/RunMenu'
 
@@ -336,19 +337,20 @@ export default function RunResultsPage() {
           </div>
         ) : null}
 
-        {run.remaining > 0 && !run.limit_reached ? (
+        {resuming ? (
+          <StageIndicator
+            label={`Scoring papers… ${Math.max(run.candidate_papers.length - run.remaining, 0)} done, ${run.remaining} remaining`}
+          />
+        ) : run.remaining > 0 && !run.limit_reached ? (
           <button
             type="button"
             onClick={resumeScoring}
-            disabled={resuming}
-            className="self-start rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+            className="self-start rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
           >
-            {resuming
-              ? `Scoring… ${run.remaining} remaining`
-              : run.status === 'completed'
-                ? // Papers came back (or were added) after the run finished.
-                  `Score ${run.remaining} new paper${run.remaining === 1 ? '' : 's'}`
-                : `Resume scoring (${run.remaining} unscored)`}
+            {run.status === 'completed'
+              ? // Papers came back (or were added) after the run finished.
+                `Score ${run.remaining} new paper${run.remaining === 1 ? '' : 's'}`
+              : `Resume scoring (${run.remaining} unscored)`}
           </button>
         ) : null}
       </Card>

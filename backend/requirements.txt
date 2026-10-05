@@ -1,5 +1,5 @@
-flask==3.0.3
-requests==2.32.3
+flask==3.1.3
+requests==2.33.0
 anthropic==1.7.0
 # cryptography stopped publishing Intel Mac wheels after 48.0.1 (49.0.0 and later have macOS
 # wheels for Apple Silicon only). On an Intel Mac pip would build 50.x from source against

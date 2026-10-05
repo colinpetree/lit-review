@@ -28,7 +28,7 @@ from title_match import title_key
 
 # LIT_REVIEW_DATA_DIR is for development and tests only, so they never touch the
 # real database.
-DB_PATH = Path(os.environ.get("LIT_REVIEW_DATA_DIR") or platformdirs.user_data_dir(APP_NAME)) / "lit_review.db"
+DB_PATH = Path(os.environ.get("LIT_REVIEW_DATA_DIR") or platformdirs.user_data_dir(APP_NAME, appauthor=False)) / "lit_review.db"
 
 _LOCK = threading.Lock()
 

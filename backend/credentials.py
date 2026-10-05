@@ -33,10 +33,10 @@ from filelock import FileLock
 
 log = logging.getLogger(__name__)
 
-APP_NAME = "lit-review"
+APP_NAME = "Lit Review"  # the name of the data folder; appauthor=False: one folder, not "Lit Review\Lit Review"
 # LIT_REVIEW_CONFIG_DIR is for development and tests only, so they never touch
 # the real saved keys.
-CONFIG_DIR = Path(os.environ.get("LIT_REVIEW_CONFIG_DIR") or platformdirs.user_config_dir(APP_NAME))
+CONFIG_DIR = Path(os.environ.get("LIT_REVIEW_CONFIG_DIR") or platformdirs.user_config_dir(APP_NAME, appauthor=False))
 KEY_FILE = CONFIG_DIR / "credentials.key"
 STORE_FILE = CONFIG_DIR / "credentials.enc"
 LOCK_FILE = CONFIG_DIR / "credentials.lock"

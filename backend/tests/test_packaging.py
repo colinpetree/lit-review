@@ -3,9 +3,11 @@ user things with no console, a log file that never holds a secret, and the tray.
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -354,12 +356,24 @@ class TestWhatShips:
         for module in set(llm.PROVIDERS.values()) | {"providers.openai_compat"}:
             assert module.split(".")[1] in {p.stem for p in bundle.resource_path("providers").glob("*.py")}
 
-    def test_data_and_keys_stay_where_source_runs_keep_them(self):
-        # The packaged app must find the same database and saved keys as a source run,
-        # so the name they are filed under never changes.
+    def test_data_and_keys_live_in_one_folder_named_for_the_app(self):
+        # The packaged app must find the same database and saved keys as a source run, so the
+        # name is fixed here and shared. It is "Lit Review" (like other apps' folders), one folder
+        # deep: Windows would otherwise make "Lit Review\Lit Review". Asked in a fresh process
+        # with no override, as a real run is.
+        code = "import credentials, db; print(db.DB_PATH.parent); print(credentials.CONFIG_DIR)"
+        clean = {k: v for k, v in os.environ.items() if k not in ("LIT_REVIEW_DATA_DIR", "LIT_REVIEW_CONFIG_DIR")}
+        result = subprocess.run(
+            [sys.executable, "-c", code], cwd=bundle.resource_path(), env=clean, capture_output=True, text=True, timeout=60
+        )
+        assert result.returncode == 0, result.stderr
+        for line in result.stdout.split("\n")[:2]:
+            folder = Path(line.strip())
+            assert folder.name == "Lit Review"
+            assert folder.parent.name != "Lit Review"
         import credentials
 
-        assert credentials.APP_NAME == "lit-review"
+        assert credentials.APP_NAME == "Lit Review"
 
     def test_the_mac_identifier_is_the_released_one(self):
         # macOS treats a new identifier as a different app, so it is not changed lightly.

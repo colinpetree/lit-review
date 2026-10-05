@@ -466,7 +466,11 @@ against real copies on spare ports works well.
   inside the text (other `<` is left alone), and the system prompt tells the model to ignore
   instructions in them. Keep that structure when changing the prompt.
 - `db.py` - stdlib `sqlite3` (no ORM), short-lived connection per call, a module `_LOCK`
-  serializing writes. DB lives in the platformdirs user-data dir, not the repo. Schema
+  serializing writes. DB lives in the platformdirs user-data dir, not the repo, in a folder named
+  `credentials.APP_NAME` = `Lit Review` (also the saved keys' folder; `appauthor=False` keeps Windows to one
+  level, `%LOCALAPPDATA%\Lit Review`; a Mac's is `~/Library/Application Support/Lit Review`). It was
+  `lit-review` before the first release, with no migration since nobody had an install then: a developer's
+  own old folder has to be renamed by hand. Schema
   changes to existing tables go through the idempotent ALTER-based `_migrate`, since
   `CREATE TABLE IF NOT EXISTS` won't alter an existing table and user data must never
   need deleting. Setup runs **once per process** (`_ensure_ready`, again if `DB_PATH` changes):

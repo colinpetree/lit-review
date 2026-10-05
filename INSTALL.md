@@ -62,8 +62,8 @@ Then go to **Discover Papers**, describe your research question, and follow the 
 
 Your datasets, results and prompts are kept in your own user folder, not in the program folder, so **updating or deleting the program does not delete your work**. **Settings → About and Updates** shows the exact folder. By default:
 
-- Windows: `C:\Users\<you>\AppData\Local\lit-review\lit-review`
-- Mac: `~/Library/Application Support/lit-review`
+- Windows: `C:\Users\<you>\AppData\Local\Lit Review`
+- Mac: `~/Library/Application Support/Lit Review`
 
 Your API keys are kept encrypted in that same area. Make a backup of your work from **Settings → Your Data**. API keys are deliberately not part of a backup.
 

@@ -47,10 +47,9 @@ export default function LicenseCard() {
             judgments and can be wrong. Read the papers before relying on them.
           </li>
           <li>
-            About once a day, Lit Review sends its version number and whether this is a Windows or Mac computer, as a
-            plain count, to a counting service run by its author (hosted on Cloudflare), so the author can see how many
-            copies are in use. It carries no name, ID or IP address that the author keeps, and nothing about your
-            searches or papers.
+            About once a day, Lit Review sends the author an anonymous count that includes the software version number
+            and operating system. It does not include any personal or identifying information like your name, your
+            searches or your papers.
           </li>
           <li>Your data stays on this computer, apart from the above.</li>
         </ul>

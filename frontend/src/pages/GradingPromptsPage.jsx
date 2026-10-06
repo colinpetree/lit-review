@@ -58,7 +58,7 @@ export default function GradingPromptsPage() {
     <PageShell
       title="Grading Prompts"
       icon={navIcon('/prompts')}
-      description="Refine and re-use paper grading prompts from previous evaluations to save time and get better results."
+      description="Reuse and refine paper grading prompts from previous evaluations to save time and get better results."
     >
       <button
         type="button"

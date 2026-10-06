@@ -21,7 +21,7 @@ export default function AppearanceSection() {
     >
       <SettingsSection title="Theme">
         <div className="max-w-xs">
-          <Combobox options={THEME_OPTIONS} value={theme} onChange={setTheme} placeholder="Theme" />
+          <Combobox options={THEME_OPTIONS} value={theme} onChange={setTheme} placeholder="Theme" searchable={false} />
         </div>
       </SettingsSection>
     </SettingsPanel>

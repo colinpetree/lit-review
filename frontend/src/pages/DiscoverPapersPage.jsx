@@ -258,6 +258,7 @@ export default function DiscoverPapersPage() {
                 value={searchLimit}
                 onChange={setSearchLimit}
                 placeholder="Papers kept per search"
+                searchable={false}
               />
             </div>
             <p className="mt-1 text-xs text-gray-400">

@@ -122,6 +122,7 @@ export default function PaperFilterBar({
                   value={filter.readState}
                   onChange={(readState) => onChange({ ...filter, readState })}
                   placeholder="All"
+                  searchable={false}
                 />
               </div>
               {showRelevance ? (
@@ -132,6 +133,7 @@ export default function PaperFilterBar({
                     value={filter.relevance}
                     onChange={(relevance) => onChange({ ...filter, relevance })}
                     placeholder="All"
+                    searchable={false}
                   />
                 </div>
               ) : null}

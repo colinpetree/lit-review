@@ -11,6 +11,13 @@ const DISMISSED_KEY = 'lit-review.update-dismissed'
 
 export const POLL_FAST_MS = 2500 // while something is happening
 export const POLL_SLOW_MS = 60 * 1000 // a cheap local request: how late the "update ready" dialog can be
+export const INSTALL_STUCK_MS = 60 * 1000 // an install this tab has watched for this long no longer blocks the dialog
+
+// True once the app answering is a different run of it than the one this tab was talking to when an install
+// began (`installFrom`, the `instance` of that status): the new copy is up, or the old one was put back.
+export function hasRestarted(installFrom, status) {
+  return Boolean(installFrom && status && status.instance && status.instance !== installFrom)
+}
 
 export function getDismissed() {
   try {
@@ -79,6 +86,7 @@ export function useUpdateStatus() {
   const [status, setStatus] = useState(null)
   const timer = useRef(null)
   const alive = useRef(true)
+  const last = useRef(null)
 
   const refresh = useCallback(async function poll() {
     clearTimeout(timer.current)
@@ -89,9 +97,15 @@ export function useUpdateStatus() {
     } catch {
       // keep the last answer
     }
-    if (alive.current) timer.current = setTimeout(poll, pollDelay(next))
+    // While the app restarts it does not answer, so the pace comes from the last answer it gave: still
+    // quick if that said "applying", so the new copy is noticed within seconds and not after a minute.
+    if (alive.current) timer.current = setTimeout(poll, pollDelay(next ?? last.current))
     return next
   }, [])
+
+  useEffect(() => {
+    last.current = status // also what the page set itself, such as "applying" after pressing Install
+  }, [status])
 
   useEffect(() => {
     alive.current = true
@@ -150,6 +164,17 @@ export function rememberModalDismissed(key) {
 // and answers 409 (with a message) if it cannot within a moment.
 export function installUpdate() {
   return postJson('/api/update/apply', {})
+}
+
+// The version this run of the app was just updated to, or null. Only the copy the update helper started
+// reports one, and only until the welcome message has been seen.
+export function installedVersion(status) {
+  return status && typeof status.installed_version === 'string' && status.installed_version ? status.installed_version : null
+}
+
+// Tell the app the welcome message was seen, so it is not shown again (in this or another tab).
+export function acknowledgeInstalled() {
+  return postJson('/api/update/installed-seen', {})
 }
 
 export function fetchUpdateSettings() {

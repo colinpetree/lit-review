@@ -21,7 +21,7 @@ restore, and Deleted Items (datasets, prompts and runs are soft-deleted; Deleted
 only place anything is removed for good). Packaging is built (see "Packaging and release" below):
 a tag push builds a Windows zip and, for each Mac (Apple Silicon, Intel), a `.dmg` for people to install
 from (drag onto Applications) plus a `.zip` that the in-app updater uses, on GitHub Actions, and the
-app checks GitHub for signed newer releases and can install them. The update loop (manual and automatic) is verified on Windows and Intel Macs, not yet on Apple Silicon; what is still unproven is listed in the `packaging-release` skill and RELEASING.md "Still to prove".
+app checks GitHub for signed newer releases and can install them. The update loop (manual and automatic) is verified on Windows, Intel Macs and Apple Silicon Macs; what is still unproven is listed in the `packaging-release` skill and RELEASING.md "Still to prove".
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
 command line, so end-user distribution must be a double-click executable (no

@@ -5,6 +5,7 @@ second launch finds and waits for the first."""
 import socket
 import sqlite3
 import threading
+import time
 
 import pytest
 
@@ -399,18 +400,44 @@ class TestMain:
 class TestUpdateHooks:
     """How main() uses the updater: apply a due update before serving, report the start, wait for the old copy."""
 
-    def test_a_due_update_is_handed_to_the_helper_before_anything_is_served(self, state_dir, fake_server, monkeypatch):
-        monkeypatch.setattr(app_module.updater, "apply_at_launch", lambda: True)
-        assert app_module.main() == 0
-        assert fake_server.seen == {}  # no server, no instance record, no browser
-        assert access.read_instance(state_dir) is None
-        assert fake_server.timers == []
-        single_instance.acquire(state_dir / "instance.lock").release()  # the lock was let go for the new copy
+    def test_a_due_update_starts_the_app_as_usual_and_says_it_is_installing(self, state_dir, fake_server, monkeypatch):
+        staged = {"version": "9.9.9", "notice": ""}
+        applied, background = [], []
+        monkeypatch.setattr(app_module.updater, "due_at_launch", lambda: staged)
+        monkeypatch.setattr(app_module, "_apply_update_at_launch", lambda: applied.append(True))
+        monkeypatch.setattr(app_module.updater, "start_background", lambda jobs: background.append(True))
+        try:
+            assert app_module.main() == 0
+            status = app_module.updater.status()
+        finally:
+            app_module.updater.reset_for_tests()
+        assert fake_server.seen["token"] and fake_server.timers  # served, and the browser was asked to open
+        assert status["state"] == "applying" and status["latest"] == "9.9.9"
+        assert background == []  # this copy is about to be replaced: no checking
+        for _ in range(100):
+            if applied:
+                break
+            time.sleep(0.01)
+        assert applied == [True]
 
     def test_no_update_due_serves_as_usual(self, state_dir, fake_server, monkeypatch):
-        monkeypatch.setattr(app_module.updater, "apply_at_launch", lambda: False)
+        monkeypatch.setattr(app_module.updater, "due_at_launch", lambda: None)
+        started = []
+        monkeypatch.setattr(app_module.updater, "start_background", lambda jobs: started.append(True))
         assert app_module.main() == 0
-        assert fake_server.seen["token"]
+        assert fake_server.seen["token"] and started == [True]
+
+    def test_a_copy_started_by_the_helper_welcomes_the_new_version_once(self, state_dir, fake_server, monkeypatch):
+        monkeypatch.setattr(app_module.updater, "due_at_launch", lambda: None)
+        monkeypatch.setattr(app_module.updater, "start_background", lambda jobs: None)
+        try:
+            app_module.main(["--after-update"])
+            assert app_module.updater.status()["installed_version"] == app_module.updater.version.__version__
+            app_module.updater.reset_for_tests()
+            app_module.main([])
+            assert app_module.updater.status()["installed_version"] is None
+        finally:
+            app_module.updater.reset_for_tests()
 
     def test_the_marker_result_and_cleanup_run_once_the_app_is_up(self, state_dir, fake_server, monkeypatch):
         order = []

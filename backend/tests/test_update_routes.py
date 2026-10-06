@@ -118,3 +118,75 @@ class TestApply:
         stranger.environ_base.pop("HTTP_AUTHORIZATION", None)
         response = stranger.post("/api/update/apply", base_url=f"http://127.0.0.1:{app_module.PORT}")
         assert response.status_code == 401 and ready["apply"] == 0
+
+
+class TestApplyAtLaunch:
+    """A launch that installs by itself: the page says so first, then the same path as the button runs."""
+
+    @pytest.fixture
+    def ready(self, monkeypatch):
+        calls = {"apply": 0, "quit": 0, "background": 0, "gate": []}
+        monkeypatch.setattr(app_module, "LAUNCH_APPLY_MIN_SHOW", 0)
+        monkeypatch.setattr(app_module, "LAUNCH_APPLY_PAGE_WAIT", 0.2)
+        monkeypatch.setattr(updater, "status", lambda: {"state": "applying"})
+        monkeypatch.setattr(updater, "start_apply", lambda: calls.__setitem__("apply", calls["apply"] + 1))
+        monkeypatch.setattr(updater, "stop_applying", lambda: calls.__setitem__("restored", True))
+        monkeypatch.setattr(updater, "start_background", lambda jobs: calls.__setitem__("background", calls["background"] + 1))
+        real = app_module._GATE.close_when_quiet
+
+        def close(timeout, own_requests=1):
+            calls["gate"].append(own_requests)
+            return real(timeout, own_requests=own_requests)
+
+        monkeypatch.setattr(app_module._GATE, "close_when_quiet", close)
+        app_module._QUIT["fn"] = lambda: calls.__setitem__("quit", calls["quit"] + 1)
+        monkeypatch.setattr(app_module.threading, "Timer", type("T", (), {
+            "__init__": lambda self, i, f: setattr(self, "f", f), "start": lambda self: self.f()}))
+        app_module._PAGE_SAW_APPLYING.clear()
+        yield calls
+        app_module._PAGE_SAW_APPLYING.clear()
+
+    def test_it_waits_for_the_page_then_installs_like_the_button(self, ready):
+        app_module._PAGE_SAW_APPLYING.set()
+        app_module._apply_update_at_launch()
+        assert ready["apply"] == 1 and ready["quit"] == 1
+        assert ready["gate"] == [0]  # no request of its own to wait out
+        assert app_module._GATE.closed and "restored" not in ready
+
+    def test_a_page_that_never_asks_does_not_stop_the_install(self, ready):
+        app_module._apply_update_at_launch()  # the wait runs out
+        assert ready["apply"] == 1
+
+    def test_the_page_asking_while_it_says_applying_is_what_the_wait_is_for(self, client):
+        app_module._PAGE_SAW_APPLYING.clear()
+        updater._set(state="staged")
+        client.get("/api/update-check")
+        assert not app_module._PAGE_SAW_APPLYING.is_set()
+        updater._set(state="applying")
+        client.get("/api/update-check")
+        assert app_module._PAGE_SAW_APPLYING.is_set()
+        app_module._PAGE_SAW_APPLYING.clear()
+
+    def test_work_that_will_not_finish_leaves_it_staged_and_checking_resumes(self, ready, monkeypatch):
+        monkeypatch.setattr(app_module._GATE, "close_when_quiet", lambda timeout, own_requests=1: False)
+        app_module._PAGE_SAW_APPLYING.set()
+        app_module._apply_update_at_launch()
+        assert ready["apply"] == 0 and ready["quit"] == 0
+        assert ready["restored"] is True and ready["background"] == 1
+
+    def test_a_crash_is_logged_and_leaves_the_app_running(self, ready, monkeypatch):
+        def boom():
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(updater, "start_apply", boom)
+        app_module._PAGE_SAW_APPLYING.set()
+        app_module._apply_update_at_launch()
+        assert ready["quit"] == 0 and ready["background"] == 1
+
+
+class TestInstalledSeen:
+    def test_it_clears_the_welcome(self, client):
+        updater.note_installed("0.2.0")
+        assert client.get("/api/update-check").get_json()["installed_version"] == "0.2.0"
+        assert client.post("/api/update/installed-seen").status_code == 200
+        assert client.get("/api/update-check").get_json()["installed_version"] is None

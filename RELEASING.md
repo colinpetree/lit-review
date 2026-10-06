@@ -59,10 +59,10 @@ Every copy older than `--min-version` then treats the update as required: it dow
 ## Still to prove on real machines (not testable on a development PC)
 
 - Windows: that a downloaded-by-the-app update raises no SmartScreen prompt, and whether **Smart App Control** (Windows Security, App and browser control) blocks the unsigned build. If it is on for a user, signing the Windows build is required regardless of the updater (for example Azure Trusted Signing).
-- macOS Apple Silicon: the whole update loop (see below), which has not been run on an Apple Silicon Mac yet.
-- macOS: that the swap and relaunch work from `/Applications`, whether the App Management permission prompt appears on macOS 13 or newer (and how often), and that the ad hoc signature survives `ditto` extraction.
+- Both: the browser-based install at launch (automatic installing on): the app opens as usual, the page shows "Installing the update", a new window opens with "Welcome to Lit Review X", and nothing at all appears if no browser opens (the install still happens after about 20 s). The old tab should turn into "Lit Review was updated" with an OK button within a few seconds (same port), or become closable after a minute (different port).
 - Both: a forced `--min-version` run and a deliberately broken update to see the rollback message.
 
 ## Proven on real machines
 
 - The full update loop with real releases on Windows and on an Intel Mac, with automatic installing off (Install and restart) and on (applied at next launch).
+- The same loop on an Apple Silicon Mac: the manual check, the automatic check, the update dialog's button and the Settings button all worked. The old OS-level "Updating Lit Review" window appeared when an update applied at startup but disappeared too fast to read (about 2 seconds on an Intel Mac, and it appeared a few seconds late), which is why launch installs now show the same "Installing the update" dialog in the browser instead. It ran from the `/Applications` folder, so the swap and relaunch work from there. The updated app was not distrusted by macOS (no Gatekeeper block or "damaged" warning) and ran straight away, so the ad hoc signature survives `ditto` extraction on Apple Silicon. No App Management permission prompt appeared during the update; it just worked. The first install (from the `.dmg`) did show macOS's "app is not trusted" warning, as expected for an unnotarized build, but the in-app update did not, because the updater downloads and extracts the app itself.

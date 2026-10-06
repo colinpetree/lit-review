@@ -4,6 +4,8 @@ import {
   dismissalKey,
   getDismissed,
   getModalDismissed,
+  hasRestarted,
+  installedVersion,
   installsAtNextStart,
   isBannerNotice,
   modalKey,
@@ -256,5 +258,32 @@ describe('what is shown at the top of the page', () => {
 
   it('shows nothing when there is no notice', () => {
     expect(isBannerNotice(null)).toBe(false)
+  })
+})
+
+describe('installedVersion', () => {
+  it('is the version the helper just installed, until it has been seen', () => {
+    expect(installedVersion({ installed_version: '0.2.0' })).toBe('0.2.0')
+  })
+
+  it('is null for an ordinary start, a missing status or a bad value', () => {
+    expect(installedVersion({ installed_version: null })).toBe(null)
+    expect(installedVersion({})).toBe(null)
+    expect(installedVersion(null)).toBe(null)
+    expect(installedVersion({ installed_version: '' })).toBe(null)
+    expect(installedVersion({ installed_version: 5 })).toBe(null)
+  })
+})
+
+describe('hasRestarted', () => {
+  it('is true once the app answers as a different run than the one the install began with', () => {
+    expect(hasRestarted('a', { instance: 'b' })).toBe(true)
+  })
+
+  it('is false for the same run, before an install, or before the app answers', () => {
+    expect(hasRestarted('a', { instance: 'a' })).toBe(false)
+    expect(hasRestarted(null, { instance: 'b' })).toBe(false)
+    expect(hasRestarted('a', null)).toBe(false)
+    expect(hasRestarted('a', {})).toBe(false)
   })
 })

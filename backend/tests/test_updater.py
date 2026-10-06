@@ -205,7 +205,7 @@ class TestTestOverrides:
         monkeypatch.delenv("LIT_REVIEW_TESTING", raising=False)
         assert not updater.enabled()
         assert updater.start_background() is None
-        assert updater.apply_at_launch() is False
+        assert updater.due_at_launch() is None
 
 
 def make_zip(path, entries):
@@ -607,35 +607,35 @@ def staged(tmp_path, monkeypatch):
     return state["staged"]
 
 
-class TestApplyAtLaunch:
-    def test_off_means_nothing_is_applied(self, staged):
-        launched = []
-        assert updater.apply_at_launch(launch=launched.append) is False and launched == []
+class TestDueAtLaunch:
+    """What a launch decides. It only decides: the app starts as usual and the Install path does the work."""
 
-    def test_on_applies_and_counts_the_attempt(self, staged):
+    def test_off_means_nothing_is_due(self, staged):
+        assert updater.due_at_launch() is None
+
+    def test_on_makes_it_due_without_counting_an_attempt(self, staged):
         app_settings.save(auto_apply=True)
-        launched = []
-        assert updater.apply_at_launch(launch=launched.append) is True
-        assert launched == [{**staged, "announce": True}] and updater.load_state()["attempts"] == {"0.2.0": 1}
+        assert updater.due_at_launch() == staged
+        assert updater.load_state().get("attempts") is None  # start_apply counts it when the helper starts
 
-    def test_below_min_version_applies_even_when_off(self, staged):
+    def test_below_min_version_is_due_even_when_off(self, staged):
         state = updater.load_state()
         state["staged"]["min_version"] = "0.1.5"
         updater.save_state(state)
-        launched = []
-        assert updater.apply_at_launch(launch=launched.append) is True
+        assert updater.due_at_launch() == staged | {"min_version": "0.1.5"}
 
-    def test_at_or_above_min_version_and_off_does_not(self, staged):
+    def test_at_or_above_min_version_and_off_is_not_due(self, staged):
         state = updater.load_state()
         state["staged"]["min_version"] = "0.1.0"
         updater.save_state(state)
-        assert updater.apply_at_launch(launch=lambda s: None) is False
+        assert updater.due_at_launch() is None
 
     def test_gives_up_after_two_attempts_and_discards_the_copy(self, staged):
         app_settings.save(auto_apply=True)
         for _ in range(updater.MAX_ATTEMPTS):
-            assert updater.apply_at_launch(launch=lambda s: None) is True
-        assert updater.apply_at_launch(launch=lambda s: pytest.fail("a third try")) is False
+            assert updater.due_at_launch() is not None
+            updater.start_apply(launch=lambda s: None)
+        assert updater.due_at_launch() is None
         state = updater.load_state()
         assert state["failed"] == "0.2.0" and "staged" not in state
         assert not Path(staged["dir"]).exists()
@@ -643,25 +643,54 @@ class TestApplyAtLaunch:
     def test_a_staged_copy_that_is_not_newer_is_ignored(self, staged, monkeypatch):
         app_settings.save(auto_apply=True)
         monkeypatch.setattr(updater.version, "__version__", "0.2.0")
-        assert updater.apply_at_launch(launch=lambda s: pytest.fail("applied")) is False
+        assert updater.due_at_launch() is None
 
     def test_a_missing_staged_folder_is_ignored(self, staged):
         app_settings.save(auto_apply=True)
         Path(staged["dir"]).rmdir()
-        assert updater.apply_at_launch(launch=lambda s: pytest.fail("applied")) is False
-
-    def test_a_helper_that_cannot_start_does_not_block_the_app(self, staged):
-        app_settings.save(auto_apply=True)
-
-        def fail(s):
-            raise OSError("no")
-
-        assert updater.apply_at_launch(launch=fail) is False
+        assert updater.due_at_launch() is None
 
     def test_a_corrupt_state_file_is_nothing_staged(self, staged):
         updater._state_path().write_text("{not json")
         app_settings.save(auto_apply=True)
-        assert updater.apply_at_launch(launch=lambda s: pytest.fail("applied")) is False
+        assert updater.due_at_launch() is None
+
+    def test_a_copy_run_from_source_is_never_due(self, staged, monkeypatch):
+        app_settings.save(auto_apply=True)
+        monkeypatch.delenv("LIT_REVIEW_TESTING")
+        assert updater.due_at_launch() is None
+
+
+class TestInstalledWelcome:
+    def test_marking_applying_tells_the_page_which_version(self, staged):
+        updater.mark_applying({**staged, "notice": "Fixes."})
+        status = updater.status()
+        assert status["state"] == "applying" and status["latest"] == "0.2.0" and status["notice"] == "Fixes."
+
+    def test_an_install_failure_message_does_not_survive_marking(self, staged):
+        updater.note_failure("It failed.")
+        updater.mark_applying(staged)
+        status = updater.status()
+        assert status["state"] == "applying" and status["error"] == "" and status["latest"] == "0.2.0"
+
+    def test_stopping_goes_back_to_waiting_when_the_copy_is_still_there(self, staged):
+        updater.mark_applying(staged)
+        updater.stop_applying()
+        assert updater.status()["state"] == "staged" and updater.status()["latest"] == "0.2.0"
+
+    def test_stopping_goes_to_idle_when_the_copy_is_gone(self, staged):
+        updater.mark_applying(staged)
+        Path(staged["dir"]).rmdir()
+        updater.stop_applying()
+        status = updater.status()
+        assert status["state"] == "idle" and status["latest"] is None
+
+    def test_the_welcome_is_off_until_a_helper_started_this_copy_and_goes_when_seen(self, staged):
+        assert updater.status()["installed_version"] is None
+        updater.note_installed("0.2.0")
+        assert updater.status()["installed_version"] == "0.2.0"
+        updater.acknowledge_installed()
+        assert updater.status()["installed_version"] is None
 
 
 class TestRestoreStatus:
@@ -814,28 +843,15 @@ class TestFirstCheck:
         assert updater.status()["enabled"] is True
 
 
-class TestAnnounceFlag:
-    def args_for(self, tmp_path, monkeypatch, announce):
+class TestNoAnnounceFlag:
+    def test_the_helper_is_started_without_a_window_flag(self, tmp_path, monkeypatch):
         fake_helper = tmp_path / "update_helper.py"
         fake_helper.write_text("")
         monkeypatch.setattr(updater, "helper_command", lambda: [str(fake_helper)])
         seen = {}
         staged = {"install": str(tmp_path / "a"), "dir": str(tmp_path / "a.new"), "exe": "x", "version": "0.2.0"}
-        if announce:
-            staged["announce"] = True
         updater.launch_helper(staged, popen=lambda args, **kwargs: seen.update(args=args))
-        return seen["args"]
-
-    def test_a_launch_that_applies_an_update_asks_the_helper_to_say_so(self, tmp_path, monkeypatch):
-        assert "--announce" in self.args_for(tmp_path, monkeypatch, True)
-
-    def test_the_install_button_does_not(self, tmp_path, monkeypatch):
-        assert "--announce" not in self.args_for(tmp_path, monkeypatch, False)
-
-    def test_the_button_path_does_not_ask_for_it(self, staged):
-        launched = []
-        updater.start_apply(launch=lambda s: launched.append(s) or "proc")
-        assert "announce" not in launched[0]
+        assert "--announce" not in seen["args"]  # the page says an update is installing, not an OS window
 
 
 class TestStartApply:

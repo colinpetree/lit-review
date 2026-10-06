@@ -182,63 +182,6 @@ def start_app(exe, extra_args=()):
     return subprocess.Popen([str(exe), *extra_args], **kwargs)
 
 
-# ---------------------------------------------------------------- telling the person
-
-ANNOUNCE_TITLE = "Updating Lit Review"
-ANNOUNCE_TEXT = "Lit Review is installing an update and will open again in a moment."
-
-
-class Announcement:
-    """A small window saying the update is being installed, for a launch that applies one: the old
-    copy has already gone and the new one is not up yet, so without it nothing at all is on screen
-    for several seconds (ten on an old Mac) and someone opens the app a second time.
-
-    It never raises: a window that cannot be shown must not stop the update. `close` takes it down
-    again, whichever way the update ended. Standard library only, like the rest of the helper."""
-
-    def __init__(self, plat=None, popen=subprocess.Popen):
-        self.plat = plat or sys.platform
-        self.popen = popen
-        self._process = None
-        self._thread = None
-
-    def show(self):
-        try:
-            if self.plat == "win32":
-                import threading
-
-                self._thread = threading.Thread(target=self._windows_box, name="update-announcement", daemon=True)
-                self._thread.start()
-            elif self.plat == "darwin":
-                script = (f'display dialog "{ANNOUNCE_TEXT}" with title "{ANNOUNCE_TITLE}" '
-                          'buttons {"OK"} default button "OK" with icon note giving up after 180')
-                self._process = self.popen(["osascript", "-e", script], stdin=subprocess.DEVNULL,
-                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:  # noqa: BLE001 - see the class note
-            self._process = None
-
-    @staticmethod
-    def _windows_box():
-        import ctypes
-
-        # MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST
-        ctypes.windll.user32.MessageBoxW(0, ANNOUNCE_TEXT, ANNOUNCE_TITLE, 0x0 | 0x40 | 0x10000 | 0x40000)
-
-    def close(self):
-        try:
-            if self.plat == "win32" and self._thread is not None:
-                import ctypes
-
-                window = ctypes.windll.user32.FindWindowW(None, ANNOUNCE_TITLE)
-                if window:
-                    ctypes.windll.user32.PostMessageW(window, 0x0010, 0, 0)  # WM_CLOSE
-            elif self._process is not None:
-                self._process.terminate()
-        except Exception:  # noqa: BLE001
-            pass
-        self._process = self._thread = None
-
-
 # ---------------------------------------------------------------- the marker and the result
 
 def marker_ok(marker, version):
@@ -284,22 +227,9 @@ def remove_tree(path, attempts=5, *, sleep=time.sleep):
 
 # ---------------------------------------------------------------- the whole job
 
-def run(args, *, announcement=None, **steps):
-    """0 installed, 1 not installed (previous version kept), 2 a person must recover it. With
-    `--announce` a small window says what is happening until the helper is done, however it ends."""
-    if announcement is None and getattr(args, "announce", False):
-        announcement = Announcement()
-    if announcement is not None:
-        announcement.show()
-    try:
-        return _run(args, **steps)
-    finally:
-        if announcement is not None:
-            announcement.close()
-
-
-def _run(args, *, start=start_app, wait_exit=wait_for_exit, do_swap=swap, do_roll_back=roll_back,
-         marker_wait=wait_for_marker, cleanup=remove_tree):
+def run(args, *, start=start_app, wait_exit=wait_for_exit, do_swap=swap, do_roll_back=roll_back,
+        marker_wait=wait_for_marker, cleanup=remove_tree):
+    """0 installed, 1 not installed (previous version kept), 2 a person must recover it."""
     try:
         install, new, old, exe, marker, result = validate(args)
     except ArgumentError as exc:
@@ -371,7 +301,6 @@ def parse_args(argv):
     parser.add_argument("--version", required=True)
     parser.add_argument("--result", required=True)
     parser.add_argument("--wait-seconds", type=float, default=90)
-    parser.add_argument("--announce", action="store_true", help="show a small window while the update is installed")
     return parser.parse_args(argv)
 
 

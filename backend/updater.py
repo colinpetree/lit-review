@@ -14,8 +14,9 @@ Lifecycle of one release:
 - It is unpacked next to the install folder, checked (zip entry names, the macOS signature,
   and the new build's own `--self-check` reporting the expected version) and left staged.
 - With `auto_apply` on, or when the running version is below the manifest's `min_version`,
-  the staged copy is installed at the next launch (`apply_at_launch`); otherwise the page
-  offers "Install and restart" (`start_apply`). It is never swapped mid-run on its own.
+  the staged copy is installed at the next launch (`due_at_launch`: the app starts as usual, the page
+  says it is installing, then the same `start_apply` as the button runs); otherwise the page
+  offers "Install and restart". It is never swapped mid-run on its own.
 - `state.json` remembers what is staged and how many install attempts a version has had, so
   a build that keeps failing is given up on instead of retried at every start.
 """
@@ -118,6 +119,7 @@ _status = {
     "error": "",
     "checked_at": None,
     "install_failed": False,  # an install failed at the last launch: its message must not be overwritten
+    "installed_version": None,  # this run was started by the update helper: the page welcomes it once
 }
 
 
@@ -139,7 +141,7 @@ def _set(**changes):
 def reset_for_tests():
     with _lock:
         _status.update(state="idle", current=version.__version__, latest=None, notice="", url=None, required=False,
-                       progress=0.0, error="", checked_at=None, install_failed=False)
+                       progress=0.0, error="", checked_at=None, install_failed=False, installed_version=None)
 
 
 # ------------------------------------------------------------------ where it may run
@@ -677,8 +679,6 @@ def launch_helper(staged, *, popen=subprocess.Popen):
         "--version", str(staged["version"]),
         "--result", str(directory / RESULT_NAME),
     ]
-    if staged.get("announce"):
-        args.append("--announce")  # a launch that applies an update has no page to say so
     kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "cwd": str(scratch),
               "env": fresh_program_env()}
     if sys.platform == "win32":
@@ -719,32 +719,49 @@ def should_apply(staged, running, auto_apply):
     return bool(floor and mine and mine < floor)
 
 
-def apply_at_launch(*, running=None, launch=launch_helper):
-    """Called from main() once this copy holds the instance lock and before it serves anything:
-    if an update is staged and due, start the helper and return True (the caller exits). Counts the
-    attempt first, and gives up on a version after MAX_ATTEMPTS."""
+def due_at_launch(*, running=None):
+    """Called from main() once this copy holds the instance lock: the staged update that should be
+    installed without being asked (the setting is on, or this version is too old to keep), or None.
+    It only decides. The app then starts as usual so the page can say an update is being installed,
+    and the same path as the Install update button does the work (`start_apply`, which counts the
+    attempt). A version already given up on after MAX_ATTEMPTS is discarded here instead."""
     running = running or version.__version__
     if not bundle.is_frozen() and not um.testing_enabled():
-        return False
+        return None
     state = load_state()
     staged = usable_staged(state, running)
     if not staged or not should_apply(staged, running, app_settings.auto_apply()):
-        return False
-    attempts = state.setdefault("attempts", {})
-    if attempts.get(staged["version"], 0) >= MAX_ATTEMPTS:
+        return None
+    if state.get("attempts", {}).get(staged["version"], 0) >= MAX_ATTEMPTS:
         state["failed"] = staged["version"]
         discard_staged(state)
         save_state(state)
-        return False
-    attempts[staged["version"]] = attempts.get(staged["version"], 0) + 1
-    save_state(state)
-    try:
-        # At launch nothing else is on screen while the swap happens, so the helper shows a small window.
-        launch({**staged, "announce": True})
-    except (OSError, UpdateError) as exc:
-        log.warning("Could not start the update helper: %s", exc)
-        return False
-    return True
+        return None
+    return staged
+
+
+def mark_applying(staged):
+    """Tell the page an install is under way (it shows "Installing the update"), before the helper starts."""
+    _set(state="applying", latest=staged["version"], notice=str(staged.get("notice") or ""), error="",
+         install_failed=False, progress=1.0)
+
+
+def stop_applying():
+    """An install that was announced to the page could not be started: show the update as waiting
+    again, or as nothing if the staged copy is no longer usable, so the page never says "installing"
+    for something that is not happening."""
+    if not restore_status():
+        _set(state="idle", latest=None, notice="", url=None, required=False, progress=0.0, error="")
+
+
+def note_installed(running=None):
+    """This copy was started by the update helper: say so once, so the page can welcome the new version."""
+    _set(installed_version=running or version.__version__)
+
+
+def acknowledge_installed():
+    """The welcome message was seen; it is not shown again for this run."""
+    _set(installed_version=None)
 
 
 def start_apply(*, launch=launch_helper):

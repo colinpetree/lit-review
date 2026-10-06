@@ -63,8 +63,11 @@ gitignored.
   It never downloads while a search, lookup or grading run is active. Where the install cannot be replaced (read-only,
   translocated, not writable, long path) the state is `unsupported` with the manual link, quietly.
   **Applying:** the `auto_apply` setting (server-side `settings.json` in the config dir, default **off**) decides whether
-  a staged update installs at the **next launch** (`apply_at_launch`, in `main()` after the instance lock and before the
-  database is touched, so nothing is running) or waits for the page's **Install and restart** (`POST /api/update/apply`,
+  a staged update installs at the **next launch** (`due_at_launch`, in `main()` after the instance lock: it only decides, and the
+  app then starts as usual, opens the browser, marks the status `applying` so the page shows "Installing the update", and
+  `_apply_update_at_launch` waits until a page has asked for that status plus `LAUNCH_APPLY_MIN_SHOW` seconds (or
+  `LAUNCH_APPLY_PAGE_WAIT` if no page ever does) before running the same `_apply_update_now` as the button, with
+  `own_requests=0`; if that cannot run it goes back to `staged` and checking resumes) or waits for the page's **Install and restart** (`POST /api/update/apply`,
   which quiesces with `_GATE.close_when_quiet` like a restore, starts the helper and quits via `_QUIT["fn"]`). A running
   version below the manifest's signed `min_version` is "required": it installs at the next launch whatever the setting
   says. It is shown like any other update, just as quietly: the same **Update ready** dialog (also for someone with
@@ -78,7 +81,7 @@ gitignored.
   the instance lock instead of handing over), wait for `started.json` naming the new version (written by `main()` once
   the server is up), then delete `.old`; otherwise roll back, restart the old one and write `result.json`, which the
   next launch turns into a message (`updater.take_result`, `note_failure`). The marker is written **before** cleanup
-  runs, because cleanup deletes `.old`. A launch that applies a staged update has no page to say so and the old copy has already gone, so the helper (started with `--announce`) shows a small "Updating Lit Review" window until it is done, however it ends (Windows `MessageBoxW`, closed with `WM_CLOSE`; Mac an `osascript` dialog, terminated, with a 3 minute give-up). The Install update button does not ask for it: the page already says so. The database is backed up to `updates/before-update-<version>.db` first.
+  runs, because cleanup deletes `.old`. There is no OS-level window any more (the helper's old `--announce` window is gone): a launch that installs on its own shows the same "Installing the update" dialog as the button, in the browser, and the new copy (started with `--after-update`, which calls `updater.note_installed`) shows "Welcome to Lit Review X / Version X was successfully installed" once (`installed_version` in the status, cleared by `POST /api/update/installed-seen`; `UpdateModal`, ahead of any other update dialog). The tab that watched the install cannot close itself, so `UpdateProvider` remembers the `instance` it was talking to (`installFrom`) and, when the app answers as a different one (`hasRestarted`), swaps "Installing" for "Lit Review was updated / The update was not installed" with an OK button (the poll stays fast while it restarts: `useUpdateStatus` paces from the last answer); that tab never shows the welcome (the new window does), and after `INSTALL_STUCK_MS` of waiting the installing dialog becomes closable. The database is backed up to `updates/before-update-<version>.db` first.
   Test-only overrides (`LIT_REVIEW_UPDATE_BASE` loopback URL, `LIT_REVIEW_UPDATE_PUBKEY`) work only with
   `LIT_REVIEW_TESTING=1`. Page: `UpdateProvider` (one shared poll of `GET /api/update-check`, a status read that also
   names this run of the app via `instance`), `UpdateModal` (the **Update ready** dialog: opens when a download
@@ -87,7 +90,7 @@ gitignored.
   toggle, **Check now**, and the same **Install update** button whenever one is staged, for auto users too).
   `lib/updateCheck.js` holds the pure logic (tested). Release side: CI writes the unsigned manifest
   (`make_manifest.py`, zips only, never the `.dmg`); the maintainer signs the draft (`sign_release.py`) and publishes; see
-  `RELEASING.md`. Needs the repo to be **public**. Verified on real Windows and Intel Mac machines, manual and automatic, but not yet on Apple Silicon; what remains unproven is in RELEASING.md "Still to prove".
+  `RELEASING.md`. Needs the repo to be **public**. Verified on real Windows, Intel Mac and Apple Silicon Mac machines, manual and automatic (before the browser-based launch install, the OS "Updating Lit Review" window vanished too fast to read; the browser flow itself is not yet run on a real machine); what remains unproven is in RELEASING.md "Still to prove".
 - **macOS specifics** (`mac_app.py`, wired in by `tray.Tray.run`; all of it is **untested off a Mac**, so a
   new build needs a look on a real one). The behaviour is in `MacActions` (plain Python, tested anywhere in
   `tests/test_mac_app.py`); `install()` is the thin AppKit layer, wrapped in `try/except` so a failure leaves

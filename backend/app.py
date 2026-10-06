@@ -257,6 +257,14 @@ _GATE = RequestGate()
 # How the update route ends this process: set by main() once it knows how it is being served.
 _QUIT = {"fn": None}
 
+# A launch that installs an update on its own starts the app as usual and waits for a page to show
+# "Installing the update" before handing over to the helper. The page tells us it has by asking for the
+# update status while it says "applying". If no page ever asks (no browser opened), the install goes ahead
+# after LAUNCH_APPLY_PAGE_WAIT seconds. LAUNCH_APPLY_MIN_SHOW keeps the message up long enough to read.
+_PAGE_SAW_APPLYING = threading.Event()
+LAUNCH_APPLY_PAGE_WAIT = 20
+LAUNCH_APPLY_MIN_SHOW = 3
+
 
 @app.before_request
 def hold_off_during_restore():
@@ -312,7 +320,10 @@ def update_check():
     the background, whether or not a page is open."""
     # `instance` names this run of the app: the page uses it to offer the "update ready" dialog
     # once per start, not once per browser tab ever.
-    return jsonify({**updater.status(), "instance": INSTANCE_ID})
+    status = updater.status()
+    if status["state"] == "applying":
+        _PAGE_SAW_APPLYING.set()
+    return jsonify({**status, "instance": INSTANCE_ID})
 
 
 @app.post("/api/update/check")
@@ -322,29 +333,65 @@ def update_check_now():
     return jsonify(updater.status()), 202
 
 
-@app.post("/api/update/apply")
-def update_apply():
-    """"Install and restart": with the server quiet (as for a restore), hand the staged copy
-    to the update helper and quit. Work already running finishes and is saved first; if it
-    does not within 30 seconds nothing changes."""
+@app.post("/api/update/installed-seen")
+def update_installed_seen():
+    """The page showed its "version X was installed" welcome; do not show it again for this run."""
+    updater.acknowledge_installed()
+    return jsonify(updater.status())
+
+
+def _apply_update_now(*, at_launch=False):
+    """With the server quiet (as for a restore), hand the staged copy to the update helper and
+    quit. Work already running finishes and is saved first; if it does not within 30 seconds
+    nothing changes. Returns (body, http status). A launch that is installing on its own has
+    already marked the update "applying" for the page, so it accepts that state too."""
     with _exclusive("update-apply", 0) as acquired:
         if not acquired:
-            return jsonify({"error": "The update is already being installed."}), 409
-        if updater.status()["state"] != "staged":
-            return jsonify({"error": "There is no update ready to install."}), 409
+            return {"error": "The update is already being installed."}, 409
+        if updater.status()["state"] not in (("staged", "applying") if at_launch else ("staged",)):
+            return {"error": "There is no update ready to install."}, 409
         if _QUIT["fn"] is None:
-            return jsonify({"error": "This copy cannot restart itself."}), 409
-        if not _GATE.close_when_quiet(RESTORE_WAIT_SECONDS):
-            return jsonify({"error": "Lit Review is still working. Try again in a moment."}), 409
+            return {"error": "This copy cannot restart itself."}, 409
+        # A request is the caller on the button path; the launch thread is not one.
+        if not _GATE.close_when_quiet(RESTORE_WAIT_SECONDS, own_requests=0 if at_launch else 1):
+            return {"error": "Lit Review is still working. Try again in a moment."}, 409
         try:
             updater.start_apply()
         except updater.UpdateError as exc:
             _GATE.open()
-            return jsonify({"error": str(exc)}), 500
+            return {"error": str(exc)}, 500
         # The gate stays closed (every other request gets a 503 and the page shows "restarting"):
         # the helper is already waiting for this process to end.
         threading.Timer(1, _QUIT["fn"]).start()
-        return jsonify({"ok": True})
+        return {"ok": True}, 200
+
+
+@app.post("/api/update/apply")
+def update_apply():
+    """"Install and restart": see `_apply_update_now`."""
+    body, status = _apply_update_now()
+    return jsonify(body), status
+
+
+def _apply_update_at_launch():
+    """Runs on its own thread when a launch finds an update that installs by itself. The page is
+    already saying "Installing the update"; wait until it has shown that (and for a moment after, so
+    it can be read), then install the way the button does. If that cannot be done, the update is
+    left waiting as a normal staged one and checking carries on."""
+    deadline = time.monotonic() + LAUNCH_APPLY_PAGE_WAIT
+    while _QUIT["fn"] is None and time.monotonic() < deadline:
+        time.sleep(0.1)  # main() sets it as it starts serving
+    if _PAGE_SAW_APPLYING.wait(max(0.0, deadline - time.monotonic())):
+        time.sleep(LAUNCH_APPLY_MIN_SHOW)
+    try:
+        body, status = _apply_update_now(at_launch=True)
+    except Exception:  # noqa: BLE001 - logged; the app must carry on as it is
+        app.logger.error("The update could not be started:\n%s", redact(traceback.format_exc()))
+        body, status = {"error": "unexpected"}, 500
+    if status != 200:
+        app.logger.warning("The update was not installed at launch: %s", body.get("error"))
+        updater.stop_applying()  # so the page does not keep saying it is installing
+        updater.start_background(_jobs_running)
 
 
 @app.get("/api/settings/updates")
@@ -2033,12 +2080,10 @@ def main(argv=None):
     # Only the copy that stays up writes the log: a second launch that just hands
     # over has nothing to record.
     logfile.setup(log_dir)
-    if updater.apply_at_launch():
-        # A downloaded update is due (updater.py): the helper swaps it in and starts it, so
-        # this copy leaves before it serves anything, with nothing running to interrupt.
-        instance_lock.release()
-        logfile.teardown()
-        return 0
+    # A downloaded update that installs by itself (updater.py). This copy still starts as usual, so
+    # the person sees the app open and the page says it is installing; `_apply_update_at_launch`
+    # then hands over to the helper once the page has shown that.
+    due_update = updater.due_at_launch()
     try:
         # Everything that touches the data folder happens here, so a folder that
         # cannot be used is reported plainly at launch instead of as errors later.
@@ -2073,14 +2118,21 @@ def main(argv=None):
     # Tell a waiting update helper this copy came up (it rolls back without the marker), then
     # report how an earlier attempt went and tidy up, and only then start checking again.
     updater.write_started_marker()
+    if "--after-update" in argv:
+        updater.note_installed()  # started by the update helper: the page welcomes the new version once
     problem = updater.take_result()
     if problem:
         updater.note_failure(problem)
     updater.cleanup_stale()
     updater.restore_status()
-    updater.start_background(_jobs_running)
+    if due_update:
+        updater.mark_applying(due_update)  # no checking: this copy is about to be replaced
+    else:
+        updater.start_background(_jobs_running)
     use_tray = _tray_wanted(argv)
     Timer(1, _open_browser, args=(port, token)).start()
+    if due_update:
+        threading.Thread(target=_apply_update_at_launch, name="update-at-launch", daemon=True).start()
     # Console only, on purpose: the private link carries the secret, so it is never
     # logged (and a packaged app has no console to show it on; its tray menu opens
     # the signed-in page instead).

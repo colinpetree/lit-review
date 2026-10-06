@@ -24,7 +24,7 @@ export default function UpdateModal() {
         <p className="mt-2 text-sm text-gray-600" role="status">
           {failed
             ? status?.error || 'The update could not be installed, so Lit Review is still on the previous version.'
-            : `Lit Review is now on version ${status?.current}. A new window should have opened, so you can close this tab. Your data was kept.`}
+            : `Lit Review is now on version ${status?.current}. A new window should have opened. You can safely close this tab.`}
         </p>
         <div className="mt-6 flex justify-end">
           <button
@@ -43,7 +43,7 @@ export default function UpdateModal() {
     return (
       <Modal title={`Welcome to Lit Review ${welcomeVersion}`} onClose={closeWelcome} raised>
         <p className="mt-2 text-sm text-gray-600" role="status">
-          Version {welcomeVersion} was successfully installed. Your data was kept.
+          Version {welcomeVersion} was successfully installed.
         </p>
         <div className="mt-6 flex justify-end">
           <button

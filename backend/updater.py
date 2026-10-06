@@ -940,7 +940,7 @@ def take_result(running=None):
                 state.pop("failed_at", None)
             elif status_text in ("not_installed", "rolled_back", "stranded"):
                 reason = data.get("reason") or "The update could not be installed."
-                message = f"The update to {wanted} could not be installed, so you are still on version {running}. {reason}"
+                message = f"The update to {wanted} could not be installed. You are still on version {running}. {reason}"
                 log.warning("The update to %s was not installed (%s): %s", wanted, status_text, reason)
                 _set(latest=wanted)  # so the first check of this release keeps the message instead of wiping it
                 if state.get("attempts", {}).get(wanted, 0) >= MAX_ATTEMPTS:

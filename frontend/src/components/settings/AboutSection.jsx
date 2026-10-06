@@ -11,7 +11,7 @@ export default function AboutSection() {
       description="Your version, where your data and log are stored, and whether Lit Review checks for updates."
     >
       <div className="flex flex-col gap-8">
-        <SettingsSection title="This copy">
+        <SettingsSection title="Software">
           <AboutCard />
         </SettingsSection>
         <SettingsSection title="Updates">

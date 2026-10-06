@@ -11,7 +11,7 @@ const PAPER_DB_KEY_PROVIDERS = [
     id: 'openalex',
     label: 'OpenAlex',
     icon: OpenAlexIcon,
-    description: 'Recommended, not required. The main source for Discover Papers. A free key gives you your own daily limit instead of sharing one with your network.',
+    description: 'Recommended. Without a key, the shared daily limit is easily reached. A free key gives you your own limit.',
     keyUrl: 'https://openalex.org/settings/api',
     keyPlaceholder: 'Paste your OpenAlex API key...',
   },
@@ -53,7 +53,7 @@ export default function ResearchDatabasesSection() {
     <SettingsPanel
       title="Research Databases"
       id="databases"
-      description="Where Lit Review searches for papers and looks up missing abstracts. OpenAlex is the main one, and a free key is recommended. More databases find more papers."
+      description="Databases Lit Review searches for papers and missing abstracts. PubMed always works without a key. Add a free key for each of the others to avoid rate limits and find more papers."
     >
       <div className="flex flex-col gap-8">
         {keyStatus?.store_error && <KeyStoreNotice />}

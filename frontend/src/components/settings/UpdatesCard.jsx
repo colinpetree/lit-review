@@ -57,7 +57,7 @@ export default function UpdatesCard() {
       <EditableCardHeader
         title="New versions"
         icon={Download}
-        description="Lit Review checks GitHub (where new versions are published) when it starts and then once a day, and downloads a newer version in the background. This cannot be switched off: the AI models Lit Review uses change, and an old version can stop working. Only the program’s name and version are sent, nothing about you or your work. Your data is kept when you update."
+        description="Lit Review checks GitHub for new versions at startup and once a day, and downloads them in the background. Only the program’s name and version are sent, nothing about you or your work. Your data is kept when you update."
         editing={editing}
         saving={saving}
         saved={saved}
@@ -70,19 +70,19 @@ export default function UpdatesCard() {
       {editing ? (
         <div className="flex flex-col gap-1.5">
           <Toggle label="Install new versions automatically" checked={draft} onChange={setDraft} />
-          <p className="text-xs text-gray-400">
-            On: a downloaded version is installed the next time you open Lit Review. Off: you choose when, with the Install
-            and restart button. Either way a version that is too old to keep working is installed at the next start.
-          </p>
+          <div className="flex flex-col gap-0.5 text-xs text-gray-400">
+            <p>On: you always stay up to date, with new versions applied when you start Lit Review.</p>
+            <p>Off: you install updates yourself with the Install and restart button.</p>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
           <p className="text-sm font-medium text-gray-700">Installing</p>
           <p className="text-sm">
             {auto ? (
-              <span className="font-medium text-[#30cf43]">Automatic, the next time you open Lit Review</span>
+              <span className="font-medium text-[#30cf43]">Automatically. New versions get applied the next time you start Lit Review</span>
             ) : (
-              <span className="text-gray-500">When you choose</span>
+              <span className="text-gray-500">Manually. Updates are installed only when you approve them</span>
             )}
           </p>
         </div>

@@ -25,8 +25,10 @@ No IP, no user agent, no ID. Worker logging is off in `wrangler.toml`.
    copies of it run. An unreachable GitHub answers 503 and the app retries later.
 
 ## Reading the numbers
-`queries.sql` has the saved queries. Run them in the D1 console in the dashboard or with
-`wrangler d1 execute lit-review-census --remote --command "..."`.
+Open the D1 console in the Cloudflare dashboard (Storage and databases, D1, `lit-review-census`) or run
+`wrangler d1 execute lit-review-census --remote --command "SELECT ..."`. The tables are `pings`
+(`day`, `event`, `version`, `platform`, `count`), `versions` and `downloads` (`day`, `tag`, `asset`,
+`downloads`), defined in `schema.sql`.
 
 ## Switching it off
 Set the Worker variable `KILL` to `1`. It answers 410 and every installed copy stops sending for good.

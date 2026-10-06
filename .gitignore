@@ -35,3 +35,6 @@ logs/
 # Release signing keys belong outside the repository; this is only a safety net.
 update-signing*
 *.pem
+
+# Personal notes and command cheat sheets that stay on this computer.
+*.local.md

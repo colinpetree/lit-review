@@ -56,8 +56,9 @@ export function updateNotice(status) {
 // Which notices appear at the top of the page. A download in progress and a finished one waiting to be
 // installed do not: the download is quiet (Settings shows its progress), and the "update ready" dialog
 // announces that it is done. That is true of an update an old version needs too: it is handled the same
-// way and worded just as calmly. What stays is what needs the person's attention: a failure and the restart.
-const QUIET_KINDS = ['downloading', 'ready', 'ready-auto']
+// way and worded just as calmly. The restart is not here either: the "Installing the update" dialog says it.
+// What stays is what needs the person's attention: a failure.
+const QUIET_KINDS = ['downloading', 'ready', 'ready-auto', 'applying']
 export function isBannerNotice(notice) {
   return Boolean(notice && !QUIET_KINDS.includes(notice.kind))
 }

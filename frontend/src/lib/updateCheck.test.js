@@ -240,9 +240,12 @@ describe('what is shown at the top of the page', () => {
     expect(isBannerNotice(updateNotice(status({ auto_apply: true })))).toBe(false)
   })
 
-  it('still shows what needs attention: a failure and the restart', () => {
+  it('still shows what needs attention: a failure', () => {
     expect(isBannerNotice(updateNotice(status({ state: 'failed', error: 'No.' })))).toBe(true)
-    expect(isBannerNotice(updateNotice(status({ state: 'applying' })))).toBe(true)
+  })
+
+  it('leaves the restart to the "Installing the update" dialog', () => {
+    expect(isBannerNotice(updateNotice(status({ state: 'applying' })))).toBe(false)
   })
 
   it('keeps a required update as quiet as any other, while it downloads and once it is ready', () => {

@@ -85,7 +85,7 @@ gitignored.
   `LIT_REVIEW_TESTING=1`. Page: `UpdateProvider` (one shared poll of `GET /api/update-check`, a status read that also
   names this run of the app via `instance`), `UpdateModal` (the **Update ready** dialog: opens when a download
   finishes and at every start that finds one staged, only when `auto_apply` is off; Install update, or Not now / X /
-  Escape / click away, remembered per run and version in sessionStorage), `UpdateBanner` (restarting, failed; a waiting update is deliberately not a banner), and Settings "New versions" (`UpdatesCard`: the
+  Escape / click away, remembered per run and version in sessionStorage), `UpdateBanner` (failed only; the restart is the Installing dialog, not a banner; a waiting update is deliberately not a banner), and Settings "New versions" (`UpdatesCard`: the
   toggle, **Check now**, and the same **Install update** button whenever one is staged, for auto users too).
   `lib/updateCheck.js` holds the pure logic (tested). Release side: CI writes the unsigned manifest
   (`make_manifest.py`, zips only, never the `.dmg`); the maintainer signs the draft (`sign_release.py`) and publishes; see

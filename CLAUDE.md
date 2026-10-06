@@ -164,7 +164,7 @@ gitignored.
   the instance lock instead of handing over), wait for `started.json` naming the new version (written by `main()` once
   the server is up), then delete `.old`; otherwise roll back, restart the old one and write `result.json`, which the
   next launch turns into a message (`updater.take_result`, `note_failure`). The marker is written **before** cleanup
-  runs, because cleanup deletes `.old`. The database is backed up to `updates/before-update-<version>.db` first.
+  runs, because cleanup deletes `.old`. A launch that applies a staged update has no page to say so and the old copy has already gone, so the helper (started with `--announce`) shows a small "Updating Lit Review" window until it is done, however it ends (Windows `MessageBoxW`, closed with `WM_CLOSE`; Mac an `osascript` dialog, terminated, with a 3 minute give-up). The Install update button does not ask for it: the page already says so. The database is backed up to `updates/before-update-<version>.db` first.
   Test-only overrides (`LIT_REVIEW_UPDATE_BASE` loopback URL, `LIT_REVIEW_UPDATE_PUBKEY`) work only with
   `LIT_REVIEW_TESTING=1`. Page: `UpdateProvider` (one shared poll of `GET /api/update-check`, a status read that also
   names this run of the app via `instance`), `UpdateModal` (the **Update ready** dialog: opens when a download

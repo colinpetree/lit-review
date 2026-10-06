@@ -17,8 +17,8 @@ export default function UpdateModal() {
         <div className="mt-3 flex items-start gap-3 text-sm text-gray-600" role="status">
           <Spinner className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            Lit Review is installing version {status?.latest} and will restart. A new window opens when it is done; you
-            can close this one. Your data is kept.
+            Lit Review is installing version {status?.latest} and will restart. A new window opens when it is done. You
+            can safely close this one. Your data is kept.
           </p>
         </div>
       </Modal>

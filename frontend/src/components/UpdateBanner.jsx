@@ -35,7 +35,7 @@ export default function UpdateBanner() {
   let body
   switch (notice.kind) {
     case 'applying':
-      body = <>Installing version {notice.latest}. Lit Review is restarting and will open a new window; you can close this one.</>
+      body = <>Installing version {notice.latest}. Lit Review is restarting and will open a new window. You can safely close this one.</>
       break
     default:
       tone = AMBER

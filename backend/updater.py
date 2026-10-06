@@ -677,6 +677,8 @@ def launch_helper(staged, *, popen=subprocess.Popen):
         "--version", str(staged["version"]),
         "--result", str(directory / RESULT_NAME),
     ]
+    if staged.get("announce"):
+        args.append("--announce")  # a launch that applies an update has no page to say so
     kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "cwd": str(scratch),
               "env": fresh_program_env()}
     if sys.platform == "win32":
@@ -737,7 +739,8 @@ def apply_at_launch(*, running=None, launch=launch_helper):
     attempts[staged["version"]] = attempts.get(staged["version"], 0) + 1
     save_state(state)
     try:
-        launch(staged)
+        # At launch nothing else is on screen while the swap happens, so the helper shows a small window.
+        launch({**staged, "announce": True})
     except (OSError, UpdateError) as exc:
         log.warning("Could not start the update helper: %s", exc)
         return False

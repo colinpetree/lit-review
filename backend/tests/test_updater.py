@@ -616,7 +616,7 @@ class TestApplyAtLaunch:
         app_settings.save(auto_apply=True)
         launched = []
         assert updater.apply_at_launch(launch=launched.append) is True
-        assert launched == [staged] and updater.load_state()["attempts"] == {"0.2.0": 1}
+        assert launched == [{**staged, "announce": True}] and updater.load_state()["attempts"] == {"0.2.0": 1}
 
     def test_below_min_version_applies_even_when_off(self, staged):
         state = updater.load_state()
@@ -812,6 +812,30 @@ class TestFirstCheck:
         assert updater.status()["enabled"] is False
         monkeypatch.setenv("LIT_REVIEW_TESTING", "1")
         assert updater.status()["enabled"] is True
+
+
+class TestAnnounceFlag:
+    def args_for(self, tmp_path, monkeypatch, announce):
+        fake_helper = tmp_path / "update_helper.py"
+        fake_helper.write_text("")
+        monkeypatch.setattr(updater, "helper_command", lambda: [str(fake_helper)])
+        seen = {}
+        staged = {"install": str(tmp_path / "a"), "dir": str(tmp_path / "a.new"), "exe": "x", "version": "0.2.0"}
+        if announce:
+            staged["announce"] = True
+        updater.launch_helper(staged, popen=lambda args, **kwargs: seen.update(args=args))
+        return seen["args"]
+
+    def test_a_launch_that_applies_an_update_asks_the_helper_to_say_so(self, tmp_path, monkeypatch):
+        assert "--announce" in self.args_for(tmp_path, monkeypatch, True)
+
+    def test_the_install_button_does_not(self, tmp_path, monkeypatch):
+        assert "--announce" not in self.args_for(tmp_path, monkeypatch, False)
+
+    def test_the_button_path_does_not_ask_for_it(self, staged):
+        launched = []
+        updater.start_apply(launch=lambda s: launched.append(s) or "proc")
+        assert "announce" not in launched[0]
 
 
 class TestStartApply:

@@ -272,6 +272,101 @@ def result_of(tree):
     return json.loads((tree.root / "updates" / "result.json").read_text())
 
 
+class FakeAnnouncement:
+    def __init__(self, log):
+        self.log = log
+
+    def show(self):
+        self.log.append("show")
+
+    def close(self):
+        self.log.append("close")
+
+
+class TestAnnouncement:
+    """The small window shown while a launch-time update is installed (never required for the update)."""
+
+    def test_it_is_shown_before_anything_happens_and_closed_after_everything(self, tree):
+        log = []
+        rec = Recorder(tree)
+        run(tree, rec, wait_exit=lambda pid, timeout: log.append("wait") or True, announcement=FakeAnnouncement(log))
+        assert log[0] == "show" and log[-1] == "close" and "wait" in log
+
+    def test_it_is_closed_whichever_way_the_update_ends(self, tree):
+        for kwargs in (
+            dict(do_swap=lambda *a: helper.UNCHANGED),
+            dict(do_swap=lambda *a: helper.STRANDED),
+            dict(marker_wait=lambda *a, **k: False),
+            dict(wait_exit=lambda pid, timeout: False),
+        ):
+            log = []
+            run(tree, Recorder(tree), announcement=FakeAnnouncement(log), **kwargs)
+            assert log == ["show", "close"], kwargs
+
+    def test_it_is_closed_even_if_the_update_code_raises(self, tree):
+        log = []
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("bug")
+
+        with pytest.raises(RuntimeError):
+            run(tree, Recorder(tree), announcement=FakeAnnouncement(log), do_swap=boom)
+        assert log == ["show", "close"]
+
+    def test_the_flag_is_what_asks_for_a_window(self, tree, monkeypatch):
+        made = []
+
+        class Made(FakeAnnouncement):
+            def __init__(self):
+                super().__init__([])
+                made.append(self)
+
+        monkeypatch.setattr(helper, "Announcement", Made)
+        run(tree, Recorder(tree), args=args_for(tree, announce=True))
+        assert len(made) == 1 and made[0].log == ["show", "close"]
+        made.clear()
+        run(tree, Recorder(tree), args=args_for(tree, announce=False))
+        run(tree, Recorder(tree), args=args_for(tree))  # an older caller that does not know the flag
+        assert made == []
+
+    def test_the_command_line_has_the_flag_off_unless_given(self, tree):
+        base = ["--install", "a", "--new", "b", "--old", "c", "--exe", "d", "--pid", "1", "--marker", "m",
+                "--version", "0.2.0", "--result", "r"]
+        assert helper.parse_args(base).announce is False
+        assert helper.parse_args(base + ["--announce"]).announce is True
+
+    def test_on_a_mac_it_is_a_dialog_that_goes_away_with_the_process(self):
+        started, process = [], type("P", (), {"terminated": False, "terminate": lambda self: setattr(self, "terminated", True)})()
+
+        def popen(cmd, **kwargs):
+            started.append(cmd)
+            return process
+
+        window = helper.Announcement(plat="darwin", popen=popen)
+        window.show()
+        assert started[0][:2] == ["osascript", "-e"]
+        assert helper.ANNOUNCE_TITLE in started[0][2] and "installing an update" in started[0][2]
+        assert "giving up after" in started[0][2]  # it cannot stay up forever if closing it fails
+        window.close()
+        assert process.terminated
+
+    def test_a_window_that_cannot_be_shown_never_breaks_the_update(self):
+        def popen(cmd, **kwargs):
+            raise OSError("no osascript")
+
+        window = helper.Announcement(plat="darwin", popen=popen)
+        window.show()
+        window.close()  # closing what never opened is fine too
+
+    def test_other_systems_show_nothing(self):
+        window = helper.Announcement(plat="linux", popen=lambda *a, **k: pytest.fail("started"))
+        window.show()
+        window.close()
+
+    def test_the_text_is_plain_enough_to_put_in_an_osascript_string(self):
+        assert '"' not in helper.ANNOUNCE_TEXT and "\\" not in helper.ANNOUNCE_TEXT and '"' not in helper.ANNOUNCE_TITLE
+
+
 class TestStartApp:
     def test_the_app_is_started_with_a_fresh_environment_and_an_argument_list(self, tmp_path, monkeypatch):
         seen = {}

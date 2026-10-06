@@ -59,5 +59,10 @@ Every copy older than `--min-version` then treats the update as required: it dow
 ## Still to prove on real machines (not testable on a development PC)
 
 - Windows: that a downloaded-by-the-app update raises no SmartScreen prompt, and whether **Smart App Control** (Windows Security, App and browser control) blocks the unsigned build. If it is on for a user, signing the Windows build is required regardless of the updater (for example Azure Trusted Signing).
+- macOS Apple Silicon: the whole update loop (see below), which has not been run on an Apple Silicon Mac yet.
 - macOS: that the swap and relaunch work from `/Applications`, whether the App Management permission prompt appears on macOS 13 or newer (and how often), and that the ad hoc signature survives `ditto` extraction.
-- Both: the full loop with real releases (install v0.1.0 by hand, publish v0.1.1, watch v0.1.0 find, download, stage and install it), once with automatic installing off and once on, plus a forced `--min-version` run and a deliberately broken update to see the rollback message.
+- Both: a forced `--min-version` run and a deliberately broken update to see the rollback message.
+
+## Proven on real machines
+
+- The full update loop with real releases on Windows and on an Intel Mac, with automatic installing off (Install and restart) and on (applied at next launch).

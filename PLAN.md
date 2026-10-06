@@ -464,10 +464,10 @@ saves confirmed good calls as well.
 
 Status: built. A pushed tag (`v0.1.0`) builds a Windows zip and, for each Mac, a disk image (what people
 install from) and a zip (for the in-app updater) on GitHub Actions and makes a
-draft release (`.github/workflows/release.yml`); `CLAUDE.md`, "Packaging and release", is the working
+draft release (`.github/workflows/release.yml`); the `packaging-release` skill (`.claude/skills/packaging-release/SKILL.md`) is the working
 description and `INSTALL.md` is the user's guide. What was decided: a hidden app with a tray / menu-bar
 icon (no console), unsigned builds (ad-hoc signed on Mac) with a first-launch guide, targets Windows plus
-macOS Apple Silicon and Intel, a public repo, an always-on update check with a signed in-app update (`CLAUDE.md`, "Updates"; `RELEASING.md`), and
+macOS Apple Silicon and Intel, a public repo, an always-on update check with a signed in-app update (`packaging-release` skill, "Updates"; `RELEASING.md`), and
 the FSL-1.1-MIT license (free for any use except a competing commercial product; each version becomes MIT
 after two years). Still open: verifying on real Macs (the reopen handler is untested off a Mac), how the
 Windows SmartScreen and antivirus warnings go on a first release, Apple signing and a Windows certificate
@@ -494,7 +494,7 @@ acceptable UX. Plan:
   OS's zipped `--onedir` output as an asset on a GitHub Release.
 - **Distribution**: users download the release asset for their OS directly from the
   GitHub Releases page — no `git clone`, no terminal.
-- **Update checks**: superseded by the signed in-app updater (see `CLAUDE.md`, "Updates"). The app always checks
+- **Update checks**: superseded by the signed in-app updater (see `packaging-release` skill, "Updates"). The app always checks
   GitHub for a signed release manifest, downloads a newer version in the background and installs it when the
   user clicks, or at the next start if they turned on automatic installing. The original v1 idea (a notice and
   one link, because a running executable cannot overwrite itself) was replaced by a separate helper program that

@@ -14,8 +14,10 @@ No IP, no user agent, no ID. Worker logging is off in `wrangler.toml`.
 4. `wrangler deploy`. Optional but advisable: a fine-grained GitHub token with no permissions (public
    data only) as a Worker secret, `wrangler secret put GITHUB_TOKEN`, so checking a new version's
    release is not held up by GitHub's shared anonymous limit.
-5. In the Cloudflare dashboard, add a rate limiting rule for that hostname (for example 20
-   requests per minute per IP, block). Cloudflare handles the IP for this; the Worker never stores it.
+5. In the Cloudflare dashboard (the zone, Security, Security rules), add a rate limiting rule: use
+   Edit expression and enter `(http.host eq "litreview-data.colinpetree.com")` (a path-only rule would
+   also limit your other sites), count by IP, 10 requests per 10 seconds, action Block, duration 10
+   seconds (the free plan's only choice). Cloudflare handles the IP for this; the Worker never stores it.
 6. `ENDPOINT` in `backend/telemetry.py` already names that hostname. Until step 4 is done, copies
    built from this code fail to send, quietly. The Worker also refuses a version that is not a real
    release. A version is counted only if it is a published (not draft) GitHub release `v<version>`; the

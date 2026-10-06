@@ -3,6 +3,7 @@ the launch-time apply. No test reaches GitHub: HTTP is faked at `updater._open`/
 
 import hashlib
 import json
+import time
 import zipfile
 from pathlib import Path
 
@@ -575,10 +576,17 @@ class TestCheckOnce:
         assert updater.status()["state"] == "available" and "self-check" in updater.status()["error"]
         assert "staged" not in updater.load_state()
 
-    def test_a_version_given_up_on_is_not_retried(self, pipeline):
-        updater.save_state({"failed": "0.2.0"})
+    def test_a_version_given_up_on_is_not_retried_for_now(self, pipeline):
+        updater.save_state({"failed": "0.2.0", "failed_at": time.time()})
         updater.check_once()
         assert pipeline.calls == [] and updater.status()["state"] == "failed"
+        assert "try again later" in updater.status()["error"] and "Settings" in updater.status()["error"]
+
+    def test_a_give_up_from_an_older_version_without_a_time_does_not_block(self, pipeline):
+        updater.save_state({"failed": "0.2.0", "attempts": {"0.2.0": 3}})
+        updater.check_once()
+        assert pipeline.calls == ["download", "stage"] and updater.status()["state"] == "staged"
+        assert "failed" not in updater.load_state() and "0.2.0" not in updater.load_state()["attempts"]
 
     def test_this_versions_partial_download_survives_for_resume(self, pipeline):
         directory = updater.updates_dir()
@@ -630,15 +638,37 @@ class TestDueAtLaunch:
         updater.save_state(state)
         assert updater.due_at_launch() is None
 
-    def test_gives_up_after_two_attempts_and_discards_the_copy(self, staged):
+    def give_up(self):
         app_settings.save(auto_apply=True)
         for _ in range(updater.MAX_ATTEMPTS):
             assert updater.due_at_launch() is not None
             updater.start_apply(launch=lambda s: None)
         assert updater.due_at_launch() is None
+
+    def test_gives_up_after_two_attempts_but_keeps_the_copy(self, staged):
+        self.give_up()
         state = updater.load_state()
-        assert state["failed"] == "0.2.0" and "staged" not in state
-        assert not Path(staged["dir"]).exists()
+        assert state["failed"] == "0.2.0" and state["failed_at"] and state["failures"] == {"0.2.0": 1}
+        assert state["staged"]["version"] == "0.2.0" and Path(staged["dir"]).exists()
+        updater.cleanup_stale(Path(staged["install"]))  # tidying up must not delete what is still wanted
+        assert Path(staged["dir"]).exists() and "staged" in updater.load_state()
+
+    def test_a_day_later_it_is_tried_again_without_a_new_download(self, staged, monkeypatch):
+        self.give_up()
+        later = time.time() + updater.FAILED_RETRY_SECONDS + 60
+        monkeypatch.setattr(updater.time, "time", lambda: later)
+        assert updater.due_at_launch() == staged
+        assert "failed" not in updater.load_state() and updater.load_state()["attempts"] == {}
+
+    def test_a_second_give_up_waits_a_week(self, staged, monkeypatch):
+        self.give_up()
+        later = time.time() + updater.FAILED_RETRY_SECONDS + 60
+        monkeypatch.setattr(updater.time, "time", lambda: later)
+        self.give_up()
+        state = updater.load_state()
+        assert state["failures"] == {"0.2.0": 2}
+        assert updater._failure_blocks(state, "0.2.0", now=later + updater.FAILED_RETRY_SECONDS + 60)
+        assert not updater._failure_blocks(state, "0.2.0", now=later + updater.FAILED_RETRY_LATER_SECONDS + 60)
 
     def test_a_staged_copy_that_is_not_newer_is_ignored(self, staged, monkeypatch):
         app_settings.save(auto_apply=True)
@@ -741,9 +771,21 @@ class TestFailureStaysVisible:
         status = updater.status()
         assert status["state"] == "failed" and "security prompt" in status["error"] and status["url"]
 
-    def test_the_first_check_of_the_same_release_does_not_overwrite_it(self, staged, pipeline):
+    def test_check_now_lets_a_given_up_release_be_offered_again(self, staged, pipeline):
         self.launch_after_a_rolled_back_install(staged)
-        updater._set(latest="0.2.0")
+        state = updater.load_state()
+        updater._mark_failed(state, "0.2.0")
+        updater.save_state(state)
+        updater.check_once()
+        assert updater.status()["state"] == "failed" and pipeline.calls == []
+        updater.let_failed_install_retry()  # what "Check now" does before its pass
+        assert updater.status()["state"] == "staged"  # shown at once, not after the check reaches GitHub
+        updater.check_once()
+        assert updater.status()["state"] == "staged" and updater.status()["install_failed"] is False
+        assert "failed" not in updater.load_state() and pipeline.calls == []  # the kept copy needs no download
+
+    def test_the_first_check_of_the_same_release_does_not_overwrite_it(self, staged, pipeline):
+        self.launch_after_a_rolled_back_install(staged)  # as main() does it: nothing sets `latest` by hand
         updater.check_once()
         status = updater.status()
         assert status["state"] == "failed" and "security prompt" in status["error"] and status["checked_at"]
@@ -887,8 +929,49 @@ class TestAfterRestart:
         updater.save_state(state)
         (updater.updates_dir() / updater.RESULT_NAME).write_text(json.dumps({"status": "installed", "version": "0.2.0"}))
         assert updater.take_result("0.2.0") is None
-        assert updater.load_state() == {"attempts": {}}
+        assert updater.load_state() == {"attempts": {}, "running": "0.2.0"}
         assert not (updater.updates_dir() / updater.RESULT_NAME).exists()
+
+    def test_a_different_running_version_starts_the_counting_afresh(self, staged):
+        updater.save_state({**updater.load_state(), "running": "0.1.0", "attempts": {"0.2.0": 2},
+                            "failed": "0.2.0", "failed_at": time.time(), "failures": {"0.2.0": 1}})
+        assert updater.take_result("0.1.5") is None  # an older build was extracted again
+        state = updater.load_state()
+        assert state["running"] == "0.1.5" and not {"attempts", "failed", "failed_at", "failures"} & set(state)
+
+    def test_the_same_running_version_keeps_its_counts(self, staged):
+        updater.save_state({**updater.load_state(), "running": "0.1.0", "attempts": {"0.2.0": 1}})
+        updater.take_result("0.1.0")
+        assert updater.load_state()["attempts"] == {"0.2.0": 1}
+
+    def test_a_damaged_state_file_is_nothing_remembered_not_a_crash_at_launch(self, staged):
+        updater._state_path().write_text(json.dumps({"attempts": [], "failures": "x", "failed": 3, "failed_at": "now",
+                                                     "running": 5, "staged": []}))
+        assert updater.load_state() == {}
+        assert updater.take_result("0.1.0") is None and updater.due_at_launch() is None
+        updater.cleanup_stale(Path(staged["install"]))
+
+    def test_counts_and_a_staged_entry_of_the_wrong_shape_are_dropped(self, staged):
+        updater.save_state({"attempts": {"0.2.0": "x", "0.3.0": 1}, "failures": {"0.2.0": None},
+                            "staged": {"version": "0.2.0", "dir": staged["dir"]}})
+        state = updater.load_state()
+        assert state["attempts"] == {"0.3.0": 1} and state["failures"] == {} and "staged" not in state
+        assert updater.take_result("0.1.0") is None and updater.due_at_launch() is None
+
+    def test_a_launch_with_nothing_to_count_leaves_no_state_file(self, tmp_path):
+        assert updater.take_result("0.1.0") is None
+        assert not updater._state_path().exists()
+
+    def test_starting_an_install_records_which_version_the_counts_belong_to(self, staged):
+        updater.start_apply(launch=lambda s: None)
+        assert updater.load_state()["running"] == "0.1.0"
+
+    def test_a_failed_install_is_logged_with_its_reason(self, staged, caplog):
+        (updater.updates_dir() / updater.RESULT_NAME).write_text(
+            json.dumps({"status": "not_installed", "version": "0.2.0", "reason": "Access is denied"}))
+        with caplog.at_level("WARNING"):
+            updater.take_result("0.1.0")
+        assert "0.2.0" in caplog.text and "Access is denied" in caplog.text
 
     def test_a_rolled_back_install_gives_a_message_once(self, staged):
         (updater.updates_dir() / updater.RESULT_NAME).write_text(

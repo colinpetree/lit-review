@@ -68,29 +68,29 @@ def failing_rename(clock, fail_when):
 
 class TestSwap:
     def test_success(self, tree, clock):
-        assert helper.swap(tree.install, tree.new, tree.old, sleep=clock.sleep, clock=clock) == helper.SWAPPED
+        assert helper.swap(tree.install, tree.new, tree.old, sleep=clock.sleep, clock=clock)[0] == helper.SWAPPED
         assert text(tree.install) == "new" and text(tree.old) == "old" and not tree.new.exists()
 
     def test_first_rename_fails_then_succeeds(self, tree, clock):
         rename = failing_rename(clock, lambda s, d, n: n <= 3)
-        assert helper.swap(tree.install, tree.new, tree.old, rename=rename, sleep=clock.sleep, clock=clock) == helper.SWAPPED
+        assert helper.swap(tree.install, tree.new, tree.old, rename=rename, sleep=clock.sleep, clock=clock)[0] == helper.SWAPPED
         assert text(tree.install) == "new"
 
     def test_first_rename_never_works_changes_nothing(self, tree, clock):
         rename = failing_rename(clock, lambda s, d, n: s == tree.install)
-        outcome = helper.swap(tree.install, tree.new, tree.old, rename=rename, sleep=clock.sleep, clock=clock, timeout=5)
-        assert outcome == helper.UNCHANGED
+        outcome, detail = helper.swap(tree.install, tree.new, tree.old, rename=rename, sleep=clock.sleep, clock=clock, timeout=5)
+        assert outcome == helper.UNCHANGED and detail == "in use"
         assert text(tree.install) == "old" and text(tree.new) == "new" and not tree.old.exists()
 
     def test_second_rename_fails_and_the_old_build_is_put_back(self, tree, clock):
         rename = failing_rename(clock, lambda s, d, n: s == tree.new)
-        outcome = helper.swap(tree.install, tree.new, tree.old, rename=rename, sleep=clock.sleep, clock=clock, timeout=5)
+        outcome, detail = helper.swap(tree.install, tree.new, tree.old, rename=rename, sleep=clock.sleep, clock=clock, timeout=5)
         assert outcome == helper.RESTORED
         assert text(tree.install) == "old" and text(tree.new) == "new" and not tree.old.exists()
 
     def test_both_fail_is_reported_as_stranded(self, tree, clock):
         rename = failing_rename(clock, lambda s, d, n: s in (tree.new, tree.old))
-        outcome = helper.swap(tree.install, tree.new, tree.old, rename=rename, sleep=clock.sleep, clock=clock, timeout=5)
+        outcome, detail = helper.swap(tree.install, tree.new, tree.old, rename=rename, sleep=clock.sleep, clock=clock, timeout=5)
         assert outcome == helper.STRANDED
         assert not tree.install.exists() and tree.old.exists() and tree.new.exists()
 
@@ -302,13 +302,23 @@ class TestRun:
 
     def test_a_folder_that_cannot_be_renamed_keeps_the_old_version_running(self, tree):
         rec = Recorder(tree)
-        assert run(tree, rec, do_swap=lambda *a: helper.UNCHANGED) == 1
+        assert run(tree, rec, do_swap=lambda *a: (helper.UNCHANGED, "in use")) == 1
         assert [s[2] for s in rec.started] == ["old"]
         assert result_of(tree)["status"] == "not_installed"
 
+    def test_the_reason_carries_the_operating_systems_own_words(self, tree):
+        rec = Recorder(tree)
+        run(tree, rec, do_swap=lambda *a: (helper.UNCHANGED, "[WinError 5] Access is denied"))
+        assert "Access is denied" in result_of(tree)["reason"] and "replace the old folder" in result_of(tree)["reason"]
+
+    def test_a_new_build_that_never_wrote_its_marker_says_how_long_it_waited(self, tree):
+        rec = Recorder(tree, marker_appears=False)
+        run(tree, rec)
+        assert "not ready after 1 seconds" in result_of(tree)["reason"]  # args_for waits 1 second
+
     def test_a_stranded_install_is_reported_and_nothing_is_started(self, tree):
         rec = Recorder(tree)
-        assert run(tree, rec, do_swap=lambda *a: helper.STRANDED) == 2
+        assert run(tree, rec, do_swap=lambda *a: (helper.STRANDED, "in use")) == 2
         assert rec.started == []
         assert result_of(tree)["status"] == "stranded"
 
@@ -352,7 +362,7 @@ class TestRun:
         def start(exe, extra=()):
             raise OSError("no")
 
-        assert run(tree, rec, start=start, do_swap=lambda *a: helper.UNCHANGED) == 1
+        assert run(tree, rec, start=start, do_swap=lambda *a: (helper.UNCHANGED, "in use")) == 1
         assert result_of(tree)["status"] == "not_installed"
 
     def test_the_real_swap_end_to_end(self, tree):

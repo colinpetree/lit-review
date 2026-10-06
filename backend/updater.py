@@ -18,7 +18,9 @@ Lifecycle of one release:
   says it is installing, then the same `start_apply` as the button runs); otherwise the page
   offers "Install and restart". It is never swapped mid-run on its own.
 - `state.json` remembers what is staged and how many install attempts a version has had, so
-  a build that keeps failing is given up on instead of retried at every start.
+  a build that keeps failing is left alone instead of retried at every start. That is a wait, not
+  a verdict (a locked folder or a security scan usually passes): a day after the first give-up, a
+  week after later ones, ended at once by "Check now". The staged copy is kept meanwhile.
 """
 
 import hashlib
@@ -59,6 +61,10 @@ MAX_REDIRECTS = 5
 CHUNK = 1024 * 256
 HEADROOM_BYTES = 100 * 1024 * 1024
 MAX_ATTEMPTS = 2
+# After MAX_ATTEMPTS failed installs a release is left alone for a while (a locked folder or a security
+# tool is usually passing), longer each time it fails again. "Check now" ends the wait at once.
+FAILED_RETRY_SECONDS = 24 * 60 * 60
+FAILED_RETRY_LATER_SECONDS = 7 * 24 * 60 * 60
 FIRST_CHECK_SECONDS = 5  # the check runs on its own thread, so it never slows the start
 CHECK_EVERY_SECONDS = 24 * 60 * 60
 RETRY_SECONDS = (15 * 60, 60 * 60, 6 * 60 * 60)
@@ -97,7 +103,26 @@ def load_state():
         data = json.loads(_state_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    # Every reader indexes into these, so a damaged file (a hand edit, a half-restored backup) must not
+    # become an exception at launch: whatever has the wrong shape is simply forgotten.
+    for key in ("attempts", "failures"):
+        counts = data.get(key)
+        if not isinstance(counts, dict):
+            data.pop(key, None)
+        else:
+            data[key] = {k: v for k, v in counts.items() if isinstance(v, int) and not isinstance(v, bool)}
+    staged = data.get("staged")
+    if not isinstance(staged, dict) or not all(isinstance(staged.get(k), str) for k in ("version", "dir", "install", "exe")):
+        data.pop("staged", None)  # launch_helper indexes all four
+    if not isinstance(data.get("failed"), str):
+        data.pop("failed", None)
+    if isinstance(data.get("failed_at"), bool) or not isinstance(data.get("failed_at"), (int, float)):
+        data.pop("failed_at", None)
+    if not isinstance(data.get("running"), str):
+        data.pop("running", None)
+    return data
 
 
 def save_state(state):
@@ -105,6 +130,49 @@ def save_state(state):
         _write_json(_state_path(), state)
     except OSError as exc:
         log.warning("Could not save the update state (%s).", exc)
+
+
+# Held around every load, change and save of the state, since the check thread, a request ("Check now",
+# Install) and the launch sequence all change it. Re-entrant: the helpers below call each other.
+_state_lock = threading.RLock()
+
+
+def _failure_blocks(state, release, now=None):
+    """Whether `release` is being left alone because its installs failed. Not permanent: it lasts a day
+    after the first give-up and a week after later ones. A `failed` with no time (written by an older
+    version, which never let go of it) counts as over."""
+    if state.get("failed") != release:
+        return False
+    failed_at = state.get("failed_at")
+    if isinstance(failed_at, bool) or not isinstance(failed_at, (int, float)):
+        return False
+    later = state.get("failures", {}).get(release, 1) > 1
+    wait = FAILED_RETRY_LATER_SECONDS if later else FAILED_RETRY_SECONDS
+    return (time.time() if now is None else now) - failed_at < wait
+
+
+def _expire_failure(state, release):
+    """Forget a give-up that has run its course, so `release` is tried afresh. True if it changed the state.
+    The number of earlier give-ups stays (it lengthens the next wait)."""
+    if state.get("failed") != release or _failure_blocks(state, release):
+        return False
+    _forget_failure(state, release)
+    return True
+
+
+def _forget_failure(state, release):
+    state.pop("failed", None)
+    state.pop("failed_at", None)
+    if isinstance(state.get("attempts"), dict):
+        state["attempts"].pop(release, None)
+
+
+def _mark_failed(state, release):
+    """Stop installing `release` for now. The staged copy is kept: a later try needs no new download."""
+    failures = state.setdefault("failures", {})
+    failures[release] = failures.get(release, 0) + 1
+    state["failed"] = release
+    state["failed_at"] = time.time()
 
 
 _lock = threading.Lock()
@@ -511,10 +579,31 @@ def check_once(*, jobs_running=lambda: False, cancelled=lambda: False):
         _check_lock.release()
 
 
+def let_failed_install_retry():
+    """Someone asked for a check by hand: end the wait after failed installs, so the pass stages and offers
+    the release again. (Without clearing `install_failed` too, the pass would stop at the failure message.)"""
+    with _state_lock:
+        state = load_state()
+        before = json.dumps(state, sort_keys=True)
+        staged = state.get("staged")
+        for release in {state.get("failed"), _status["latest"], staged.get("version") if isinstance(staged, dict) else None}:
+            if release:
+                _forget_failure(state, release)
+        if json.dumps(state, sort_keys=True) != before:
+            save_state(state)
+    _set(install_failed=False)
+    if _status["state"] == "failed":
+        # Show the kept copy as ready now, not after the check has reached GitHub (it may not). With
+        # no usable copy the page keeps its status until the pass downloads one.
+        restore_status()
+
+
 def check_now(jobs_running=lambda: False):
-    """"Check now": start a pass on its own thread. False if one is already running."""
+    """"Check now": start a pass on its own thread. False if one is already running.
+    It also ends the wait after failed installs (see let_failed_install_retry)."""
     if _check_lock.locked():
         return False
+    let_failed_install_retry()
     threading.Thread(target=check_once, kwargs={"jobs_running": jobs_running}, name="update-check-now", daemon=True).start()
     return True
 
@@ -538,6 +627,12 @@ def _check_pass(jobs_running, cancelled):
         _set(error=str(exc), checked_at=time.time())
         return RETRY_SECONDS[0]
 
+    with _state_lock:
+        state = load_state()
+        if _expire_failure(state, manifest.version):
+            save_state(state)
+            _set(install_failed=False)  # the wait is over: this release is tried afresh
+
     if _status["install_failed"] and manifest.version == _status["latest"]:
         # Still the release whose install just failed: keep telling the user why, instead of the
         # check turning it back into a calm "ready to install". A newer release clears this.
@@ -549,8 +644,9 @@ def _check_pass(jobs_running, cancelled):
     _set(latest=manifest.version, notice=manifest.notice, url=page, required=required, checked_at=time.time(), state="available")
 
     state = load_state()
-    if state.get("failed") == manifest.version:
-        _set(state="failed", error="This update could not be installed. You can download it yourself.")
+    if _failure_blocks(state, manifest.version):
+        _set(state="failed", error="This update could not be installed. Lit Review will try again later, or you "
+                                   "can try now with Check now (Settings, New versions). You can also download it yourself.")
         return None
     if _staged_for(state, manifest.version):
         _set(state="staged", progress=1.0)
@@ -580,9 +676,11 @@ def _check_pass(jobs_running, cancelled):
         log.warning("Could not prepare the update: %s", exc)
         _set(state="available", error=str(exc), progress=0.0)
         return RETRY_SECONDS[0]
-    state["staged"] = {"version": manifest.version, "dir": str(new), "min_version": manifest.min_version,
-                       "exe": str(exe_rel), "install": str(install), "notice": manifest.notice}
-    save_state(state)
+    with _state_lock:
+        state = load_state()  # fresh: the download took a while and a request may have changed it
+        state["staged"] = {"version": manifest.version, "dir": str(new), "min_version": manifest.min_version,
+                           "exe": str(exe_rel), "install": str(install), "notice": manifest.notice}
+        save_state(state)
     prune_downloads(directory)  # the unpacked copy is what is used from here
     _set(state="staged", progress=1.0, error="")
     return None
@@ -696,15 +794,18 @@ def launch_helper(staged, *, popen=subprocess.Popen):
     return popen(args, **kwargs)
 
 
-def usable_staged(state, running):
-    """The staged entry if it is newer than `running`, still on disk and not given up on."""
+def usable_staged(state, running, *, include_blocked=False):
+    """The staged entry if it is newer than `running`, still on disk and not being left alone after failed
+    installs (`include_blocked` ignores that last part: the copy is kept for when the wait ends)."""
     staged = state.get("staged")
     if not isinstance(staged, dict):
         return None
     theirs, mine = parse_version(staged.get("version")), parse_version(running)
     if not theirs or not mine or theirs <= mine:
         return None
-    if not Path(str(staged.get("dir", ""))).is_dir() or state.get("failed") == staged["version"]:
+    if not Path(str(staged.get("dir", ""))).is_dir():
+        return None
+    if not include_blocked and _failure_blocks(state, staged["version"]):
         return None
     return staged
 
@@ -724,20 +825,23 @@ def due_at_launch(*, running=None):
     installed without being asked (the setting is on, or this version is too old to keep), or None.
     It only decides. The app then starts as usual so the page can say an update is being installed,
     and the same path as the Install update button does the work (`start_apply`, which counts the
-    attempt). A version already given up on after MAX_ATTEMPTS is discarded here instead."""
+    attempt). A version that has had MAX_ATTEMPTS is left alone for a while instead (`_mark_failed`)."""
     running = running or version.__version__
     if not bundle.is_frozen() and not um.testing_enabled():
         return None
-    state = load_state()
-    staged = usable_staged(state, running)
-    if not staged or not should_apply(staged, running, app_settings.auto_apply()):
-        return None
-    if state.get("attempts", {}).get(staged["version"], 0) >= MAX_ATTEMPTS:
-        state["failed"] = staged["version"]
-        discard_staged(state)
-        save_state(state)
-        return None
-    return staged
+    with _state_lock:
+        state = load_state()
+        entry = state.get("staged")
+        if isinstance(entry, dict) and _expire_failure(state, entry.get("version")):
+            save_state(state)  # the wait is over: this release gets its tries again
+        staged = usable_staged(state, running)
+        if not staged or not should_apply(staged, running, app_settings.auto_apply()):
+            return None
+        if state.get("attempts", {}).get(staged["version"], 0) >= MAX_ATTEMPTS:
+            _mark_failed(state, staged["version"])
+            save_state(state)
+            return None
+        return staged
 
 
 def mark_applying(staged):
@@ -767,13 +871,18 @@ def acknowledge_installed():
 def start_apply(*, launch=launch_helper):
     """The "Install and restart" button: start the helper for what is staged. The caller (the
     route) has quiesced the server and quits afterwards. Raises UpdateError if nothing is ready."""
-    state = load_state()
-    staged = usable_staged(state, version.__version__)
-    if not staged:
-        raise UpdateError("There is no update ready to install.")
-    attempts = state.setdefault("attempts", {})
-    attempts[staged["version"]] = attempts.get(staged["version"], 0) + 1
-    save_state(state)
+    with _state_lock:
+        state = load_state()
+        entry = state.get("staged")
+        if isinstance(entry, dict):
+            _expire_failure(state, entry.get("version"))
+        staged = usable_staged(state, version.__version__)
+        if not staged:
+            raise UpdateError("There is no update ready to install.")
+        attempts = state.setdefault("attempts", {})
+        attempts[staged["version"]] = attempts.get(staged["version"], 0) + 1
+        state["running"] = version.__version__  # what the counts belong to (see take_result)
+        save_state(state)
     _set(state="applying")
     try:
         return launch(staged)
@@ -805,24 +914,40 @@ def take_result(running=None):
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = None
-    state = load_state()
-    message = None
+    with _state_lock:
+        state = load_state()
+        changed = False
+        if "running" in state and state["running"] != running:
+            # A different version is running than last time (updated, or an older copy opened again): the
+            # tries and give-ups counted for the other one do not carry over.
+            for key in ("attempts", "failed", "failed_at", "failures"):
+                state.pop(key, None)
+        # Recorded only once there is something to count (a first launch leaves no file behind).
+        if state.get("running") != running and (state or isinstance(data, dict)):
+            state["running"] = running
+            changed = True
+        message = None
+        if isinstance(data, dict):
+            changed = True
+            status_text, wanted = data.get("status"), data.get("version")
+            if status_text == "installed" and wanted == running:
+                staged = state.get("staged")
+                if isinstance(staged, dict) and staged.get("version") == wanted:
+                    state.pop("staged")  # not a newer release staged since
+                state.get("attempts", {}).pop(wanted, None)
+                state.get("failures", {}).pop(wanted, None)
+                state.pop("failed", None)
+                state.pop("failed_at", None)
+            elif status_text in ("not_installed", "rolled_back", "stranded"):
+                reason = data.get("reason") or "The update could not be installed."
+                message = f"The update to {wanted} could not be installed, so you are still on version {running}. {reason}"
+                log.warning("The update to %s was not installed (%s): %s", wanted, status_text, reason)
+                _set(latest=wanted)  # so the first check of this release keeps the message instead of wiping it
+                if state.get("attempts", {}).get(wanted, 0) >= MAX_ATTEMPTS:
+                    _mark_failed(state, wanted)
+        if changed or state != load_state():
+            save_state(state)
     if isinstance(data, dict):
-        status_text, wanted = data.get("status"), data.get("version")
-        if status_text == "installed" and wanted == running:
-            staged = state.get("staged")
-            if isinstance(staged, dict) and staged.get("version") == wanted:
-                state.pop("staged")  # not a newer release staged since
-            state.get("attempts", {}).pop(wanted, None)
-            state.pop("failed", None)
-            message = None
-        elif status_text in ("not_installed", "rolled_back", "stranded"):
-            reason = data.get("reason") or "The update could not be installed."
-            message = f"The update to {wanted} could not be installed, so you are still on version {running}. {reason}"
-            if state.get("attempts", {}).get(wanted, 0) >= MAX_ATTEMPTS:
-                state["failed"] = wanted
-                discard_staged(state)
-        save_state(state)
         path.unlink(missing_ok=True)
     return message
 
@@ -857,10 +982,12 @@ def cleanup_stale(install=None):
         leftover = install.with_name(install.name + suffix)
         if leftover.exists():
             shutil.rmtree(leftover, ignore_errors=True)
-    state = load_state()
-    if not usable_staged(state, version.__version__):
-        leftover = staged_path(install)
-        if leftover.exists():
-            shutil.rmtree(leftover, ignore_errors=True)
-        if state.pop("staged", None) is not None:
-            save_state(state)
+    with _state_lock:
+        state = load_state()
+        # A copy being left alone after failed installs is still wanted: it is offered again when the wait ends.
+        if not usable_staged(state, version.__version__, include_blocked=True):
+            leftover = staged_path(install)
+            if leftover.exists():
+                shutil.rmtree(leftover, ignore_errors=True)
+            if state.pop("staged", None) is not None:
+                save_state(state)

@@ -94,14 +94,18 @@ def swap(install, new, old, *, rename=os.rename, sleep=time.sleep, clock=time.mo
     UNCHANGED  the first rename never worked: nothing was touched.
     RESTORED   the second rename failed and the previous build was put back.
     STRANDED   both failed: install is missing (old and new exist); needs a person.
+
+    Returns `(outcome, detail)`: detail is the last operating system error, "" for SWAPPED.
     """
-    if _retry(lambda: rename(install, old), timeout, sleep, clock):
-        return UNCHANGED
-    if _retry(lambda: rename(new, install), timeout, sleep, clock) is None:
-        return SWAPPED
+    error = _retry(lambda: rename(install, old), timeout, sleep, clock)
+    if error:
+        return UNCHANGED, str(error)
+    error = _retry(lambda: rename(new, install), timeout, sleep, clock)
+    if error is None:
+        return SWAPPED, ""
     if _retry(lambda: rename(old, install), timeout, sleep, clock) is None:
-        return RESTORED
-    return STRANDED
+        return RESTORED, str(error)
+    return STRANDED, str(error)
 
 
 def roll_back(install, old, failed, *, rename=os.rename, sleep=time.sleep, clock=time.monotonic, timeout=RENAME_RETRY_SECONDS):
@@ -255,38 +259,49 @@ def run(args, *, start=start_app, wait_exit=wait_for_exit, do_swap=swap, do_roll
     except OSError:
         pass
 
-    outcome = do_swap(install, new, old)
+    outcome, detail = do_swap(install, new, old)
+    # The detail is the operating system's own words for what went wrong. The app logs the reason, so a
+    # failure that cannot be reproduced can still be told apart afterwards.
+    why = f" (details: {detail})" if detail else ""
     if outcome == STRANDED:
-        write_result(result, "stranded", "The folders could not be switched; see INSTALL.md to recover.", args.version)
+        write_result(result, "stranded", f"The folders could not be switched; see INSTALL.md to recover{why}.", args.version)
         return 2
     if outcome in (UNCHANGED, RESTORED):
-        return previous("Windows or macOS would not let the old folder be replaced (an open window or a security tool may be using it).")
+        step = "put the new version in place" if outcome == RESTORED else "replace the old folder"
+        return previous(f"Windows or macOS would not let the helper {step} (an open window or a security tool may be using it){why}.")
 
     try:
         child = start(install / exe, ["--after-update"])
-    except OSError:
+    except OSError as exc:
         child = None  # the new program could not even be started: treated like one that never came up
+        how_it_failed = f"it could not be started ({exc})"
+    else:
+        how_it_failed = ""
     alive = (lambda: child.poll() is None) if hasattr(child, "poll") else (lambda: child is not None)
     if child is not None and marker_wait(marker, args.version, args.wait_seconds, alive=alive):
         cleanup(old)
         write_result(result, "installed", "", args.version)
         return 0
 
+    if child is not None:
+        code = child.poll() if hasattr(child, "poll") else None
+        how_it_failed = (f"it closed with exit code {code} before it was ready" if code is not None
+                         else f"it was not ready after {args.wait_seconds:g} seconds")
     try:
         child.terminate()
     except (OSError, AttributeError):
         pass
     failed = install.with_name(install.name + ".failed")
     if do_roll_back(install, old, failed):
-        write_result(result, "rolled_back", "The new version did not start, so the previous version was restored. "
-                     "A system security prompt may have blocked it.", args.version)
+        write_result(result, "rolled_back", f"The new version did not start ({how_it_failed}), so the previous version was "
+                     "restored. A system security prompt may have blocked it.", args.version)
         try:
             start(install / exe)
         except OSError:
             pass
         cleanup(failed)
         return 1
-    write_result(result, "stranded", "The new version did not start and the previous one could not be restored; see INSTALL.md.", args.version)
+    write_result(result, "stranded", f"The new version did not start ({how_it_failed}) and the previous one could not be restored; see INSTALL.md.", args.version)
     return 2
 
 

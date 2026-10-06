@@ -171,7 +171,10 @@ def wait_for_exit(pid, timeout, *, running=pid_running, terminate=terminate_pid,
 
 def start_app(exe, extra_args=()):
     """Start the app detached from this helper, with an argument list (no shell)."""
-    kwargs = {"cwd": str(Path(exe).parent), "stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    # This helper is itself a PyInstaller program: without the reset, the app it starts would inherit
+    # the helper's bootloader variables (its files, its archive) instead of starting on its own.
+    kwargs = {"cwd": str(Path(exe).parent), "stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
+              "env": {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}}
     if sys.platform == "win32":
         kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     else:

@@ -41,7 +41,7 @@ If a retired AI model, or something like it, means old versions stop working, ra
 python packaging/sign_release.py v0.1.2 --key ... --min-version 0.1.2 --notice "The AI model Lit Review used was retired."
 ```
 
-Every copy older than `--min-version` then treats the update as required: it downloads in the background, installs at the next start whatever the "install automatically" setting says, and shows a banner that cannot be dismissed. It never blocks the app itself, so people can still reach their data. **Rehearse the update path first**: a floor raised on a release whose install fails leaves everyone on the old version, with a banner they cannot dismiss.
+Every copy older than `--min-version` then treats the update as required: it downloads in the background, installs at the next start whatever the "install automatically" setting says, and shows the ordinary Update ready window when it finishes ("There is an update that is ready to install. This update will be applied automatically on the next start."). Nothing in the app calls it required, and it never blocks the app, so people can still reach their data. **Rehearse the update path first**: a floor raised on a release whose install fails leaves everyone on the old version, with a banner explaining that the update could not be installed and a link to download it.
 
 ## What the updater needs from a release
 

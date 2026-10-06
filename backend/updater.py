@@ -58,7 +58,7 @@ MAX_REDIRECTS = 5
 CHUNK = 1024 * 256
 HEADROOM_BYTES = 100 * 1024 * 1024
 MAX_ATTEMPTS = 2
-FIRST_CHECK_SECONDS = 30
+FIRST_CHECK_SECONDS = 5  # the check runs on its own thread, so it never slows the start
 CHECK_EVERY_SECONDS = 24 * 60 * 60
 RETRY_SECONDS = (15 * 60, 60 * 60, 6 * 60 * 60)
 BUSY_RETRY_SECONDS = 10 * 60
@@ -117,6 +117,7 @@ _status = {
     "progress": 0.0,
     "error": "",
     "checked_at": None,
+    "install_failed": False,  # an install failed at the last launch: its message must not be overwritten
 }
 
 
@@ -126,6 +127,7 @@ def status():
         copy = dict(_status)
     copy["current"] = version.__version__
     copy["auto_apply"] = app_settings.auto_apply()
+    copy["enabled"] = enabled()  # False from source: nothing is ever checked there
     return copy
 
 
@@ -137,7 +139,7 @@ def _set(**changes):
 def reset_for_tests():
     with _lock:
         _status.update(state="idle", current=version.__version__, latest=None, notice="", url=None, required=False,
-                       progress=0.0, error="", checked_at=None)
+                       progress=0.0, error="", checked_at=None, install_failed=False)
 
 
 # ------------------------------------------------------------------ where it may run
@@ -234,12 +236,27 @@ def _sha256_of(path):
     return digest.hexdigest()
 
 
-def check_free_space(directory, asset):
+def _same_disk(first, second):
+    try:
+        return os.stat(first).st_dev == os.stat(second).st_dev
+    except OSError:
+        return True  # cannot tell: assume the stricter case (one disk holds both)
+
+
+def check_free_space(directory, asset, install_parent=None):
+    """Enough room for the download (in `directory`, the data folder) and for the unpacked copy,
+    which is made next to the install (`install_parent`) and may be on another disk. On one disk
+    the two add up; on two, each disk needs its own share. Raises UpdateError naming which."""
     directory.mkdir(parents=True, exist_ok=True)
-    need = asset.size + asset.unpacked_size + HEADROOM_BYTES
-    free = shutil.disk_usage(directory).free
-    if free < need:
-        raise UpdateError(f"not enough free disk space for the update ({need // 2**20} MB needed)")
+    need_download, need_unpacked = asset.size + HEADROOM_BYTES, asset.unpacked_size + HEADROOM_BYTES
+    if install_parent is None or _same_disk(directory, install_parent):
+        shares = [(directory, need_download + need_unpacked - HEADROOM_BYTES, "the disk Lit Review keeps its data on")]
+    else:
+        shares = [(directory, need_download, "the disk Lit Review keeps its data on"),
+                  (install_parent, need_unpacked, "the disk Lit Review is installed on")]
+    for folder, need, where in shares:
+        if shutil.disk_usage(folder).free < need:
+            raise UpdateError(f"not enough free space on {where} for the update ({need // 2**20} MB needed)")
 
 
 def download(asset, tag, directory, *, progress=lambda fraction: None, cancelled=lambda: False):
@@ -372,16 +389,30 @@ def _extract(zip_path, destination):
             archive.extractall(destination)
 
 
+def fresh_program_env():
+    """This process's environment, set up so a PyInstaller program started from here begins as a
+    new top-level program. Without it the child inherits this app's own bootloader variables
+    (where its files are, which archive to open) and may load the wrong build or none."""
+    return {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+
+
 def self_check(executable, expected_version):
     """Run the staged build's own `--self-check` (no network, no keys, no data folder) and require
     it to pass and to report the expected version, so a broken or wrong build is never installed."""
     report = Path(tempfile.mkdtemp(prefix="lit-review-selfcheck-")) / "report.json"
-    env = {**os.environ, "LIT_REVIEW_SELFCHECK_FILE": str(report), "LIT_REVIEW_NO_DIALOG": "1"}
+    env = {**fresh_program_env(), "LIT_REVIEW_SELFCHECK_FILE": str(report), "LIT_REVIEW_NO_DIALOG": "1"}
+    ran = None
     try:
-        subprocess.run([str(executable), "--self-check"], env=env, capture_output=True, timeout=SELF_CHECK_SECONDS)
+        ran = subprocess.run([str(executable), "--self-check"], env=env, capture_output=True, timeout=SELF_CHECK_SECONDS)
         data = json.loads(report.read_text(encoding="utf-8"))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        raise UpdateError(f"the new version could not be checked ({type(exc).__name__})") from exc
+        # Say what the program itself said: "no report" alone cannot tell a missing file from a crash.
+        detail = ""
+        if ran is not None:
+            tail = (ran.stderr or b"").decode("utf-8", "replace").strip()[-300:] or (ran.stdout or b"").decode("utf-8", "replace").strip()[-300:]
+            detail = f"; it exited with code {ran.returncode}" + (f" and said: {tail}" if tail else "")
+        log.warning("The staged build's self-check gave no report (%s: %s)%s", type(exc).__name__, exc, detail)
+        raise UpdateError(f"the new version could not be checked ({type(exc).__name__}{detail})") from exc
     finally:
         shutil.rmtree(report.parent, ignore_errors=True)
     if not data.get("ok"):
@@ -398,11 +429,21 @@ def verify_mac_signature(app):
         raise UpdateError("the new app's signature did not verify")
 
 
+def staged_path(install):
+    """Where an update is unpacked and checked, next to the install. On a Mac it must still end in
+    `.app` ("Lit Review.new.app"): PyInstaller's launcher finds the app's files from a path through
+    `<name>.app/Contents/MacOS`, so a folder called "Lit Review.app.new" may not start at all."""
+    install = Path(install)
+    if install.suffix == ".app":
+        return install.with_name(install.stem + ".new.app")
+    return install.with_name(install.name + ".new")
+
+
 def stage(zip_path, asset, expected_version, install, exe_rel, *, check=self_check, extract=None, verify=None):
     """Unpack the zip next to `install` as `<install>.new` and prove it. Returns that folder."""
     top = safe_members(zip_path, asset.unpacked_size)
     parent = install.parent
-    new = parent / (install.name + ".new")
+    new = staged_path(install)
     work = parent / (install.name + ".staging")
     for leftover in (new, work):
         shutil.rmtree(leftover, ignore_errors=True)
@@ -480,20 +521,27 @@ def _check_pass(jobs_running, cancelled):
     if _status["state"] == "applying":
         return None  # the helper is about to swap the staged copy: do not re-stage or discard it
     running = version.__version__
-    _set(error="")
+    if not _status["install_failed"]:
+        _set(error="")
     try:
         manifest, _raw = fetch_manifest(running)
     except um.ManifestError as exc:
         # Not newer, unsigned, or malformed: nothing to offer. Logged only when it is not the plain "not newer".
         if "not newer" not in str(exc):
             log.warning("No usable update manifest: %s", exc)
-        _set(state="idle", latest=None, notice="", required=False, checked_at=time.time())
+        _set(state="idle", latest=None, notice="", required=False, checked_at=time.time(), install_failed=False, error="")
         return None
     except UpdateError as exc:
         log.warning("The update check failed: %s", exc)
         _set(error=str(exc), checked_at=time.time())
         return RETRY_SECONDS[0]
 
+    if _status["install_failed"] and manifest.version == _status["latest"]:
+        # Still the release whose install just failed: keep telling the user why, instead of the
+        # check turning it back into a calm "ready to install". A newer release clears this.
+        _set(checked_at=time.time())
+        return None
+    _set(install_failed=False)
     required = um.is_required(manifest, running)
     page = f"https://github.com/{REPO}/releases/tag/{manifest.tag}"
     _set(latest=manifest.version, notice=manifest.notice, url=page, required=required, checked_at=time.time(), state="available")
@@ -522,7 +570,7 @@ def _check_pass(jobs_running, cancelled):
     directory = updates_dir()
     prune_downloads(directory, keep_name=asset.name)  # other versions' files; this one's partial is resumed
     try:
-        check_free_space(directory, asset)
+        check_free_space(directory, asset, install.parent)
         _set(state="downloading", progress=0.0)
         zip_path = download(asset, manifest.tag, directory, progress=lambda f: _set(progress=f), cancelled=cancelled)
         new = stage(zip_path, asset, manifest.version, install, exe_rel)
@@ -531,11 +579,29 @@ def _check_pass(jobs_running, cancelled):
         _set(state="available", error=str(exc), progress=0.0)
         return RETRY_SECONDS[0]
     state["staged"] = {"version": manifest.version, "dir": str(new), "min_version": manifest.min_version,
-                       "exe": str(exe_rel), "install": str(install)}
+                       "exe": str(exe_rel), "install": str(install), "notice": manifest.notice}
     save_state(state)
     prune_downloads(directory)  # the unpacked copy is what is used from here
     _set(state="staged", progress=1.0, error="")
     return None
+
+
+def restore_status(running=None):
+    """Show an update that is already staged straight away on launch. The in-memory status starts
+    empty, so without this the page says "you have the latest version" until the first check has
+    finished, even though a downloaded update is sitting there waiting."""
+    running = running or version.__version__
+    if _status["install_failed"]:
+        return False  # the page is already telling the user why the last install failed
+    staged = usable_staged(load_state(), running)
+    if not staged:
+        return False
+    floor = parse_version(staged.get("min_version")) if staged.get("min_version") else None
+    mine = parse_version(running)
+    _set(state="staged", latest=staged["version"], notice=str(staged.get("notice") or ""),
+         url=f"https://github.com/{REPO}/releases/tag/v{staged['version']}",
+         required=bool(floor and mine and mine < floor), progress=1.0, error="")
+    return True
 
 
 _thread = None
@@ -611,7 +677,8 @@ def launch_helper(staged, *, popen=subprocess.Popen):
         "--version", str(staged["version"]),
         "--result", str(directory / RESULT_NAME),
     ]
-    kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "cwd": str(scratch)}
+    kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "cwd": str(scratch),
+              "env": fresh_program_env()}
     if sys.platform == "win32":
         kwargs["creationflags"] = 0x00000008 | 0x00000200
     else:
@@ -742,7 +809,8 @@ def take_result(running=None):
 
 def note_failure(message):
     """Show a failed install on the page (state `failed`, with the message and the manual link)."""
-    _set(state="failed", error=message, url=_status["url"] or f"https://github.com/{REPO}/releases/latest")
+    _set(state="failed", error=message, install_failed=True,
+         url=_status["url"] or f"https://github.com/{REPO}/releases/latest")
 
 
 def cleanup_stale(install=None):
@@ -771,7 +839,7 @@ def cleanup_stale(install=None):
             shutil.rmtree(leftover, ignore_errors=True)
     state = load_state()
     if not usable_staged(state, version.__version__):
-        leftover = install.with_name(install.name + ".new")
+        leftover = staged_path(install)
         if leftover.exists():
             shutil.rmtree(leftover, ignore_errors=True)
         if state.pop("staged", None) is not None:

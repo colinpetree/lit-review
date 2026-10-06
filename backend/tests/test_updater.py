@@ -327,6 +327,83 @@ class TestMacSignature:
         assert checked == [] and not (tmp_path / "apps" / "Lit Review.app.new").exists()
 
 
+class TestMacStagingName:
+    def test_a_mac_app_is_staged_under_a_name_that_still_ends_in_app(self, tmp_path):
+        assert updater.staged_path(tmp_path / "Lit Review.app") == tmp_path / "Lit Review.new.app"
+
+    def test_a_windows_folder_is_staged_beside_it(self, tmp_path):
+        assert updater.staged_path(tmp_path / "Lit Review") == tmp_path / "Lit Review.new"
+        assert updater.staged_path(tmp_path / "Lit Review 0.0.6") == tmp_path / "Lit Review 0.0.6.new"
+
+    def test_the_mac_stage_lands_there_and_the_self_check_runs_from_there(self, tmp_path, monkeypatch):
+        install = tmp_path / "apps" / "Lit Review.app"
+        install.mkdir(parents=True)
+        z = make_zip(tmp_path / "u.zip", {"Lit Review.app/Contents/MacOS/Lit Review": "new"})
+        ran_from = []
+        new = updater.stage(z, um.Asset("macos-intel", "u.zip", 1, 1000, SHA), "0.2.0", install, Path("Contents/MacOS/Lit Review"),
+                            check=lambda exe, v: ran_from.append(exe), verify=lambda app: None)
+        assert new.name == "Lit Review.new.app" and ran_from == [new / "Contents/MacOS/Lit Review"]
+        assert ".app/Contents/MacOS" in str(ran_from[0]).replace("\\", "/")
+
+    def test_cleanup_removes_an_unwanted_staged_mac_app(self, tmp_path):
+        install = tmp_path / "Lit Review.app"
+        install.mkdir()
+        (tmp_path / "Lit Review.new.app").mkdir()
+        updater.cleanup_stale(install)
+        assert not (tmp_path / "Lit Review.new.app").exists()
+
+
+class TestStartedPrograms:
+    """A PyInstaller app that starts another one must not hand it its own bootloader variables."""
+
+    def test_the_environment_asks_for_a_fresh_start(self, monkeypatch):
+        monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "/old/app")
+        env = updater.fresh_program_env()
+        assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1" and env["_PYI_APPLICATION_HOME_DIR"] == "/old/app"
+
+    def test_the_self_check_is_started_with_it(self, monkeypatch):
+        seen = {}
+
+        def fake_run(cmd, env=None, **kwargs):
+            seen["env"] = env
+            Path(env["LIT_REVIEW_SELFCHECK_FILE"]).write_text(json.dumps({"ok": True, "version": "0.2.0"}))
+
+        monkeypatch.setattr(updater.subprocess, "run", fake_run)
+        updater.self_check("x", "0.2.0")
+        assert seen["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+    def test_the_helper_is_started_with_it(self, tmp_path, monkeypatch):
+        fake_helper = tmp_path / "update_helper.py"
+        fake_helper.write_text("")
+        monkeypatch.setattr(updater, "helper_command", lambda: [str(fake_helper)])
+        seen = {}
+        staged = {"install": str(tmp_path / "a"), "dir": str(tmp_path / "a.new"), "exe": "x", "version": "0.2.0"}
+        updater.launch_helper(staged, popen=lambda args, **kwargs: seen.update(kwargs))
+        assert seen["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
+class TestSelfCheckDiagnostics:
+    def test_a_program_that_wrote_no_report_is_described_by_what_it_said(self, monkeypatch):
+        class Done:
+            returncode = -9
+            stdout = b""
+            stderr = b"Failed to load Python library"
+
+        monkeypatch.setattr(updater.subprocess, "run", lambda *a, **k: Done())
+        with pytest.raises(updater.UpdateError) as caught:
+            updater.self_check("x", "0.2.0")
+        message = str(caught.value)
+        assert "FileNotFoundError" in message and "code -9" in message and "Failed to load Python library" in message
+
+    def test_a_program_that_could_not_be_started_says_so(self, monkeypatch):
+        def fail(*a, **k):
+            raise FileNotFoundError("no such file")
+
+        monkeypatch.setattr(updater.subprocess, "run", fail)
+        with pytest.raises(updater.UpdateError, match="FileNotFoundError"):
+            updater.self_check("x", "0.2.0")
+
+
 class TestSelfCheck:
     def run_with(self, monkeypatch, report, expected="0.2.0"):
         def fake_run(cmd, env=None, **kwargs):
@@ -419,7 +496,7 @@ def pipeline(tmp_path, monkeypatch):
 
     monkeypatch.setattr(updater, "fetch_manifest", lambda running=None: (manifest(), b"raw"))
     monkeypatch.setattr(updater, "install_layout", lambda *a: (install, Path("app.exe")))
-    monkeypatch.setattr(updater, "check_free_space", lambda d, a: None)
+    monkeypatch.setattr(updater, "check_free_space", lambda d, a, parent=None: None)
     monkeypatch.setattr(updater, "download", fake_download)
     monkeypatch.setattr(updater, "stage", fake_stage)
     monkeypatch.setattr(um, "asset_for", lambda m, plat=None: m.assets[0])
@@ -585,6 +662,156 @@ class TestApplyAtLaunch:
         updater._state_path().write_text("{not json")
         app_settings.save(auto_apply=True)
         assert updater.apply_at_launch(launch=lambda s: pytest.fail("applied")) is False
+
+
+class TestRestoreStatus:
+    def test_a_staged_update_is_shown_straight_away(self, staged):
+        assert updater.status()["state"] == "idle"
+        assert updater.restore_status() is True
+        status = updater.status()
+        assert status["state"] == "staged" and status["latest"] == "0.2.0" and status["progress"] == 1.0
+        assert status["url"].endswith("/releases/tag/v0.2.0") and status["required"] is False
+
+    def test_the_saved_notice_and_the_required_flag_come_back(self, staged):
+        state = updater.load_state()
+        state["staged"].update(notice="Model retired.", min_version="0.1.5")
+        updater.save_state(state)
+        updater.restore_status()
+        assert updater.status()["notice"] == "Model retired." and updater.status()["required"] is True
+
+    def test_nothing_staged_leaves_the_status_alone(self, tmp_path):
+        assert updater.restore_status() is False and updater.status()["state"] == "idle"
+
+    def test_a_staged_copy_that_is_gone_or_not_newer_is_not_shown(self, staged, monkeypatch):
+        monkeypatch.setattr(updater.version, "__version__", "0.2.0")
+        assert updater.restore_status() is False
+        monkeypatch.setattr(updater.version, "__version__", "0.1.0")
+        Path(staged["dir"]).rmdir()
+        assert updater.restore_status() is False
+
+    def test_the_notice_is_saved_when_an_update_is_staged(self, pipeline):
+        updater.check_once()
+        assert updater.load_state()["staged"]["notice"] == "A note"
+
+
+class TestFailureStaysVisible:
+    """After an install fails, the launch sequence (take_result, note_failure, restore_status) and the
+    first check must leave the reason on the page instead of turning it back into "ready to install"."""
+
+    def launch_after_a_rolled_back_install(self, staged):
+        state = updater.load_state()
+        state["attempts"] = {"0.2.0": 1}
+        updater.save_state(state)
+        (updater.updates_dir() / updater.RESULT_NAME).write_text(
+            json.dumps({"status": "rolled_back", "version": "0.2.0", "reason": "A system security prompt may have blocked it."}))
+        updater.note_failure(updater.take_result("0.1.0"))
+        updater.restore_status()
+
+    def test_the_message_survives_the_launch_sequence(self, staged):
+        self.launch_after_a_rolled_back_install(staged)
+        status = updater.status()
+        assert status["state"] == "failed" and "security prompt" in status["error"] and status["url"]
+
+    def test_the_first_check_of_the_same_release_does_not_overwrite_it(self, staged, pipeline):
+        self.launch_after_a_rolled_back_install(staged)
+        updater._set(latest="0.2.0")
+        updater.check_once()
+        status = updater.status()
+        assert status["state"] == "failed" and "security prompt" in status["error"] and status["checked_at"]
+        assert pipeline.calls == []
+
+    def test_a_newer_release_clears_it_and_is_fetched(self, staged, pipeline, monkeypatch):
+        self.launch_after_a_rolled_back_install(staged)
+        monkeypatch.setattr(updater, "fetch_manifest", lambda running=None: (manifest("0.3.0"), b"raw"))
+        updater.check_once()
+        assert pipeline.calls == ["download", "stage"]
+        status = updater.status()
+        assert status["state"] == "staged" and status["latest"] == "0.3.0" and status["install_failed"] is False
+
+    def test_a_pulled_release_clears_it(self, staged, pipeline, monkeypatch):
+        self.launch_after_a_rolled_back_install(staged)
+
+        def not_newer(running=None):
+            raise um.ManifestError("0.2.0 is not newer than 0.2.0")
+
+        monkeypatch.setattr(updater, "fetch_manifest", not_newer)
+        updater.check_once()
+        assert updater.status()["state"] == "idle" and updater.status()["install_failed"] is False
+
+    def test_an_ordinary_launch_with_a_staged_update_still_shows_it(self, staged):
+        updater.restore_status()
+        assert updater.status()["state"] == "staged" and updater.status()["install_failed"] is False
+
+
+class TestFreeSpace:
+    MB = 1024 * 1024
+
+    def usage(self, monkeypatch, free_by_folder):
+        """Fake disk_usage: `free_by_folder` maps a folder to its free bytes."""
+        monkeypatch.setattr(updater.shutil, "disk_usage",
+                            lambda folder: type("U", (), {"free": free_by_folder[Path(folder)]})())
+
+    def asset(self):
+        return um.Asset("windows", "a.zip", 50 * self.MB, 150 * self.MB, SHA)
+
+    def test_one_disk_needs_the_download_and_the_unpacked_copy_together(self, tmp_path, monkeypatch):
+        data, apps = tmp_path / "data", tmp_path / "apps"
+        apps.mkdir()
+        need = (50 + 150) * self.MB + updater.HEADROOM_BYTES
+        self.usage(monkeypatch, {data: need - 1, apps: need - 1})
+        with pytest.raises(updater.UpdateError, match="data on"):
+            updater.check_free_space(data, self.asset(), apps)
+        self.usage(monkeypatch, {data: need, apps: need})
+        updater.check_free_space(data, self.asset(), apps)
+
+    def test_two_disks_each_need_their_own_share(self, tmp_path, monkeypatch):
+        data, apps = tmp_path / "data", tmp_path / "apps"
+        apps.mkdir()
+        monkeypatch.setattr(updater, "_same_disk", lambda a, b: False)
+        small = 10 * self.MB
+        big = 1000 * self.MB
+        self.usage(monkeypatch, {data: big, apps: small})
+        with pytest.raises(updater.UpdateError, match="installed on"):  # the install disk is the one that is short
+            updater.check_free_space(data, self.asset(), apps)
+        self.usage(monkeypatch, {data: small, apps: big})
+        with pytest.raises(updater.UpdateError, match="data on"):
+            updater.check_free_space(data, self.asset(), apps)
+        self.usage(monkeypatch, {data: big, apps: big})
+        updater.check_free_space(data, self.asset(), apps)
+
+    def test_without_an_install_folder_it_checks_one_disk(self, tmp_path, monkeypatch):
+        data = tmp_path / "data"
+        self.usage(monkeypatch, {data: 10**12})
+        updater.check_free_space(data, self.asset())
+
+    def test_a_disk_that_cannot_be_compared_is_treated_as_one(self, tmp_path):
+        assert updater._same_disk(tmp_path / "nope", tmp_path) is True
+        assert updater._same_disk(tmp_path, tmp_path) is True
+
+    def test_the_check_pass_asks_about_the_install_folder_too(self, pipeline, monkeypatch):
+        seen = []
+        monkeypatch.setattr(updater, "check_free_space", lambda d, a, parent=None: seen.append(parent))
+        updater.check_once()
+        assert seen == [pipeline.install.parent]
+
+    def test_not_enough_space_stops_before_anything_is_downloaded(self, pipeline, monkeypatch):
+        def full(d, a, parent=None):
+            raise updater.UpdateError("not enough free space on the disk Lit Review is installed on")
+
+        monkeypatch.setattr(updater, "check_free_space", full)
+        assert updater.check_once() == updater.RETRY_SECONDS[0]
+        assert pipeline.calls == [] and "not enough free space" in updater.status()["error"]
+
+
+class TestFirstCheck:
+    def test_it_happens_within_seconds_of_the_start(self):
+        assert updater.FIRST_CHECK_SECONDS <= 10
+
+    def test_the_status_says_whether_checking_happens_at_all(self, monkeypatch):
+        monkeypatch.delenv("LIT_REVIEW_TESTING", raising=False)
+        assert updater.status()["enabled"] is False
+        monkeypatch.setenv("LIT_REVIEW_TESTING", "1")
+        assert updater.status()["enabled"] is True
 
 
 class TestStartApply:

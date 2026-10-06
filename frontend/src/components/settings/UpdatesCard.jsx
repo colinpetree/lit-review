@@ -4,17 +4,19 @@ import { Card } from '../ui'
 import EditableCardHeader from '../EditableCardHeader'
 import Toggle from '../Toggle'
 import useSavedState from '../../lib/useSavedState'
-import { checkNow, describeStatus, fetchUpdateSettings, saveAutoApply, useUpdateStatus } from '../../lib/updateCheck'
+import { checkNow, describeStatus, fetchUpdateSettings, installsAtNextStart, saveAutoApply } from '../../lib/updateCheck'
+import { useUpdates } from '../UpdateProvider'
 
 // Lit Review always checks GitHub for a newer version and downloads it in the background (the AI
 // models it uses change, so an old version can stop working). The one choice is whether a downloaded
 // version installs itself the next time the app is opened, or waits for the user to press Install.
 export default function UpdatesCard() {
-  const { status, refresh } = useUpdateStatus()
+  const { status, refresh, install, installing, installError } = useUpdates()
   const [auto, setAuto] = useState(null)
   const [draft, setDraft] = useState(false)
   const [checking, setChecking] = useState(false)
   const { editing, setEditing, saving, saved, error, setError, commit } = useSavedState()
+  const downloadPercent = Math.min(100, Math.max(0, (Number(status?.progress) || 0) * 100))
 
   useEffect(() => {
     let cancelled = false
@@ -88,9 +90,40 @@ export default function UpdatesCard() {
         </div>
       )}
 
+      {status?.state === 'staged' || installing ? (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-medium text-gray-700">Update ready</p>
+          <p className="text-xs text-gray-400">
+            Version {status?.latest} is downloaded and ready to apply. It will only take a moment to restart.
+            {installsAtNextStart(status) ? ' This update will be applied automatically on the next start.' : ''}
+          </p>
+          <button
+            type="button"
+            onClick={install}
+            disabled={installing}
+            className="self-start rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            {installing ? 'Installing...' : 'Install update'}
+          </button>
+          {installError && <p className="text-xs text-red-500 dark:text-red-400">{installError}</p>}
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-700">Status</p>
         <p className="text-sm text-gray-500">{describeStatus(status)}</p>
+        {status?.state === 'downloading' && (
+          <div
+            role="progressbar"
+            aria-label="Download progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(downloadPercent)}
+            className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700"
+          >
+            <div className="h-full rounded-full bg-blue-600 transition-[width] duration-500" style={{ width: `${downloadPercent}%` }} />
+          </div>
+        )}
         <button
           type="button"
           onClick={check}

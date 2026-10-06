@@ -310,7 +310,9 @@ def update_check():
     """Where the update stands (updater.py): nothing new, available, downloading, staged and
     ready, failed, or this copy cannot update itself. The packaged app checks on its own, in
     the background, whether or not a page is open."""
-    return jsonify(updater.status())
+    # `instance` names this run of the app: the page uses it to offer the "update ready" dialog
+    # once per start, not once per browser tab ever.
+    return jsonify({**updater.status(), "instance": INSTANCE_ID})
 
 
 @app.post("/api/update/check")
@@ -2075,6 +2077,7 @@ def main(argv=None):
     if problem:
         updater.note_failure(problem)
     updater.cleanup_stale()
+    updater.restore_status()
     updater.start_background(_jobs_running)
     use_tray = _tray_wanted(argv)
     Timer(1, _open_browser, args=(port, token)).start()

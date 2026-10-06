@@ -9,8 +9,8 @@ import { isHttpUrl } from './format'
 // blocked site data), so every access is guarded: a dismissed notice just comes back after a reload.
 const DISMISSED_KEY = 'lit-review.update-dismissed'
 
-export const POLL_FAST_MS = 2500 // while downloading or restarting
-export const POLL_SLOW_MS = 5 * 60 * 1000
+export const POLL_FAST_MS = 2500 // while something is happening
+export const POLL_SLOW_MS = 60 * 1000 // a cheap local request: how late the "update ready" dialog can be
 
 export function getDismissed() {
   try {
@@ -20,7 +20,7 @@ export function getDismissed() {
   }
 }
 
-function rememberDismissed(key) {
+export function rememberDismissed(key) {
   try {
     localStorage.setItem(DISMISSED_KEY, key)
   } catch {
@@ -29,7 +29,6 @@ function rememberDismissed(key) {
 }
 
 // Which notice to show for the app's update status, or null. `kind` says what it is:
-//   required     an old version that can no longer be relied on: cannot be dismissed
 //   downloading  a newer version is being fetched
 //   ready        downloaded, waiting for the user to install it
 //   ready-auto   downloaded, and installs itself the next time the app is opened
@@ -41,13 +40,19 @@ export function updateNotice(status) {
   const base = { latest: status.latest, current: status.current, link, text: status.notice || '', error: status.error || '' }
   const state = status.state
   if (state === 'applying') return { ...base, kind: 'applying', dismissible: false }
-  if (status.required === true && ['available', 'downloading', 'staged', 'failed', 'unsupported'].includes(state)) {
-    return { ...base, kind: 'required', state, dismissible: false }
-  }
   if (state === 'downloading') return { ...base, kind: 'downloading', progress: Number(status.progress) || 0, dismissible: true }
-  if (state === 'staged') return { ...base, kind: status.auto_apply ? 'ready-auto' : 'ready', dismissible: true }
+  if (state === 'staged') return { ...base, kind: installsAtNextStart(status) ? 'ready-auto' : 'ready', dismissible: true }
   if (state === 'failed' || state === 'unsupported') return { ...base, kind: 'problem', state, dismissible: true }
   return null
+}
+
+// Which notices appear at the top of the page. A download in progress and a finished one waiting to be
+// installed do not: the download is quiet (Settings shows its progress), and the "update ready" dialog
+// announces that it is done. That is true of an update an old version needs too: it is handled the same
+// way and worded just as calmly. What stays is what needs the person's attention: a failure and the restart.
+const QUIET_KINDS = ['downloading', 'ready', 'ready-auto']
+export function isBannerNotice(notice) {
+  return Boolean(notice && !QUIET_KINDS.includes(notice.kind))
 }
 
 // A dismissal is for one version in one kind of notice, so "downloading" going away does not hide
@@ -61,7 +66,11 @@ export function shouldShow(notice, dismissed) {
 }
 
 export function pollDelay(status) {
-  return status && ['downloading', 'applying'].includes(status.state) ? POLL_FAST_MS : POLL_SLOW_MS
+  if (!status) return POLL_SLOW_MS
+  // Quick while a download or restart is under way, and while the first check (a few seconds after the
+  // app starts) has not finished: the download is quiet, so the page must not miss it starting.
+  const waitingForFirstCheck = status.enabled !== false && status.state === 'idle' && !status.checked_at
+  return ['downloading', 'applying', 'available'].includes(status.state) || waitingForFirstCheck ? POLL_FAST_MS : POLL_SLOW_MS
 }
 
 // The app's update status, kept fresh (quickly while something is happening). Any failure to reach the
@@ -96,26 +105,51 @@ export function useUpdateStatus() {
   return { status, refresh, setStatus }
 }
 
-export function useUpdateNotice() {
-  const { status, refresh, setStatus } = useUpdateStatus()
-  const [dismissed, setDismissed] = useState(getDismissed)
-  const notice = updateNotice(status)
+// The "update ready" dialog opens when a downloaded update is waiting (the moment a download finishes, and
+// at every start that finds one waiting) for someone who installs updates themselves, or whose version is
+// too old to keep. It is not shown to someone whose updates install on their own at the next start. The key is one run of the
+// app plus one version, so closing it silences it until the app is next started or a newer version arrives.
+export function modalKey(status) {
+  return status && status.instance && status.latest ? `${status.instance}:${status.latest}` : null
+}
 
-  const dismiss = useCallback(() => {
-    if (notice && notice.dismissible) {
-      rememberDismissed(dismissalKey(notice))
-      setDismissed(dismissalKey(notice))
-    }
-  }, [notice])
+// An update that installs on its own at the next start: the person chose automatic installing, or the
+// running version is too old to keep (the release says so). Either way they can still install it now.
+export function installsAtNextStart(status) {
+  return Boolean(status && (status.auto_apply === true || status.required === true))
+}
 
-  // Ask the app to install what is downloaded and restart. The app finishes what it is doing first.
-  const install = useCallback(async () => {
-    await postJson('/api/update/apply', {})
-    setStatus((current) => ({ ...current, state: 'applying' }))
-    setTimeout(refresh, POLL_FAST_MS)
-  }, [refresh, setStatus])
+export function shouldOfferModal(status, dismissedKey) {
+  // Someone who chose automatic installing is not interrupted, unless their version is too old to keep.
+  if (!status || status.state !== 'staged' || (status.auto_apply === true && status.required !== true)) return false
+  const key = modalKey(status)
+  return key !== null && key !== dismissedKey
+}
 
-  return { notice: shouldShow(notice, dismissed) ? notice : null, dismiss, install }
+// The dialog's dismissal lives in sessionStorage (this tab, kept over a reload), which can be missing
+// or throw, so every access is guarded: the dialog then simply comes back after a reload.
+const MODAL_DISMISSED_KEY = 'lit-review.update-modal-dismissed'
+
+export function getModalDismissed() {
+  try {
+    return sessionStorage.getItem(MODAL_DISMISSED_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function rememberModalDismissed(key) {
+  try {
+    sessionStorage.setItem(MODAL_DISMISSED_KEY, key)
+  } catch {
+    // Storage unavailable: it is dismissed until the page reloads.
+  }
+}
+
+// Ask the app to install what is downloaded and restart. The app finishes what it is doing first,
+// and answers 409 (with a message) if it cannot within a moment.
+export function installUpdate() {
+  return postJson('/api/update/apply', {})
 }
 
 export function fetchUpdateSettings() {
@@ -149,6 +183,10 @@ export function describeStatus(status) {
     case 'available':
       return status.error ? `Version ${status.latest} is available (${status.error})` : `Version ${status.latest} is available`
     default:
-      return status.error ? `Could not check: ${status.error}` : 'You have the latest version'
+      if (status.error) return `Could not check: ${status.error}`
+      // Nothing has been asked yet (the first check runs a few seconds after the app starts): not "up to date".
+      if (status.enabled === false) return 'Updates are only checked in the installed app'
+      if (!status.checked_at) return 'Checking for a new version...'
+      return 'You have the latest version'
   }
 }

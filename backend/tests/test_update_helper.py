@@ -272,6 +272,17 @@ def result_of(tree):
     return json.loads((tree.root / "updates" / "result.json").read_text())
 
 
+class TestStartApp:
+    def test_the_app_is_started_with_a_fresh_environment_and_an_argument_list(self, tmp_path, monkeypatch):
+        seen = {}
+        monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "/helper/temp")
+        monkeypatch.setattr(helper.subprocess, "Popen", lambda args, **kwargs: seen.update(args=args, **kwargs) or "proc")
+        assert helper.start_app(tmp_path / "app.exe", ["--after-update"]) == "proc"
+        assert seen["args"] == [str(tmp_path / "app.exe"), "--after-update"] and "shell" not in seen
+        assert seen["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+        assert seen["cwd"] == str(tmp_path)
+
+
 class TestRun:
     def test_success_starts_the_new_build_with_after_update_and_cleans_up(self, tree):
         rec = Recorder(tree)

@@ -153,7 +153,9 @@ gitignored.
   database is touched, so nothing is running) or waits for the page's **Install and restart** (`POST /api/update/apply`,
   which quiesces with `_GATE.close_when_quiet` like a restore, starts the helper and quits via `_QUIT["fn"]`). A running
   version below the manifest's signed `min_version` is "required": it installs at the next launch whatever the setting
-  says and its banner cannot be dismissed (it never locks anyone out of their data). There is deliberately **no
+  says. It is shown like any other update, just as quietly: the same **Update ready** dialog (also for someone with
+  automatic installing on), worded "There is an update that is ready to install. This update will be applied automatically on the next start.", with no special banner and no "required" wording (it never locks anyone out of their data;
+  only a failed install shows a banner, with the manual link). There is deliberately **no
   quit-time swap** (it races a relaunch, can be killed at logoff, and would raise the macOS App Management prompt while
   exiting). `state.json` in `<data>/updates/` counts attempts: a version that fails twice is marked `failed` and not
   retried. The helper (`packaging/update_helper.py`, stdlib only, built by the workflow into `update-helper[.exe]` and
@@ -164,8 +166,12 @@ gitignored.
   next launch turns into a message (`updater.take_result`, `note_failure`). The marker is written **before** cleanup
   runs, because cleanup deletes `.old`. The database is backed up to `updates/before-update-<version>.db` first.
   Test-only overrides (`LIT_REVIEW_UPDATE_BASE` loopback URL, `LIT_REVIEW_UPDATE_PUBKEY`) work only with
-  `LIT_REVIEW_TESTING=1`. Page: `UpdateBanner`, `lib/updateCheck.js` (polls `GET /api/update-check`, a status read),
-  Settings "New versions" (`UpdatesCard`: the toggle, **Check now**). Release side: CI writes the unsigned manifest
+  `LIT_REVIEW_TESTING=1`. Page: `UpdateProvider` (one shared poll of `GET /api/update-check`, a status read that also
+  names this run of the app via `instance`), `UpdateModal` (the **Update ready** dialog: opens when a download
+  finishes and at every start that finds one staged, only when `auto_apply` is off; Install update, or Not now / X /
+  Escape / click away, remembered per run and version in sessionStorage), `UpdateBanner` (restarting, failed; a waiting update is deliberately not a banner), and Settings "New versions" (`UpdatesCard`: the
+  toggle, **Check now**, and the same **Install update** button whenever one is staged, for auto users too).
+  `lib/updateCheck.js` holds the pure logic (tested). Release side: CI writes the unsigned manifest
   (`make_manifest.py`, zips only, never the `.dmg`); the maintainer signs the draft (`sign_release.py`) and publishes; see
   `RELEASING.md`. Needs the repo to be **public**. Unverified off real machines: see RELEASING.md "Still to prove".
 - **macOS specifics** (`mac_app.py`, wired in by `tray.Tray.run`; all of it is **untested off a Mac**, so a

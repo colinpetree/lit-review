@@ -36,6 +36,11 @@ class TestRoute:
         assert body["state"] == "idle" and body["latest"] is None
         assert body["auto_apply"] is False
 
+    def test_it_names_this_run_of_the_app_so_the_page_can_offer_the_dialog_once_per_start(self, client):
+        import app as app_module
+
+        assert client.get("/api/update-check").get_json()["instance"] == app_module.INSTANCE_ID
+
     def test_it_needs_the_session_like_every_other_api_call(self, client):
         import app as app_module
 

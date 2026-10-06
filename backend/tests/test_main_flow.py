@@ -418,10 +418,12 @@ class TestUpdateHooks:
         monkeypatch.setattr(app_module.updater, "take_result", lambda: order.append("result") or "It failed.")
         monkeypatch.setattr(app_module.updater, "note_failure", lambda message: order.append(("note", message)))
         monkeypatch.setattr(app_module.updater, "cleanup_stale", lambda: order.append("cleanup"))
+        monkeypatch.setattr(app_module.updater, "restore_status", lambda: order.append("restore"))
         monkeypatch.setattr(app_module.updater, "start_background", lambda jobs: order.append("thread"))
         app_module.main()
         # The marker comes first: a waiting helper rolls back without it, and cleanup must not run before it.
-        assert order == ["marker", "result", ("note", "It failed."), "cleanup", "thread"]
+        # A failure message is noted before the staged status is restored, and the thread starts last.
+        assert order == ["marker", "result", ("note", "It failed."), "cleanup", "restore", "thread"]
 
     def test_the_marker_is_not_written_if_the_instance_record_could_not_be(self, state_dir, fake_server, monkeypatch):
         written = []

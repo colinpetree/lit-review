@@ -1,0 +1,25 @@
+name = "lit-review-census"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Only the custom hostname below may reach the Worker, so the rate limit rule on it cannot be
+# skipped through the account's workers.dev address or a preview URL.
+workers_dev = false
+preview_urls = false
+
+# The Worker's address. Not a website: it only accepts the app's counts. (Keys like this one must
+# stay above the first [table] below, or TOML makes them part of that table and wrangler ignores them.)
+routes = [{ pattern = "litreview-data.colinpetree.com", custom_domain = true }]
+
+# Nothing about a request is kept: no Worker logs or traces.
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lit-review-census"
+database_id = "2926a4c0-af4f-44ab-a2b7-61c1078434dd"
+
+# Daily copy of GitHub's download counts.
+[triggers]
+crons = ["17 4 * * *"]

@@ -2,6 +2,7 @@
 when two copies look at the same moment), every early exit of main(), and how a
 second launch finds and waits for the first."""
 
+import json
 import socket
 import sqlite3
 import threading
@@ -463,6 +464,44 @@ class TestUpdateHooks:
         monkeypatch.setattr(app_module, "_data_folder_problem", lambda *args: 1)
         assert app_module.main() == 1
         assert written == []
+
+    def test_a_new_install_is_decided_before_the_database_is_created(self, state_dir, fake_server, monkeypatch):
+        order = []
+        real_note, real_ready = app_module.telemetry.note_launch, app_module.db.ensure_ready
+        monkeypatch.setattr(app_module.telemetry, "note_launch", lambda: order.append("note") or real_note())
+        monkeypatch.setattr(app_module.db, "ensure_ready", lambda: order.append("db") or real_ready())
+        app_module.main()
+        assert order[:2] == ["note", "db"]
+        assert json.loads((state_dir / "census.json").read_text()) == {"pending_new_install": True}
+
+    def test_the_usage_count_runs_only_where_updating_does(self, state_dir, fake_server, monkeypatch):
+        started = []
+        monkeypatch.setattr(app_module.updater, "start_background", lambda jobs: None)
+        monkeypatch.setattr(app_module.telemetry, "start_background", lambda: started.append(1))
+        monkeypatch.setattr(app_module.updater, "enabled", lambda: False)
+        app_module.main()
+        assert started == []  # from source
+        monkeypatch.setattr(app_module.updater, "enabled", lambda: True)
+        app_module.main()
+        assert started == [1]  # a packaged app
+
+    def test_no_usage_count_while_an_update_is_about_to_replace_this_copy(self, state_dir, fake_server, monkeypatch):
+        started = []
+        monkeypatch.setattr(app_module.updater, "due_at_launch", lambda: {"version": "9.9.9", "notice": ""})
+        monkeypatch.setattr(app_module, "_apply_update_at_launch", lambda: None)
+        monkeypatch.setattr(app_module.updater, "enabled", lambda: True)
+        monkeypatch.setattr(app_module.telemetry, "start_background", lambda: started.append(1))
+        try:
+            app_module.main()
+        finally:
+            app_module.updater.reset_for_tests()
+        assert started == []
+
+    def test_the_usage_count_thread_is_stopped_on_the_way_out(self, state_dir, fake_server, monkeypatch):
+        stopped = []
+        monkeypatch.setattr(app_module.telemetry, "stop_background", lambda: stopped.append(1))
+        app_module.main()
+        assert stopped == [1]
 
     def test_the_checking_thread_is_stopped_on_the_way_out(self, state_dir, fake_server, monkeypatch):
         stopped = []

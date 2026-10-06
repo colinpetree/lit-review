@@ -36,5 +36,11 @@ logs/
 update-signing*
 *.pem
 
+# Counting Worker (telemetry-worker/): wrangler's local database copy, local secrets and installs.
+.wrangler/
+.dev.vars
+.dev.vars.*
+telemetry-worker/node_modules/
+
 # Personal notes and command cheat sheets that stay on this computer.
 *.local.md

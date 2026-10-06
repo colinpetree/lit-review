@@ -33,6 +33,10 @@ Until `PUBLIC_KEYS` is filled in, no manifest verifies and the app never offers 
 
 Pulling a bad release (delete it) stops it being offered. The next fixed release needs a higher version number.
 
+## Usage counts
+
+Packaged copies send anonymous counts (`backend/telemetry.py`) to the Worker in `telemetry-worker/` (setup, queries and what the numbers mean are in its README). `ENDPOINT` in `telemetry.py` is `https://litreview-data.colinpetree.com/`, so **deploy the Worker before the first release that has it** (until then copies just fail to send, quietly). The address is built into every shipped copy, so keep that hostname working for good (or answer 410 to make old copies stop). Do not add a version, ID or anything per person to the payload without updating the notices card, INSTALL.md and the Worker's validation.
+
 ## A release that old versions can no longer survive
 
 If a retired AI model, or something like it, means old versions stop working, raise the floor:

@@ -47,8 +47,12 @@ export default function LicenseCard() {
             judgments and can be wrong. Read the papers before relying on them.
           </li>
           <li>
-            Nothing is sent to the author of Lit Review. Your data stays on this computer, apart from the above.
+            About once a day, Lit Review sends its version number and whether this is a Windows or Mac computer, as a
+            plain count, to a counting service run by its author (hosted on Cloudflare), so the author can see how many
+            copies are in use. It carries no name, ID or IP address that the author keeps, and nothing about your
+            searches or papers.
           </li>
+          <li>Your data stays on this computer, apart from the above.</li>
         </ul>
       </div>
 

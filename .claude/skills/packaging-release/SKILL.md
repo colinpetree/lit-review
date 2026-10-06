@@ -91,6 +91,15 @@ gitignored.
   `lib/updateCheck.js` holds the pure logic (tested). Release side: CI writes the unsigned manifest
   (`make_manifest.py`, zips only, never the `.dmg`); the maintainer signs the draft (`sign_release.py`) and publishes; see
   `RELEASING.md`. Needs the repo to be **public**. Verified on real Windows, Intel Mac and Apple Silicon Mac machines, manual and automatic (before the browser-based launch install, the OS "Updating Lit Review" window vanished too fast to read; the browser flow itself is not yet run on a real machine); what remains unproven is in RELEASING.md "Still to prove".
+- **Usage counts** (`telemetry.py`, `telemetry-worker/`): its own thread (`telemetry.start_background`, started by
+  `app._start_checking` next to the update check and only where `updater.enabled()`), which wakes hourly and
+  sends only when a new UTC day began or a send is owed (after a failed send it waits 1, 3, 6, then 12 hours), and under `LIT_REVIEW_TESTING=1` it can only ever reach a loopback `LIT_REVIEW_CENSUS_URL`, never the real service, so a slow service can never delay an update and a copy
+  left running for days reports every day. It never touches the updater's `_status`.
+  Sends `daily` (once per UTC day) and `new_install` (once, decided by `note_launch()` in `main()` before the
+  database exists) as `{event, version, platform}` to `ENDPOINT` (`https://litreview-data.colinpetree.com/`; empty = off; test override
+  `LIT_REVIEW_CENSUS_URL`, loopback only, needs `LIT_REVIEW_TESTING=1`). State is `census.json` in the data
+  dir, not the updater's `state.json`, so the two writers never race. A 410 reply stops it for good. Disclosed
+  in the notices card, INSTALL.md and RELEASING.md "Usage counts".
 - **macOS specifics** (`mac_app.py`, wired in by `tray.Tray.run`; all of it is **untested off a Mac**, so a
   new build needs a look on a real one). The behaviour is in `MacActions` (plain Python, tested anywhere in
   `tests/test_mac_app.py`); `install()` is the thin AppKit layer, wrapped in `try/except` so a failure leaves

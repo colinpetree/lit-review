@@ -41,6 +41,7 @@ import notices
 import openalex
 import search_sources
 import single_instance
+import telemetry
 import tray
 import ui
 import updater
@@ -391,7 +392,15 @@ def _apply_update_at_launch():
     if status != 200:
         app.logger.warning("The update was not installed at launch: %s", body.get("error"))
         updater.stop_applying()  # so the page does not keep saying it is installing
-        updater.start_background(_jobs_running)
+        _start_checking()
+
+
+def _start_checking():
+    """The two background threads of a packaged app: the update check, and the anonymous usage
+    count (its own thread, so it can never delay an update). Neither runs from source."""
+    updater.start_background(_jobs_running)
+    if updater.enabled():
+        telemetry.start_background()
 
 
 @app.get("/api/settings/updates")
@@ -2084,6 +2093,7 @@ def main(argv=None):
     # the person sees the app open and the page says it is installing; `_apply_update_at_launch`
     # then hands over to the helper once the page has shown that.
     due_update = updater.due_at_launch()
+    telemetry.note_launch()  # before the database exists: tells a new install from an update
     try:
         # Everything that touches the data folder happens here, so a folder that
         # cannot be used is reported plainly at launch instead of as errors later.
@@ -2128,7 +2138,7 @@ def main(argv=None):
     if due_update:
         updater.mark_applying(due_update)  # no checking: this copy is about to be replaced
     else:
-        updater.start_background(_jobs_running)
+        _start_checking()
     use_tray = _tray_wanted(argv)
     Timer(1, _open_browser, args=(port, token)).start()
     if due_update:
@@ -2149,6 +2159,7 @@ def main(argv=None):
         pass
     finally:
         updater.stop_background()
+        telemetry.stop_background()
         server.server_close()
         access.clear_instance(state_dir, INSTANCE_ID)
         instance_lock.release()

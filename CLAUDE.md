@@ -102,6 +102,11 @@ notices pages. Rules that apply to ordinary backend work too:
 - Do not change `credentials.APP_NAME` (a test pins it; it names the data and key folders).
 - The version comes from the release tag (`version.py` is `0.0.0-dev` in the repo).
 - If a feature sends data somewhere new, update the license/notices card.
+- **The one thing sent to the author:** `telemetry.py` sends `{event, version, platform}` (a `daily`
+  count and a one-time `new_install`) to the counting Worker in `telemetry-worker/`, from its own
+  thread (`telemetry.start_background`, started with the update check in a packaged app). No ID, no setting, no network call from a source run. `note_launch()` in
+  `main()` must run before `db.ensure_ready()` (it tells a fresh data folder from an update). `ENDPOINT`
+  is `https://litreview-data.colinpetree.com/` (empty would turn sending off); deploy the Worker first. Never add anything per person to it.
 
 ## Architecture
 

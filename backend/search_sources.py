@@ -54,7 +54,8 @@ SEARCH_LIMIT_CHOICES = (50, 100, 200, 500)
 # returns for it is already in the dataset (the overlap, and papers it already had), and the
 # sources cannot be told to skip those. Reading by relevance with the dataset's own small
 # limit would spend it on known papers and drop genuinely new ones, so a check reads far
-# deeper. Known papers cost nothing (no AI call); only new ones are added.
+# deeper. Known papers cost nothing (no AI call). Only the dataset's own limit of the most
+# relevant NEW papers per search is added (app._keep_new), so a check cannot widen a dataset.
 REFRESH_SEARCH_LIMIT = 2500
 # Semantic Scholar's search will not read past its first 1,000 results (offset plus
 # limit), and returns 100 per request.

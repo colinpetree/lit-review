@@ -149,13 +149,54 @@ class TestRefreshRoute:
         assert body["dataset"]["last_refresh"]["new_count"] == 0
         assert not any(p["is_new"] for p in body["dataset"]["papers"])
 
-    def test_a_check_that_hit_the_limit_says_so(self, client, source):
+    def test_a_check_keeps_only_the_most_relevant_new_papers_up_to_the_datasets_limit(self, client, source):
+        dataset_id = make_dataset(papers=tuple(range(1, 51)), search_limit=100)
+        # 50 held, then 250 new, in rank order.
+        source["papers"], source["total"] = [work(i) for i in range(1, 301)], 300
+        body = self.refresh(client, dataset_id).get_json()
+        assert body["new_count"] == 100
+        titles = {p["title"] for p in body["dataset"]["papers"] if p["is_new"]}
+        assert titles == {f"Paper number {i}" for i in range(51, 151)}
+        entry = body["dataset"]["last_refresh"]["retrieval"][0]
+        assert entry["fetched"] == 100 and entry["total"] == 300
+        assert "250 new papers were found; the 100 most relevant of them were kept" in entry["capped"]
+        assert entry["capped_by"] == "limit"
+
+    def test_a_check_that_hit_the_read_ceiling_still_says_so(self, client, source):
         dataset_id = make_dataset(papers=(1,))
-        limit = search_sources.REFRESH_SEARCH_LIMIT
-        source["papers"], source["total"] = [work(i) for i in range(100, 100 + limit)], limit * 4
-        refresh = self.refresh(client, dataset_id).get_json()["dataset"]["last_refresh"]
-        assert f"{limit:,} most relevant were kept" in refresh["retrieval"][0]["capped"]
-        assert refresh["retrieval"][0]["capped_by"] == "limit"
+        ceiling = search_sources.REFRESH_SEARCH_LIMIT
+        source["papers"], source["total"] = [work(i) for i in range(2, 2 + ceiling)], ceiling * 4
+        entry = self.refresh(client, dataset_id).get_json()["dataset"]["last_refresh"]["retrieval"][0]
+        assert entry["capped_by"] == "limit"
+        assert f"{ceiling:,} most relevant were kept" in entry["capped"]
+        assert "the 100 most relevant of them were kept" in entry["capped"]
+
+    def test_a_dataset_without_a_saved_limit_uses_the_default(self, client, source):
+        dataset_id = make_dataset(papers=(1,), search_limit=None)
+        source["papers"] = [work(i) for i in range(2, 502)]
+        assert self.refresh(client, dataset_id).get_json()["new_count"] == search_sources.DEFAULT_SEARCH_LIMIT
+
+    def test_fewer_new_papers_than_the_cap_are_all_added_with_no_note(self, client, source):
+        dataset_id = make_dataset(papers=(1,), search_limit=50)
+        source["papers"] = [work(i) for i in range(1, 11)]
+        body = self.refresh(client, dataset_id).get_json()
+        assert body["new_count"] == 9
+        assert body["dataset"]["last_refresh"]["retrieval"][0]["capped"] is None
+
+    def test_a_paper_the_user_excluded_does_not_use_up_the_cap_or_return(self, client, source):
+        dataset_id = make_dataset(papers=(1,), search_limit=50)
+        db.set_dataset_paper_excluded(dataset_id, paper_id_of("W1"), True)
+        source["papers"] = [work(i) for i in range(1, 4)]
+        body = self.refresh(client, dataset_id).get_json()
+        assert body["new_count"] == 2
+        assert {p["id"]: p["excluded"] for p in body["dataset"]["papers"]}[paper_id_of("W1")] is True
+
+    def test_a_paper_with_no_doi_or_title_is_known_by_its_source_id(self, client, source):
+        dataset_id = make_dataset(papers=(), search_limit=50)
+        untitled = work(1, title="")
+        db.add_papers_to_dataset(dataset_id, [db.get_or_create_paper(untitled)])
+        source["papers"] = [untitled, work(2, title="")]
+        assert self.refresh(client, dataset_id).get_json()["new_count"] == 1
 
     def test_the_check_reads_deeper_than_the_datasets_own_limit(self, client, monkeypatch):
         asked = []
@@ -252,6 +293,44 @@ class TestRefreshRoute:
         self.refresh(client, dataset_id)
         assert client.get(f"/api/datasets/{dataset_id}").get_json()["last_refresh"]["new_count"] == 0
         assert client.get("/api/datasets").status_code == 200
+
+
+class TestKnownInDataset:
+    def test_it_matches_by_doi_title_and_year_and_source_id_across_batches(self):
+        dataset_id = make_dataset(papers=())
+        held = [work(i, doi=f"https://doi.org/10.1/{i}") for i in range(700)]
+        held.append(work(900, title="Same Title", year=2025))
+        held.append(work(901, title="", year=None))
+        db.add_papers_to_dataset(dataset_id, db.get_or_create_papers(held))
+        asked = [work(i, doi=f"https://doi.org/10.1/{i}") for i in range(0, 1000, 3)]
+        asked += [work(950, title="same  title", year=2025), work(951, title="Same Title", year=2024)]
+        asked += [work(901, title="", year=None), work(902, title="", year=None)]
+        known = db.known_in_dataset(dataset_id, asked)
+        keys = {openalex.dedupe_key(r) for r in asked}
+        expected = {openalex.dedupe_key(r) for r in asked if r["id"] in {f"W{i}" for i in range(700)} or r["id"] in ("W950", "W901")}
+        assert known == expected and len(known) > 230
+
+    def test_a_stored_copy_outside_the_dataset_decides_like_the_save_does(self):
+        # Two stored copies of one untitled-DOI paper; only the later one is in the dataset.
+        # Saving merges into the lowest id (not in the dataset), so it is not known.
+        first = db.get_or_create_paper(work(1, title="Twin Paper"))
+        with closing(db._connect()) as conn:
+            conn.execute(
+                "INSERT INTO paper (source, source_id, title, title_key, year, authors, is_review, first_seen_at) "
+                "VALUES ('openalex', 'W1b', 'Twin Paper', (SELECT title_key FROM paper WHERE id = ?), 2026, '[]', 0, 'x')",
+                (first,),
+            )
+            second = conn.execute("SELECT id FROM paper WHERE source_id = 'W1b'").fetchone()[0]
+            conn.commit()
+        dataset_id = make_dataset(papers=())
+        db.add_papers_to_dataset(dataset_id, [second])
+        assert db.known_in_dataset(dataset_id, [work(1, title="Twin Paper")]) == set()
+
+    def test_a_paper_only_in_another_dataset_is_not_known(self):
+        other = make_dataset(papers=(1,))
+        mine = make_dataset(papers=(2,), queries=("other",))
+        assert db.known_in_dataset(mine, [work(1)]) == set()
+        assert db.known_in_dataset(other, [work(1)]) == {openalex.dedupe_key(work(1))}
 
 
 class TestCitationCounts:

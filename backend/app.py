@@ -991,7 +991,25 @@ def _forget_searches(keys):
             _SEARCH_CACHE.pop(key, None)
 
 
-def _run_searches(queries, sources, from_date, to_date, limit, unit=None, on_progress=None):
+def _keep_new(found, dataset_id, cap):
+    """(the most relevant papers of one search that the dataset does not hold yet, up to
+    `cap`, in rank order; a sentence saying so if more were left out, else None)."""
+    known = db.known_in_dataset(dataset_id, found)
+    new = [paper for paper in found if openalex.dedupe_key(paper) not in known]
+    if len(new) <= cap:
+        return new, None
+    return new[:cap], (
+        f"{len(new):,} new papers were found; the {cap:,} most relevant of them were kept."
+    )
+
+
+def _refresh_cap(dataset_row):
+    """How many new papers one search of a check may add: the dataset's own limit, as for
+    the first search, so repeated checks do not grow it into a broad pool."""
+    return dataset_row.get("search_limit") or search_sources.DEFAULT_SEARCH_LIMIT
+
+
+def _run_searches(queries, sources, from_date, to_date, limit, unit=None, on_progress=None, keep_new=None):
     """Run every query against every selected source. Returns (candidates, retrieval,
     used): the papers (deduplicated), how complete each search was (one entry per source
     and query, kept with the dataset so it can be seen later: `total` is what the source
@@ -1002,7 +1020,9 @@ def _run_searches(queries, sources, from_date, to_date, limit, unit=None, on_pro
     asked for. The searches that did finish are kept briefly (see _SEARCH_CACHE), so a
     retry does not repeat them. Raises requests.RequestException or SourceError.
     A background job passes `unit` (its way to run one search inside the request gate, and to
-    notice a stop before it starts) and `on_progress(done, total)`."""
+    notice a stop before it starts) and `on_progress(done, total)`. A check for new papers
+    passes `keep_new=(dataset_id, cap)`: each search then keeps only its `cap` most relevant
+    papers the dataset does not hold yet (see _keep_new)."""
     result_lists = []
     retrieval = []
     used = []
@@ -1018,20 +1038,33 @@ def _run_searches(queries, sources, from_date, to_date, limit, unit=None, on_pro
                     found = search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date, limit)
                 _remember_search(key, found)
             used.append(key)
-            result_lists.append(found)
             fetched = getattr(found, "fetched", len(found))
             capped = getattr(found, "capped", None)
+            capped_by = None if not capped else ("limit" if fetched >= limit else "source")
+            total_matched = getattr(found, "total", None)
+            if keep_new:
+                # In the gate like the search itself, so a restore cannot swap the data mid-read.
+                with (unit() if unit else nullcontext()):
+                    found, left_out = _keep_new(found, *keep_new)
+                # For a check, "fetched" is how many new papers were kept.
+                fetched = len(found)
+                if left_out:
+                    # Keep the read ceiling's note too: new papers ranked past it were never seen.
+                    # A source's own limit stays marked as the source's, so the page still lists it.
+                    capped = " ".join(s for s in (left_out, capped) if s)
+                    capped_by = "source" if capped_by == "source" else "limit"
+            result_lists.append(found)
             retrieval.append(
                 {
                     "source": source_id,
                     "query": q,
-                    "total": getattr(found, "total", None),
+                    "total": total_matched,
                     "fetched": fetched,
                     "kept": len(found),
                     "capped": capped,
                     # Why, so the page can tell the user's own limit (narrow the question) from
                     # a limit of the source's: "limit", "source", or None if nothing was left out.
-                    "capped_by": None if not capped else ("limit" if fetched >= limit else "source"),
+                    "capped_by": capped_by,
                 }
             )
     return openalex.dedupe(result_lists), retrieval, used
@@ -1132,7 +1165,9 @@ def refresh_dataset(dataset_id):
         if not acquired:
             return jsonify({"error": "This dataset is already being checked. Wait for it to finish."}), 409
         try:
-            candidates, retrieval, used = _run_searches(queries, sources, from_date, to_date, limit)
+            candidates, retrieval, used = _run_searches(
+                queries, sources, from_date, to_date, limit, keep_new=(dataset_id, _refresh_cap(dataset_row))
+            )
         except (requests.RequestException, SourceError) as exc:
             return _search_failure(exc)
         new_ids = db.save_refresh(
@@ -2266,6 +2301,7 @@ def _job_dataset_refresh(ctx):
                 to_date,
                 # Not the dataset's own limit: see REFRESH_SEARCH_LIMIT.
                 search_sources.REFRESH_SEARCH_LIMIT,
+                keep_new=(dataset_id, _refresh_cap(dataset_row)),
                 unit=ctx.unit,
                 on_progress=lambda done, total: ctx.set_progress(
                     stage="Checking the paper sources...", done=done, total=total

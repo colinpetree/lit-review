@@ -3,6 +3,7 @@ and what the lists say about it. The worker threads are never started in tests; 
 runs whatever is queued on the test's own thread."""
 
 import re
+from contextlib import closing
 
 import pytest
 
@@ -527,6 +528,27 @@ class TestLookupAndRefreshJobs:
         jobs.drain()
         assert db.get_job(job["id"])["progress"]["new_count"] == 1
         assert len(client.get(f"/api/datasets/{dataset_id}").get_json()["papers"]) == 2
+
+    def test_a_check_job_adds_only_the_datasets_limit_of_new_papers(self, client, monkeypatch):
+        dataset_id, _ = self.dataset_with(1, abstract=ABSTRACT)
+        with closing(db._connect()) as conn:
+            conn.execute("UPDATE dataset SET search_limit = 50 WHERE id = ?", (dataset_id,))
+            conn.commit()
+        papers = [
+            {
+                "id": f"N{i}", "source": "openalex", "title": f"Fresh paper {i}", "year": 2026,
+                "publication_date": "2026-09-01", "abstract": ABSTRACT, "authors": [], "citation_count": 0,
+            }
+            for i in range(120)
+        ]
+        monkeypatch.setattr(
+            openalex, "search_all", lambda query, from_date=None, to_date=None, max_results=None: (papers, 9000)
+        )
+        job = queue(client, "dataset_refresh", dataset_id=dataset_id)["job"]
+        jobs.drain()
+        assert db.get_job(job["id"])["progress"]["new_count"] == 50
+        held = {p["title"] for p in client.get(f"/api/datasets/{dataset_id}").get_json()["papers"]}
+        assert {f"Fresh paper {i}" for i in range(50)} <= held and "Fresh paper 50" not in held
 
     def test_a_check_whose_search_ended_in_the_past_is_refused_up_front(self, client):
         dataset_id = db.create_dataset("topic", ["q"], name="Old", from_date="2020-01-01", to_date="2020-12-31")

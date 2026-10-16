@@ -979,6 +979,60 @@ def save_refresh(dataset_id, candidates, refresh):
         return new_ids
 
 
+def known_in_dataset(dataset_id, results):
+    """The `dedupe_key` of each result that is already in the dataset, excluded papers
+    included (a paper the user removed must not come back as new). Read-only. Follows
+    `_get_or_create_paper` exactly: the stored paper a result would be merged into (DOI,
+    else normalized title and year among papers with no DOI, else the source's own id;
+    the lowest id if there are copies) is what must be in the dataset."""
+    keys = {dedupe_key(result) for result in results}
+    # SQLite allows at least 999 parameters; a batch leaves room for the extras.
+    batch = 500
+
+    def chunks(values):
+        values = list(values)
+        for i in range(0, len(values), batch):
+            chunk = values[i : i + batch]
+            yield chunk, ",".join("?" * len(chunk))
+
+    merged_into = {}  # key -> the stored paper's id
+    with closing(_connect()) as conn:
+        for chunk, marks in chunks(k[1] for k in keys if k[0] == "doi"):
+            rows = conn.execute(
+                f"SELECT lower(doi), MIN(id) FROM paper WHERE lower(doi) IN ({marks}) GROUP BY lower(doi)", chunk
+            )
+            merged_into.update((("doi", doi), paper_id) for doi, paper_id in rows)
+        by_title = {}
+        for chunk, marks in chunks({k[1] for k in keys if k[0] == "title"}):
+            rows = conn.execute(
+                "SELECT title_key, year, MIN(id) FROM paper "
+                f"WHERE doi IS NULL AND title_key IN ({marks}) GROUP BY title_key, year",
+                chunk,
+            )
+            by_title.update(((title_key, year), paper_id) for title_key, year, paper_id in rows)
+        for k in keys:
+            if k[0] == "title" and (k[1], k[2]) in by_title:
+                merged_into[k] = by_title[(k[1], k[2])]
+        sources = {}
+        for k in keys:
+            if k[0] == "id":
+                sources.setdefault(k[1], []).append(k[2])
+        for source, source_ids in sources.items():
+            for chunk, marks in chunks(source_ids):
+                rows = conn.execute(
+                    f"SELECT source_id, id FROM paper WHERE source = ? AND source_id IN ({marks})", (source, *chunk)
+                )
+                merged_into.update((("id", source, source_id), paper_id) for source_id, paper_id in rows)
+        held = set()
+        for chunk, marks in chunks(set(merged_into.values())):
+            rows = conn.execute(
+                f"SELECT paper_id FROM dataset_paper WHERE dataset_id = ? AND paper_id IN ({marks})",
+                (dataset_id, *chunk),
+            )
+            held.update(row[0] for row in rows)
+    return {k for k, paper_id in merged_into.items() if paper_id in held}
+
+
 def add_papers_to_dataset(dataset_id, paper_ids):
     with _LOCK, closing(_connect()) as conn:
         _insert_dataset_papers(conn, dataset_id, paper_ids)

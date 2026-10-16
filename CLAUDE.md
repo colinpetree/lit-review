@@ -312,7 +312,12 @@ against real copies on spare ports works well.
   because the whole range again returns the same most-relevant papers and a new one rarely makes
   the cut; the overlap covers late indexing and PubMed's issue dates. A check reads up to
   `search_sources.REFRESH_SEARCH_LIMIT` (2,500) hits per search, not the dataset's own limit:
-  sources cannot skip known papers, so a small limit would be spent on them and push new ones out. A search whose end date is
+  sources cannot skip known papers, so a small limit would be spent on them and push new ones out. But a check **adds only the
+  dataset's own `search_limit` (default 100) of the most relevant new papers per source and query**
+  (`app._keep_new` with `db.known_in_dataset`, which counts excluded papers as known): without that, a
+  broad query added over a thousand loosely related papers and made the dataset too big to grade. In
+  a check's `retrieval` entries `fetched` is the number of new papers kept, and `capped` (with
+  `capped_by: "limit"`) says how many new ones were found. A search whose end date is
   past is refused with a message. The check is recorded in `dataset.last_refresh` (JSON: `at`, the
   dates, `new_count`, and the same per-search `retrieval` entries, so a check that hit the ceiling
   says so). New papers are stamped with that check's time in `dataset_paper.added_at`, and the API

@@ -1,19 +1,33 @@
 import { useState } from 'react'
-import { Pencil, Trash2 } from 'lucide-react'
+import { Pencil, Play, Square, Trash2 } from 'lucide-react'
 import MoreMenu from './MoreMenu'
 import ConfirmModal from './ConfirmModal'
 import RenameModal from './RenameModal'
 import { patchJson } from '../lib/api'
+import { useJobs } from './JobsProvider'
+import { isWorking } from '../lib/jobs'
 
 const MAX_RUN_NAME_CHARS = 120 // matches MAX_RUN_NAME_CHARS in db.py
 
 // The more-horizontal menu for an analysis run: Rename (a modal that saves the
 // new name, then calls onRenamed(name)) and, when onDelete is given, Delete
-// behind a confirmation.
-export default function RunMenu({ run, onRenamed, onDelete, className, extraItems = [] }) {
+// behind a confirmation. A run being graded (or waiting to be) can be stopped here, and one
+// with papers still ungraded started again; `onError` hears why that failed.
+export default function RunMenu({ run, onRenamed, onDelete, onError, className, extraItems = [] }) {
   const [modal, setModal] = useState(null) // 'rename' | 'delete' | null
+  const { stopJob, startJob } = useJobs()
 
+  const report = (err) => onError?.(err.message)
   const items = [{ label: 'Rename', icon: Pencil, onClick: () => setModal('rename') }, ...extraItems]
+  if (run.job && (run.state === 'queued' || run.state === 'running')) {
+    items.push({ label: 'Stop', icon: Square, onClick: () => stopJob(run.job.id).catch(report) })
+  } else if (run.state === 'incomplete') {
+    items.push({
+      label: 'Resume',
+      icon: Play,
+      onClick: () => startJob({ kind: 'run_score', run_id: run.id }).catch(report),
+    })
+  }
   if (onDelete) items.push({ label: 'Delete', icon: Trash2, danger: true, onClick: () => setModal('delete') })
 
   return (
@@ -34,7 +48,9 @@ export default function RunMenu({ run, onRenamed, onDelete, className, extraItem
       {modal === 'delete' ? (
         <ConfirmModal
           title="Delete this result run?"
-          message="This moves the run and its grades out of your results into Deleted Items (in Settings, under Your Data), where you can restore it or delete it permanently. The papers and datasets are not affected."
+          message={`${
+            isWorking(run) ? 'Grading will be stopped. ' : ''
+          }This moves the run and its grades out of your results into Deleted Items (in Settings, under Your Data), where you can restore it or delete it permanently. The papers and datasets are not affected.`}
           confirmLabel="Delete"
           busyLabel="Deleting..."
           danger

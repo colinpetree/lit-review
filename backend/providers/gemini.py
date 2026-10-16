@@ -46,11 +46,12 @@ def _generate(client, **kwargs):
             # as 429, so don't promise that waiting helps.
             raise LLMError(
                 "Gemini rate limit or quota reached. Wait a moment and try again; if it "
-                "keeps happening, check your plan and billing with Google."
+                "keeps happening, check your plan and billing with Google.",
+                retryable=True,
             ) from exc
-        raise LLMError(f"Gemini API error: {message or exc.code}") from exc
+        raise LLMError(f"Gemini API error: {message or exc.code}", retryable=bool(exc.code and exc.code >= 500)) from exc
     except httpx.TransportError as exc:
-        raise LLMError("Failed to reach Gemini. Check your network connection.") from exc
+        raise LLMError("Failed to reach Gemini. Check your network connection.", retryable=True) from exc
 
 
 def _parsed_json(response):

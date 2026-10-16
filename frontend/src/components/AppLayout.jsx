@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import { SettingsModalProvider } from './SettingsModalProvider'
+import { JobsProvider } from './JobsProvider'
 import { rememberAppPath } from '../lib/lastAppPath'
 import UpdateBanner from './UpdateBanner'
 import UpdateModal from './UpdateModal'
@@ -18,6 +19,7 @@ export default function AppLayout() {
   useEffect(() => rememberAppPath({ pathname, search }), [pathname, search])
   return (
     <UpdateProvider>
+      <JobsProvider>
       <SettingsModalProvider>
         <div className="flex h-screen bg-page">
           <Sidebar />
@@ -37,6 +39,7 @@ export default function AppLayout() {
         </div>
         <UpdateModal />
       </SettingsModalProvider>
+      </JobsProvider>
     </UpdateProvider>
   )
 }

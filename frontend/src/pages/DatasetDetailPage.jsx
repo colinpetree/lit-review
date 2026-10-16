@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { PageShell, Card, BackLink } from '../components/ui'
 import Spinner, { StageIndicator } from '../components/Spinner'
@@ -9,9 +9,11 @@ import { DEFAULT_PAPER_SORT, EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActi
 import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
-import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
+import { deleteJson, fetchJson, patchJson } from '../lib/api'
 import { exportMenuItems } from '../lib/exportFile'
-import { getLookup, startLookup, subscribeLookup } from '../lib/findAbstracts'
+import JobStatus from '../components/JobStatus'
+import { useJobs } from '../components/JobsProvider'
+import { isActiveJob, jobsFor, progressSignature, progressText, statusSignature } from '../lib/jobs'
 import { sourceIcon, sourceLabel } from '../lib/paperSources'
 import { formatDateTime, formatYearRange } from '../lib/format'
 import { summarizeRetrieval } from '../lib/retrieval'
@@ -43,13 +45,19 @@ function RetrievalCompleteness({ retrieval, onShowDetails }) {
 
 // The dataset's title (renamed from its dots menu, like an analysis run's) and
 // the details it was retrieved with (all fixed).
-function DatasetDetailsCard({ dataset, onRenamed, onDelete, onShowCompleteness, menuItems }) {
+function DatasetDetailsCard({ dataset, onRenamed, onDelete, onError, onShowCompleteness, menuItems }) {
   return (
     <Card className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-2xl font-semibold text-gray-800">{dataset.name}</h1>
         <div className="shrink-0">
-          <DatasetMenu dataset={dataset} onRenamed={onRenamed} onDelete={onDelete} extraItems={menuItems} />
+          <DatasetMenu
+            dataset={dataset}
+            onRenamed={onRenamed}
+            onDelete={onDelete}
+            onError={onError}
+            extraItems={menuItems}
+          />
         </div>
       </div>
 
@@ -89,17 +97,21 @@ function DatasetDetailsCard({ dataset, onRenamed, onDelete, onShowCompleteness, 
 
       {/* Updated (the latest check for new papers) sits to the left of Created, which
           always stays: creation is never replaced by a later check. */}
-      <div className="flex flex-wrap gap-x-10 gap-y-5">
-        {dataset.last_refresh ? (
+      <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-5">
+        <div className="flex flex-wrap gap-x-10 gap-y-5">
+          {dataset.last_refresh ? (
+            <div className="flex flex-col gap-1.5">
+              <p className="text-sm font-medium text-gray-500">Updated</p>
+              <p className="text-sm text-gray-800">{formatDateTime(dataset.last_refresh.at)}</p>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-1.5">
-            <p className="text-sm font-medium text-gray-500">Updated</p>
-            <p className="text-sm text-gray-800">{formatDateTime(dataset.last_refresh.at)}</p>
+            <p className="text-sm font-medium text-gray-500">Created</p>
+            <p className="text-sm text-gray-800">{formatDateTime(dataset.created_at)}</p>
           </div>
-        ) : null}
-        <div className="flex flex-col gap-1.5">
-          <p className="text-sm font-medium text-gray-500">Created</p>
-          <p className="text-sm text-gray-800">{formatDateTime(dataset.created_at)}</p>
         </div>
+        {/* Just the state here: how far a lookup has got is on the Missing Abstracts card. */}
+        <JobStatus item={dataset} showProgress={false} className="ml-auto" />
       </div>
     </Card>
   )
@@ -118,102 +130,111 @@ const isLookupCandidate = (p) => isMissingAbstract(p) && !p.abstract_checked
 // A dataset is pure retrieval - never joined to any analysis run here.
 // Grades only ever appear on the Paper Evaluations side; a
 // paper on this page is always shown exactly as retrieved, with no grade.
+//
+// Searching, checking for new papers and looking up abstracts all happen in the background (see
+// backend/jobs.py), whatever page is open. This page follows them: it loads the dataset again, quietly,
+// as they move along, and shows what they say.
 export default function DatasetDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { openSettings } = useSettingsModal()
   const providers = useConfiguredProviders()
+  const { jobs, startJob, resumeJob, refreshJobs } = useJobs()
+  // Only this dataset's own jobs make the page load it again: another job moving along (an evaluation, a
+  // lookup on some other dataset) says nothing about what this page shows, and a dataset can hold
+  // thousands of papers.
+  const myJobs = useMemo(() => jobsFor(jobs, 'dataset_id', Number(id)), [jobs, id])
+  const progressKey = useMemo(() => progressSignature(myJobs), [myJobs])
+  const statusKey = useMemo(() => statusSignature(myJobs), [myJobs])
   const [dataset, setDataset] = useState(null)
+  // Set only when the dataset could not be loaded at all. Anything that goes wrong afterwards is shown
+  // beside the dataset and never replaces it.
   const [error, setError] = useState(null)
   const [toggleError, setToggleError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
   const [sort, setSort] = useState(DEFAULT_PAPER_SORT)
-  // null until an abstract lookup has run on this dataset.
-  const [lookup, setLookup] = useState(null)
-  const autoLookupRef = useRef(null)
-  // A check for new papers: which dataset one is running for (it can outlast the user's
-  // stay on this page, which is reused when they open another dataset), and what it said.
-  const [refreshingId, setRefreshingId] = useState(null)
-  const viewedIdRef = useRef(id)
-  const [refreshError, setRefreshError] = useState(null)
-  const [refreshedNotice, setRefreshedNotice] = useState(null)
+  const [jobError, setJobError] = useState(null)
   // The Search completeness dialog (the numbers behind the summary on the details card).
   const [showCompleteness, setShowCompleteness] = useState(false)
-  const loadedId = dataset?.id
-
-  // Looks up missing abstracts. The lookup itself runs in lib/findAbstracts so
-  // it keeps going if the user leaves this page; the subscription below fills
-  // papers in as results come back. Papers a lookup already completed for are
-  // left out by the server, so this only does new work. Used by both the
-  // automatic run on opening a dataset and the button.
-  const runLookup = useCallback((datasetId) => startLookup(datasetId), [])
-
-  // Follows this dataset's lookup, including one started before the user left
-  // and came back, which is replayed from the lookup's accumulated results.
-  useEffect(() => {
-    if (loadedId == null) return
-    let active = true
-    const sync = (state) => {
-      if (!active) return
-      const filledById = new Map(state.filledPapers.map((p) => [p.id, p]))
-      const checkedIds = new Set(state.checkedIds)
-      if (filledById.size || checkedIds.size) {
-        // Only touch the dataset this lookup belongs to; the page may already
-        // be loading a different one.
-        setDataset((prev) =>
-          prev?.id !== loadedId
-            ? prev
-            : {
-                ...prev,
-                papers: prev.papers.map((p) => {
-                  if (filledById.has(p.id)) return { ...p, ...filledById.get(p.id) }
-                  if (checkedIds.has(p.id)) return { ...p, abstract_checked: true }
-                  return p
-                }),
-              }
-        )
-      }
-      // A run that ended with nothing to try stays silent.
-      setLookup(!state.running && state.attempted === 0 && !state.error ? null : state)
-    }
-    const current = getLookup(loadedId)
-    if (current) sync(current)
-    const unsubscribe = subscribeLookup(loadedId, sync)
-    return () => {
-      active = false
-      unsubscribe()
-    }
-  }, [loadedId])
-
-  useEffect(() => {
-    viewedIdRef.current = id
-  }, [id])
+  // The page is reused when the user opens another dataset, so this says which one a reload belongs to.
+  const idRef = useRef(id)
+  const loadedRef = useRef(false)
+  const lastLoadRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
+    idRef.current = id
+    loadedRef.current = false
     setError(null)
     setToggleError(null)
-    setRefreshError(null)
-    setRefreshedNotice(null)
+    setJobError(null)
     setShowCompleteness(false)
     setFilter(EMPTY_PAPER_FILTER)
-    setLookup(null)
     setDataset(null)
     fetchJson(`/api/datasets/${id}`)
-      .then((d) => !cancelled && setDataset(d))
+      .then((d) => {
+        if (cancelled) return
+        loadedRef.current = true
+        lastLoadRef.current = Date.now()
+        setDataset(d)
+      })
       .catch((err) => !cancelled && setError(err.message))
     return () => {
       cancelled = true
     }
   }, [id])
 
-  // Start looking up missing abstracts once, when a dataset first loads (a
-  // lookup already running for it is left alone).
+  // Loads the dataset again, without any loading state. A reload that fails changes nothing: what is
+  // showing stays, and the next change tries again.
+  const reload = useCallback(async () => {
+    const forId = idRef.current
+    lastLoadRef.current = Date.now()
+    try {
+      const latest = await fetchJson(`/api/datasets/${forId}`)
+      if (idRef.current === forId) setDataset(latest)
+    } catch {
+      // keep what is showing
+    }
+  }, [])
+
+  // As the background work moves along (an abstract found, a search finished) or starts and ends, the
+  // dataset is loaded again, at most every 3 seconds.
   useEffect(() => {
-    if (!dataset || autoLookupRef.current === dataset.id) return
-    autoLookupRef.current = dataset.id
-    if (dataset.papers.some(isLookupCandidate)) runLookup(dataset.id)
-  }, [dataset, runLookup])
+    if (!loadedRef.current) return
+    const wait = Math.max(0, 3000 - (Date.now() - lastLoadRef.current))
+    const timer = setTimeout(reload, wait)
+    return () => clearTimeout(timer)
+  }, [progressKey, statusKey, reload])
+
+  // Filtered, sorted and exportable lists are worked out once per change, not on every draw (the page is
+  // drawn again whenever one of its jobs moves along).
+  const papers = dataset?.papers
+  const visiblePapers = useMemo(
+    () => (papers ? sortPapers(filterPapers(papers, filter), sort) : []),
+    [papers, filter, sort],
+  )
+  const datasetId = dataset?.id
+  const exportItems = useMemo(() => {
+    const included = papers?.filter((p) => !p.excluded) ?? []
+    if (!included.length) return []
+    return exportMenuItems({
+      url: `/api/datasets/${datasetId}/export`,
+      all: included.map((p) => p.id),
+      shown: visiblePapers.filter((p) => !p.excluded).map((p) => p.id),
+      filterActive: isPaperFilterActive(filter),
+      onError: setToggleError,
+    })
+  }, [papers, datasetId, visiblePapers, filter])
+
+  const queue = async (fields) => {
+    setJobError(null)
+    try {
+      await startJob(fields)
+      await reload()
+    } catch (err) {
+      setJobError(err.message)
+    }
+  }
 
   if (error) {
     return (
@@ -229,6 +250,15 @@ export default function DatasetDetailPage() {
       </PageShell>
     )
   }
+
+  // The jobs working on this dataset, newest last. The live list is newer than the dataset's own copy.
+  const mine = myJobs
+  const latestOf = (kind) => mine.filter((j) => j.kind === kind).at(-1) ?? null
+  const searchJob = latestOf('dataset_search') ?? (dataset.pending ? dataset.job : null)
+  const refreshJob = latestOf('dataset_refresh')
+  const lookupJob = latestOf('find_abstracts')
+  const refreshing = Boolean(refreshJob && isActiveJob(refreshJob))
+  const lookingUp = Boolean(lookupJob && isActiveJob(lookupJob))
 
   const handlePaperUpdate = (updated) => {
     setDataset((prev) => ({
@@ -263,31 +293,65 @@ export default function DatasetDetailPage() {
     }
   }
 
-  // Searches the dataset's sources again for papers that appeared since it was last
-  // searched and adds only those (no AI cost). The new ones are marked, and their
-  // missing abstracts are looked up like any others.
-  const checkForNewPapers = async () => {
-    const startedFor = dataset.id
-    // The page is reused when the user opens another dataset, so what comes back is
-    // applied only while they are still looking at the dataset it was asked for. (The
-    // server saves the new papers either way; opening that dataset again shows them.)
-    const stillHere = () => String(viewedIdRef.current) === String(startedFor)
-    setRefreshingId(startedFor)
-    setRefreshError(null)
-    setRefreshedNotice(null)
-    try {
-      const { new_count: newCount, dataset: updated } = await postJson(`/api/datasets/${startedFor}/refresh`, {})
-      if (stillHere()) {
-        setDataset(updated)
-        setRefreshedNotice(newCount)
-      }
-      // Missing abstracts are looked up in the background, whichever page they are on.
-      if (updated.papers.some(isLookupCandidate)) runLookup(updated.id)
-    } catch (err) {
-      if (stillHere()) setRefreshError(err.message)
-    } finally {
-      setRefreshingId((current) => (current === startedFor ? null : current))
-    }
+  const detailsCard = (
+    <DatasetDetailsCard
+      dataset={dataset}
+      onRenamed={(name) => setDataset((prev) => ({ ...prev, name }))}
+      onDelete={async () => {
+        await deleteJson(`/api/datasets/${dataset.id}`)
+        refreshJobs()
+        navigate('/datasets')
+      }}
+      onError={setToggleError}
+      onShowCompleteness={() => setShowCompleteness(true)}
+      menuItems={dataset.pending ? [] : exportItems}
+    />
+  )
+
+  // A dataset whose search has not finished has no papers yet: say how the search is going.
+  if (dataset.pending) {
+    const state = searchJob ? (searchJob.status === 'incomplete' ? 'incomplete' : 'working') : 'incomplete'
+    return (
+      <PageShell>
+        <BackLink to="/datasets">Back to Paper Datasets</BackLink>
+        <div className="mt-4">
+          {detailsCard}
+          <div className="mt-6">
+            {state === 'working' ? (
+              <StageIndicator
+                label={
+                  searchJob.status === 'queued'
+                    ? 'Waiting for other work to finish…'
+                    : searchJob.stop_requested
+                      ? 'Stopping…'
+                      : `${progressText(searchJob) ?? 'Searching for papers…'}`
+                }
+              />
+            ) : (
+              <div className="flex flex-col items-start gap-2">
+                <p className="text-sm text-amber-700 dark:text-amber-400">
+                  {searchJob?.error ?? 'This search did not finish.'}
+                </p>
+                {searchJob ? (
+                  <button
+                    type="button"
+                    onClick={() => resumeJob(searchJob.id).then(reload).catch((err) => setJobError(err.message))}
+                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Resume search
+                  </button>
+                ) : null}
+              </div>
+            )}
+            {jobError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{jobError}</p> : null}
+            {toggleError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{toggleError}</p> : null}
+          </div>
+          {showCompleteness ? (
+            <SearchCompletenessModal dataset={dataset} onClose={() => setShowCompleteness(false)} />
+          ) : null}
+        </div>
+      </PageShell>
+    )
   }
 
   // The publishers whose abstracts need an API key that isn't saved yet.
@@ -300,19 +364,6 @@ export default function DatasetDetailPage() {
 
   const includedCount = dataset.papers.filter((p) => !p.excluded).length
   const excludedCount = dataset.papers.length - includedCount
-  const visiblePapers = sortPapers(filterPapers(dataset.papers, filter), sort)
-  // The export holds the included papers only (an excluded one can be shown on this page).
-  const exportItems = includedCount
-    ? exportMenuItems({
-        url: `/api/datasets/${dataset.id}/export`,
-        all: dataset.papers.filter((p) => !p.excluded).map((p) => p.id),
-        shown: visiblePapers.filter((p) => !p.excluded).map((p) => p.id),
-        filterActive: isPaperFilterActive(filter),
-        onError: setToggleError,
-      })
-    : []
-
-  const refreshing = refreshingId === dataset.id
 
   // How the latest check for new papers went, if it stopped short of some papers.
   const lastCheck = summarizeRetrieval(dataset.last_refresh?.retrieval)
@@ -320,25 +371,22 @@ export default function DatasetDetailPage() {
 
   const yearRange = formatYearRange(dataset.oldest_year, dataset.newest_year, dataset.newest_publication_date)
 
+  // What the lookup job reports (kept for ten minutes after it ends).
+  const lookupProgress = lookupJob?.progress ?? {}
+  const lookupResultShown = lookupJob && !isActiveJob(lookupJob)
+
   // The abstract lookup panel is hidden once every included paper with a DOI
   // has an abstract (and nothing is running).
-  const showLookupPanel = missingAbstracts > 0 || Boolean(lookup?.running)
+  const showLookupPanel = missingAbstracts > 0 || lookingUp
+
+  const newCount = refreshJob?.status === 'completed' ? refreshJob.progress?.new_count : undefined
 
   return (
     <PageShell>
       <BackLink to="/datasets">Back to Paper Datasets</BackLink>
 
       <div className="relative mt-4">
-        <DatasetDetailsCard
-          dataset={dataset}
-          onRenamed={(name) => setDataset((prev) => ({ ...prev, name }))}
-          onDelete={async () => {
-            await deleteJson(`/api/datasets/${dataset.id}`)
-            navigate('/datasets')
-          }}
-          onShowCompleteness={() => setShowCompleteness(true)}
-          menuItems={exportItems}
-        />
+        {detailsCard}
 
         <div className="mt-6 flex items-center justify-between gap-4">
           <p className="text-sm text-gray-500">
@@ -349,7 +397,7 @@ export default function DatasetDetailPage() {
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={checkForNewPapers}
+              onClick={() => queue({ kind: 'dataset_refresh', dataset_id: dataset.id })}
               disabled={refreshing}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
             >
@@ -367,15 +415,24 @@ export default function DatasetDetailPage() {
 
         {refreshing ? (
           <div className="mt-3">
-            <StageIndicator label="Checking the paper sources for new papers…" />
+            <StageIndicator
+              label={
+                refreshJob.status === 'queued'
+                  ? 'A check for new papers is waiting for other work to finish…'
+                  : 'Checking the paper sources for new papers…'
+              }
+            />
           </div>
         ) : null}
-        {refreshError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{refreshError}</p> : null}
-        {refreshedNotice !== null && !refreshing ? (
+        {jobError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{jobError}</p> : null}
+        {refreshJob?.status === 'incomplete' ? (
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">{refreshJob.error}</p>
+        ) : null}
+        {newCount !== undefined && !refreshing ? (
           <p className="mt-3 text-sm text-gray-700">
-            {refreshedNotice === 0
+            {newCount === 0
               ? 'No new papers found.'
-              : `Found ${refreshedNotice} new paper${refreshedNotice === 1 ? '' : 's'}, marked New below.`}
+              : `Found ${newCount} new paper${newCount === 1 ? '' : 's'}, marked New below.`}
           </p>
         ) : null}
         {incompleteCheck ? (
@@ -403,51 +460,56 @@ export default function DatasetDetailPage() {
           <aside className="mt-6 min-[1560px]:absolute min-[1560px]:inset-y-0 min-[1560px]:left-full min-[1560px]:mt-0 min-[1560px]:ml-6 min-[1560px]:w-64">
             <div className="rounded-lg border border-gray-200 bg-surface p-4 shadow-sm min-[1560px]:sticky min-[1560px]:top-6">
               <h2 className="mb-3 text-lg font-semibold text-gray-800">Missing Abstracts</h2>
-              {lookup?.running ? (
+              {lookingUp ? (
                 <>
                   <div className="flex items-center gap-2 text-sm text-gray-700">
                     <Spinner />
                     <span>
-                      {lookup.total === null
-                        ? 'Looking up abstracts…'
-                        : `Looking up abstracts… ${lookup.attempted} of ${lookup.total}`}
+                      {lookupJob.status === 'queued'
+                        ? 'Waiting for other work to finish…'
+                        : !lookupProgress.total
+                          ? 'Looking up abstracts…'
+                          : `Looking up abstracts… ${lookupProgress.attempted ?? 0} of ${lookupProgress.total}`}
                     </span>
                   </div>
-                  <p className="mt-2 text-sm text-gray-700">It is safe to leave this page.</p>
+                  <p className="mt-2 text-sm text-gray-700">It carries on in the background, whatever page you are on.</p>
                 </>
               ) : lookupCandidates > 0 ? (
                 <button
                   type="button"
-                  onClick={() => runLookup(dataset.id)}
+                  onClick={() => queue({ kind: 'find_abstracts', dataset_id: dataset.id })}
                   className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
                 >
                   Find missing abstracts ({lookupCandidates})
                 </button>
               ) : null}
 
-              {lookup && !lookup.running && !lookup.error ? (
+              {lookupResultShown && lookupJob.status === 'completed' ? (
                 <p className="mt-3 text-sm text-gray-700">
-                  {lookup.filledCount > 0
-                    ? `Found ${lookup.filledCount} abstract${lookup.filledCount === 1 ? '' : 's'}.`
+                  {lookupProgress.filled > 0
+                    ? `Found ${lookupProgress.filled} abstract${lookupProgress.filled === 1 ? '' : 's'}.`
                     : 'No new abstracts found.'}
                 </p>
               ) : null}
-              {!lookup?.running && unfindable > 0 ? (
+              {!lookingUp && unfindable > 0 ? (
                 <p className="mt-2 text-sm text-gray-700">
                   {unfindable} paper{unfindable === 1 ? ' has' : 's have'} no abstract in any source checked.
                 </p>
               ) : null}
-              {lookup?.noDoi > 0 ? (
+              {lookupProgress.no_doi > 0 ? (
                 <p className="mt-2 text-xs text-gray-500">
-                  {lookup.noDoi} other paper{lookup.noDoi === 1 ? ' has' : 's have'} no DOI, so can’t be looked up.
+                  {lookupProgress.no_doi} other paper{lookupProgress.no_doi === 1 ? ' has' : 's have'} no DOI, so can’t
+                  be looked up.
                 </p>
               ) : null}
-              {Object.entries(lookup?.sourceErrors ?? {}).map(([source, message]) => (
+              {Object.entries(lookupProgress.source_errors ?? {}).map(([source, message]) => (
                 <p key={source} className="mt-2 text-xs text-amber-700 dark:text-amber-400">
                   {message}
                 </p>
               ))}
-              {lookup?.error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{lookup.error}</p> : null}
+              {lookupJob?.status === 'incomplete' ? (
+                <p className="mt-2 text-sm text-red-600 dark:text-red-400">{lookupJob.error}</p>
+              ) : null}
 
               <p className="mt-3 text-xs text-gray-400">
                 {!providers ? (

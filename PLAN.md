@@ -562,3 +562,14 @@ acceptable UX. Plan:
   AI. An appended paper is not retroactively scored: a finished run reopens and offers "Score N
   new papers", so the user pays only for the new ones. Not built: checking on a schedule or at
   startup (the app only runs when the user opens it), and re-expanding the queries.
+
+## Background jobs (built)
+
+Slow work no longer runs inside a request that a page has to keep open. Creating a dataset, grading an
+evaluation, checking for new papers and looking up abstracts are queued as `job` rows (`POST /api/jobs`)
+and finished by two worker threads in `backend/jobs.py`, whatever page is open: a paid lane that runs one
+job at a time in the order queued, and a lookup lane for the free abstract lookups. Each dataset and
+evaluation shows Queued, Running, Incomplete or Completed on its card and page, can be stopped and resumed
+from its dots menu, and updates in place as batches finish. After the app is closed unfinished paid jobs
+come back Incomplete for the user to resume, so nothing spends money unattended after a restart. The design
+and its edge cases (restore, updates, retries, stop semantics) are in CLAUDE.md, "Background jobs".

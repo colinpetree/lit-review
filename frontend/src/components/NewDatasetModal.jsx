@@ -1,16 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSettingsModal } from './SettingsModalProvider'
 import Modal from './Modal'
 import ConfirmModal from './ConfirmModal'
-import { StageIndicator } from './Spinner'
+import { useJobs } from './JobsProvider'
 import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from './AiModelSelect'
 import AutoGrowTextarea from './AutoGrowTextarea'
 import Checkbox from './Checkbox'
 import DateRangeField from './DateRangeField'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { getPubMedEnabled } from '../lib/pubmedSetting'
-import { postJson } from '../lib/api'
 import { DEFAULT_SOURCES, PAPER_SOURCES } from '../lib/paperSources'
 import { MODELS_BY_PROVIDER } from '../lib/models'
 import { loadDiscoverSettings, saveDiscoverSettings } from '../lib/discoverSettings'
@@ -28,10 +27,6 @@ const isSourceAvailable = (source, providers, pubmedEnabled) =>
 // takes with New Evaluation (against whatever grading criteria they
 // choose there, which may differ from this retrieval question) - a dataset
 // fresh out of a search should show no grades at all.
-const STAGE_LABELS = {
-  query: 'Processing query…',
-  retrieval: 'Searching the paper databases…',
-}
 
 export default function NewDatasetModal({ onClose }) {
   const navigate = useNavigate()
@@ -55,32 +50,15 @@ export default function NewDatasetModal({ onClose }) {
   const [aiChoice, setAiChoice] = useState(remembered.aiChoice)
   const [status, setStatus] = useState('idle') // idle | loading | error
   const [error, setError] = useState(null)
-  const [stage, setStage] = useState(null) // 'query' | 'retrieval'
-  // Set only when the OpenAlex retrieval step specifically fails - holds
-  // everything needed to retry *just* that step (already-expanded queries +
-  // their usage) without paying for another LLM expansion call.
-  const [pendingRetrieval, setPendingRetrieval] = useState(null)
-  const activeRequestRef = useRef(null)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
+  const { startJob } = useJobs()
 
-  // A request still running when the dialog goes away is dropped, not left to navigate later.
-  useEffect(() => () => activeRequestRef.current?.abort(), [])
-
+  // Only the moment of handing the search over is spent here: the search itself runs in the
+  // background and shows up on the Paper Datasets list.
   const loading = status === 'loading'
   const dirty = Boolean(question.trim() || fromDate || toDate)
-  // Closing with a typed topic asks first, so a stray Escape does not throw it away.
+  // Closing with a typed topic asks first, so nothing typed is thrown away by accident.
   const requestClose = () => (dirty && !loading ? setConfirmingDiscard(true) : onClose())
-  const discardMessage = pendingRetrieval
-    ? "A search failed part of the way. Closing loses the Retry button, and searching again repeats the AI step. What you typed will be lost."
-    : "What you typed will be lost."
-
-  // Stops waiting. The server keeps running a search it has started, so the same search
-  // cannot be started again until it finishes.
-  const stop = () => {
-    activeRequestRef.current?.abort()
-    setStatus('idle')
-    setStage(null)
-  }
 
   const configured = hasConfiguredProvider(providers)
   // A remembered model that's no longer listed or configured falls back to the default.
@@ -120,101 +98,25 @@ export default function NewDatasetModal({ onClose }) {
 
     saveDiscoverSettings({ sources: activeSources, searchLimit, aiChoice: choice })
 
-    activeRequestRef.current?.abort()
-    const controller = new AbortController()
-    activeRequestRef.current = controller
-
     setStatus('loading')
     setError(null)
-    setPendingRetrieval(null)
-    setStage('query')
-
     try {
-      const expand = await postJson(
-        '/api/datasets/expand',
-        {
-          question: trimmed,
-          from_date: from ?? undefined,
-          to_date: to ?? undefined,
-          ai_api: choice.ai_api,
-          ai_model: choice.ai_model,
-          sources: activeSources,
-          search_limit: searchLimit,
-        },
-        { signal: controller.signal }
-      )
-
-      if (expand.reused) {
-        navigate(`/datasets/${expand.dataset.id}`)
-        onClose()
-        return
-      }
-
-      setStage('retrieval')
-      const retrievalPayload = {
+      const result = await startJob({
+        kind: 'dataset_search',
         question: trimmed,
-        queries: expand.queries,
-        title: expand.title,
-        usage: expand.usage,
         from_date: from ?? undefined,
         to_date: to ?? undefined,
+        ai_api: choice.ai_api,
+        ai_model: choice.ai_model,
         sources: activeSources,
         search_limit: searchLimit,
-      }
-
-      let dataset
-      try {
-        dataset = await postJson('/api/datasets', retrievalPayload, { signal: controller.signal })
-      } catch (err) {
-        if (err.name === 'AbortError') return
-        setError(err.message)
-        setStatus('error')
-        setPendingRetrieval(retrievalPayload)
-        return
-      }
-
-      navigate(`/datasets/${dataset.id}`)
+      })
+      // The same search was already done: open that dataset instead of searching again.
+      if (result.reused) navigate(`/datasets/${result.dataset.id}`)
       onClose()
     } catch (err) {
-      if (err.name === 'AbortError') return
       setError(err.message)
       setStatus('error')
-    } finally {
-      setStage(null)
-    }
-  }
-
-  const retryRetrieval = async () => {
-    if (!pendingRetrieval || activeSources.length === 0) return
-
-    saveDiscoverSettings({ sources: activeSources, searchLimit, aiChoice: choice })
-
-    activeRequestRef.current?.abort()
-    const controller = new AbortController()
-    activeRequestRef.current = controller
-
-    setStatus('loading')
-    setError(null)
-    setStage('retrieval')
-
-    try {
-      // Sent with the sources as they are checked now, so a source that keeps
-      // failing can be unchecked before retrying.
-      const dataset = await postJson(
-        '/api/datasets',
-        { ...pendingRetrieval, sources: activeSources },
-        { signal: controller.signal }
-      )
-      setPendingRetrieval(null)
-      navigate(`/datasets/${dataset.id}`)
-      onClose()
-    } catch (err) {
-      if (err.name === 'AbortError') return
-      setError(err.message)
-      setStatus('error')
-      // keep pendingRetrieval so the button stays available to try again
-    } finally {
-      setStage(null)
     }
   }
 
@@ -300,26 +202,13 @@ export default function NewDatasetModal({ onClose }) {
             </div>
           </div>
 
-          {status === 'loading' ? <StageIndicator label={STAGE_LABELS[stage]} /> : null}
-
           {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
-          {pendingRetrieval ? (
-            <button
-              type="button"
-              onClick={retryRetrieval}
-              disabled={status === 'loading'}
-              className="self-start rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Retry fetching papers
-            </button>
-          ) : null}
 
-          <div className="flex items-center gap-2">
           <button
             type="submit"
             disabled={!providers || status === 'loading' || (configured && (!question.trim() || activeSources.length === 0))}
             // White while it can't be run yet (key status still loading, no topic
-            // or source), blue once it can. While a search is running it stays
+            // or source), blue once it can. While it is being handed over it stays
             // blue, just faded.
             className={`self-start rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
               status === 'loading'
@@ -330,30 +219,19 @@ export default function NewDatasetModal({ onClose }) {
             {providers && !configured
               ? 'Configure API key'
               : status === 'loading'
-                ? 'Working…'
+                ? 'Starting…'
                 : 'Search for Papers'}
           </button>
-          {loading ? (
-            <button
-              type="button"
-              onClick={stop}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Stop waiting
-            </button>
-          ) : null}
-          </div>
-          {loading ? (
-            <p className="text-xs text-gray-400">
-              A search that has started keeps running and is paid for. Searching the same thing again has to wait for it to finish.
-            </p>
-          ) : null}
+          <p className="text-xs text-gray-400">
+            The search runs in the background. You can close this window and keep using Lit Review; the dataset
+            appears in the list and shows when it is done.
+          </p>
         </form>
       </div>
       {confirmingDiscard ? (
         <ConfirmModal
           title="Discard this search?"
-          message={discardMessage}
+          message="What you typed will be lost."
           confirmLabel="Discard"
           danger
           onConfirm={() => onClose()}

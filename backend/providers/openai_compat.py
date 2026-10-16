@@ -49,11 +49,11 @@ class OpenAICompatProvider:
                     f"Your {self.label} account is out of credit or over its quota. "
                     "Check your plan and billing with the provider."
                 ) from exc
-            raise LLMError(f"{self.label} rate limit reached. Please wait and try again.") from exc
+            raise LLMError(f"{self.label} rate limit reached. Please wait and try again.", retryable=True) from exc
         except openai.APIStatusError as exc:
-            raise LLMError(f"{self.label} API error: {exc.message}") from exc
+            raise LLMError(f"{self.label} API error: {exc.message}", retryable=exc.status_code >= 500) from exc
         except openai.APIConnectionError as exc:
-            raise LLMError(f"Failed to reach {self.label}. Check your network connection.") from exc
+            raise LLMError(f"Failed to reach {self.label}. Check your network connection.", retryable=True) from exc
 
     def _parsed_json(self, response):
         """The JSON object in a response, raising LLMError for a refusal, a

@@ -16,7 +16,7 @@ import traceback
 import uuid
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from threading import Timer
 from urllib.parse import urlparse
@@ -34,6 +34,7 @@ import bundle
 import credentials
 import db
 import export
+import jobs
 import llm
 import logfile
 import mac_app
@@ -178,7 +179,12 @@ def _jobs_running():
     progress; the tray asks before quitting on one, since a call to the AI model
     already paid for would be lost."""
     with _BUSY_GUARD:
-        return any(lock.locked() for lock in _BUSY_LOCKS.values())
+        if any(lock.locked() for lock in _BUSY_LOCKS.values()):
+            return True
+    try:
+        return db.has_active_jobs()
+    except (OSError, sqlite3.Error):
+        return False
 
 
 @contextmanager
@@ -442,8 +448,9 @@ def set_api_key():
     credentials.set_key(provider, api_key)
     if provider in LOOKUP_KEY_PROVIDERS:
         # A new source for abstract lookup: let papers it could now help with
-        # be tried again.
+        # be tried again, and look for them in the background.
         db.clear_abstract_checked()
+        _queue_lookups_for_all_datasets()
     return jsonify({"ok": True})
 
 
@@ -555,10 +562,13 @@ def restore_backup():
                 ), 409
             try:
                 safety_copy = db.replace_with_backup(temp)
+                # Whatever the restored data says was running, nothing is: see db.interrupt_stale_jobs.
+                db.interrupt_stale_jobs()
             except db.BackupError as exc:
                 return jsonify({"error": str(exc)}), 500
             finally:
                 _GATE.open()
+                jobs.wake()
         finally:
             for leftover in (temp, Path(f"{temp}-wal"), Path(f"{temp}-shm"), Path(f"{temp}-journal")):
                 leftover.unlink(missing_ok=True)
@@ -748,8 +758,8 @@ def _ai_choice(body):
     return ai_api, ai_model
 
 
-def _openalex_error_response(exc):
-    """OpenAlex answered, but with an error status - not a connectivity
+def _openalex_error(exc):
+    """(message, http status) for OpenAlex answering with an error status - not a connectivity
     problem, so "try again" would be misleading (especially for a 4xx that
     a retry can't fix). For a 429, OpenAlex sends a Retry-After header
     telling us exactly how long the (usually short, burst-limit) cooldown
@@ -762,8 +772,13 @@ def _openalex_error_response(exc):
             message = f"OpenAlex rate limit reached. Please wait {retry_after} seconds and try again."
         else:
             message = "OpenAlex rate limit reached. Please wait a moment and try again."
-        return jsonify({"error": message}), 429
-    return jsonify({"error": f"OpenAlex rejected the request (HTTP {status})."}), 502
+        return message, 429
+    return f"OpenAlex rejected the request (HTTP {status}).", 502
+
+
+def _openalex_error_response(exc):
+    message, status = _openalex_error(exc)
+    return jsonify({"error": message}), status
 
 
 def _mark_new(papers, last_refresh):
@@ -783,8 +798,10 @@ def _dataset_to_dict(dataset_row, papers):
     active = [p for p in papers if not p.get("excluded")]
     years = [p["year"] for p in active if p.get("year")]
     dates = [p["publication_date"] for p in active if p.get("publication_date")]
-    return {
+    by_dataset, _ = _job_index()
+    return _with_dataset_state({
         "id": dataset_row["id"],
+        "pending": bool(dataset_row.get("pending")),
         "name": dataset_row["name"],
         "verbose_query": dataset_row["verbose_query"],
         "from_year": dataset_row["from_year"],
@@ -817,7 +834,7 @@ def _dataset_to_dict(dataset_row, papers):
         # Which AI model expanded the query and what that call cost (None for
         # a dataset with no logged expansion call).
         "expansion": _expansion_to_dict(db.get_dataset_expansion(dataset_row["id"])),
-    }
+    }, by_dataset)
 
 
 def _expansion_to_dict(expansion):
@@ -974,7 +991,7 @@ def _forget_searches(keys):
             _SEARCH_CACHE.pop(key, None)
 
 
-def _run_searches(queries, sources, from_date, to_date, limit):
+def _run_searches(queries, sources, from_date, to_date, limit, unit=None, on_progress=None):
     """Run every query against every selected source. Returns (candidates, retrieval,
     used): the papers (deduplicated), how complete each search was (one entry per source
     and query, kept with the dataset so it can be seen later: `total` is what the source
@@ -983,16 +1000,22 @@ def _run_searches(queries, sources, from_date, to_date, limit):
     fails (rate limit, rejected key) fails the whole retrieval, with nothing saved, so
     the retry button is always safe and a dataset never silently lacks a source the user
     asked for. The searches that did finish are kept briefly (see _SEARCH_CACHE), so a
-    retry does not repeat them. Raises requests.RequestException or SourceError."""
+    retry does not repeat them. Raises requests.RequestException or SourceError.
+    A background job passes `unit` (its way to run one search inside the request gate, and to
+    notice a stop before it starts) and `on_progress(done, total)`."""
     result_lists = []
     retrieval = []
     used = []
+    total = len(sources) * len(queries)
     for source_id in sources:
         for q in queries:
+            if on_progress:
+                on_progress(len(used), total)
             key = (source_id, q, from_date, to_date, limit)
             found = _cached_search(key)
             if found is None:
-                found = search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date, limit)
+                with (unit() if unit else nullcontext()):
+                    found = search_sources.SEARCH_SOURCES_BY_ID[source_id].search(q, from_date, to_date, limit)
                 _remember_search(key, found)
             used.append(key)
             result_lists.append(found)
@@ -1014,14 +1037,20 @@ def _run_searches(queries, sources, from_date, to_date, limit):
     return openalex.dedupe(result_lists), retrieval, used
 
 
-def _search_failure(exc):
-    """The response for a search that failed (an exception from _run_searches)."""
+def _search_failure_message(exc):
+    """(message, http status) for a search that failed (an exception from _run_searches)."""
     if isinstance(exc, requests.HTTPError):
-        return _openalex_error_response(exc)
+        return _openalex_error(exc)
     if isinstance(exc, requests.RequestException):
         app.logger.warning("OpenAlex request failed: %s", redact(exc))
-        return jsonify({"error": "Failed to reach OpenAlex. Please try again."}), 502
-    return jsonify({"error": str(exc)}), 502
+        return "Failed to reach OpenAlex. Please try again.", 502
+    return str(exc), 502
+
+
+def _search_failure(exc):
+    """The response for a search that failed (an exception from _run_searches)."""
+    message, status = _search_failure_message(exc)
+    return jsonify({"error": message}), status
 
 
 def _retrieve_dataset(question, queries, from_date, to_date, title, sources, expand_usage, search_limit):
@@ -1088,6 +1117,8 @@ def refresh_dataset(dataset_id):
     dataset_row = db.get_dataset(dataset_id)
     if dataset_row is None:
         return jsonify({"error": "dataset not found"}), 404
+    if dataset_row.get("pending"):
+        return jsonify({"error": "This dataset's search has not finished."}), 400
     try:
         sources = search_sources.validate_sources(dataset_row["sources"])
     except ValueError as exc:
@@ -1114,7 +1145,8 @@ def refresh_dataset(dataset_id):
 
 @app.get("/api/datasets")
 def list_datasets():
-    return jsonify({"datasets": db.list_datasets()})
+    by_dataset, _ = _job_index()
+    return jsonify({"datasets": [_with_dataset_state(d, by_dataset) for d in db.list_datasets()]})
 
 
 @app.get("/api/datasets/<int:dataset_id>")
@@ -1147,6 +1179,7 @@ def delete_dataset(dataset_id):
     left alone."""
     if db.get_dataset(dataset_id) is None:
         return jsonify({"error": "dataset not found"}), 404
+    db.stop_jobs_for(dataset_id=dataset_id)
     db.delete_dataset(dataset_id)
     return jsonify({"ok": True})
 
@@ -1181,6 +1214,7 @@ def update_analysis_run(run_id):
 def delete_analysis_run(run_id):
     if db.get_analysis_run(run_id) is None:
         return jsonify({"error": "analysis run not found"}), 404
+    db.stop_jobs_for(run_id=run_id)
     db.delete_analysis_run(run_id)
     return jsonify({"ok": True})
 
@@ -1193,8 +1227,11 @@ def find_dataset_abstracts(dataset_id):
     client sends back the paper ids already attempted (skip_ids, so a paper
     with no abstract anywhere isn't retried forever) and any sources that
     failed (skip_sources, so a rejected key isn't retried per paper)."""
-    if db.get_dataset(dataset_id) is None:
+    dataset_row = db.get_dataset(dataset_id)
+    if dataset_row is None:
         return jsonify({"error": "dataset not found"}), 404
+    if dataset_row.get("pending"):
+        return jsonify({"error": "This dataset's search has not finished."}), 400
 
     body = _json_body()
     skip_ids = body.get("skip_ids") or []
@@ -1216,7 +1253,7 @@ def find_dataset_abstracts(dataset_id):
     with _exclusive("lookup", dataset_id) as acquired:
         if not acquired:
             return jsonify({"error": "A lookup is already running for this dataset."}), 409
-        return _find_abstracts_chunk(dataset_id, set(skip_ids), set(skip_sources))
+        return jsonify(_find_abstracts_chunk(dataset_id, set(skip_ids), set(skip_sources)))
 
 
 def _look_up_batch(batch, skipped, answers):
@@ -1256,6 +1293,7 @@ def _look_up_batch(batch, skipped, answers):
 
 
 def _find_abstracts_chunk(dataset_id, attempted_before, skipped):
+    """One chunk of the lookup, as the dict /find-abstracts returns."""
     # Papers a lookup already completed for without finding an abstract are
     # left out, so opening a dataset or clicking the button again doesn't ask
     # the same sources the same question. Saving a new API key clears those
@@ -1289,16 +1327,14 @@ def _find_abstracts_chunk(dataset_id, attempted_before, skipped):
             db.mark_abstract_checked(paper_id)
             checked_ids.append(paper_id)
 
-    return jsonify(
-        {
-            "attempted": [paper_id for paper_id, _, _ in batch],
-            "filled": filled,
-            "checked": checked_ids,
-            "remaining": len(candidates) - len(batch),
-            "no_doi": no_doi,
-            "source_errors": source_errors,
-        }
-    )
+    return {
+        "attempted": [paper_id for paper_id, _, _ in batch],
+        "filled": filled,
+        "checked": checked_ids,
+        "remaining": len(candidates) - len(batch),
+        "no_doi": no_doi,
+        "source_errors": source_errors,
+    }
 
 
 @app.patch("/api/datasets/<int:dataset_id>/papers/<int:paper_id>")
@@ -1435,6 +1471,8 @@ def _run_request(body):
     for dataset_id in dataset_ids:
         if db.get_dataset(dataset_id) is None:
             raise InvalidRequest(f"dataset {dataset_id} not found")
+    if db.pending_dataset_ids(dataset_ids):
+        raise InvalidRequest("A dataset you chose is still being created. Wait for its search to finish.")
     return dataset_ids, grading_prompt, prompt_id, include_retracted, ai_api, ai_model
 
 
@@ -1443,9 +1481,16 @@ def create_analysis_run():
     body = _json_body()
     dataset_ids, grading_prompt, prompt_id, include_retracted, ai_api, ai_model = _run_request(body)
     max_usd = _max_usd(body.get("max_usd"))
+    # "start" queues the grading in the same request, so a browser closed between creating the run
+    # and asking for it to start cannot leave a run that nothing is going to grade.
+    start = body.get("start", False)
+    if not isinstance(start, bool):
+        raise InvalidRequest("'start' must be true or false")
     run_id = db.create_analysis_run(
         dataset_ids, grading_prompt, ai_api, ai_model, prompt_id, include_retracted=include_retracted, max_usd=max_usd
     )
+    if start:
+        _enqueue("run_score", run_id=run_id)
     return jsonify(_run_to_dict(db.get_analysis_run(run_id)))
 
 
@@ -1479,7 +1524,12 @@ def estimate_analysis_run():
 
 @app.get("/api/analysis-runs")
 def list_analysis_runs():
-    return jsonify({"runs": db.list_all_runs()})
+    _, by_run = _job_index()
+    runs = []
+    for run in db.list_all_runs():
+        state, job = jobs.run_state(run["unscored_count"], by_run.get(run["id"], []))
+        runs.append({**run, "state": state, "job": jobs.public_job(job)})
+    return jsonify({"runs": runs})
 
 
 def _run_to_dict(run_row):
@@ -1496,8 +1546,11 @@ def _run_to_dict(run_row):
     )
     run["datasets"] = db.get_run_datasets(run["id"])
     run["results"] = db.get_run_results(run["id"])
-    run["candidate_papers"] = db.get_run_candidate_papers(run["id"])
     run["remaining"] = db.count_unscored_papers(run["id"])
+    # The papers still to be graded are listed so the page can show them (without a grade) beside the
+    # graded ones, which `results` already holds. Sending the graded ones a second time (abstracts and
+    # all) would only double a large run's download, on every reload as it is graded.
+    run["candidate_papers"] = db.get_run_candidate_papers(run["id"], unscored_only=True) if run["remaining"] else []
     run["include_retracted"] = bool(run["include_retracted"])
     # Retracted papers this run's datasets hold but it does not score, so the page can say so.
     run["retracted_left_out"] = db.count_retracted_left_out(run["id"])
@@ -1507,6 +1560,9 @@ def _run_to_dict(run_row):
     # holding the run back.
     run["scoring_cost"] = round(db.get_run_scoring_cost(run["id"]), 6)
     run["limit_reached"] = _limit_reached(run["max_usd"], run["scoring_cost"]) and run["remaining"] > 0
+    _, by_run = _job_index()
+    state, job = jobs.run_state(run["remaining"], by_run.get(run["id"], []))
+    run["state"], run["job"] = state, jobs.public_job(job)
     return run
 
 
@@ -1570,12 +1626,40 @@ def process_analysis_run(run_id):
         return _process_run_chunk(run_id)
 
 
+def _limit_message(run_row):
+    return (
+        f"This run reached its spending limit of ${run_row['max_usd']:.2f}. "
+        "Raise the limit on the run page to continue."
+    )
+
+
 def _process_run_chunk(run_id):
-    """Grade one chunk of the run's ungraded papers (the caller holds the run's
-    lock, so the unscored set can't be taken by a second request meanwhile)."""
+    """The /process response for one chunk (the caller holds the run's lock)."""
+    try:
+        outcome, run_row, processed = _score_next_chunk(run_id)
+    except llm.LLMError as exc:
+        # Leave the run "running" with nothing written for this chunk, so the
+        # next /process call retries the same unscored remainder instead of
+        # skipping or duplicating anything.
+        return jsonify({"error": str(exc)}), 400
+    if outcome == "missing":
+        return jsonify({"error": "analysis run not found"}), 404
+    if outcome == "limit":
+        # Nothing is written and the run is left as it is, so raising the limit and
+        # calling /process again carries on from the same unscored papers.
+        return jsonify({"error": _limit_message(run_row), "limit_reached": True}), 400
+    return jsonify({**_run_to_dict(run_row), "processed": processed})
+
+
+def _score_next_chunk(run_id):
+    """Grade one chunk of the run's ungraded papers (the caller holds the run's lock, so the
+    unscored set can't be taken by a second request or job meanwhile). Returns (outcome, run row,
+    papers scored): outcome is "missing" (no such run), "nothing_left" (the run is finished),
+    "limit" (its spending limit stops it, nothing written) or "scored". Raises llm.LLMError when
+    the AI call fails; nothing is written for that chunk then."""
     run_row = db.get_analysis_run(run_id)
     if not run_row:
-        return jsonify({"error": "analysis run not found"}), 404
+        return "missing", None, 0
 
     chunk = db.get_unscored_papers(run_id, SCORE_CHUNK_SIZE)
     if not chunk:
@@ -1584,18 +1668,10 @@ def _process_run_chunk(run_id):
         if run_row["status"] != "completed":
             db.mark_run_completed(run_id)
             run_row = db.get_analysis_run(run_id)
-        return jsonify({**_run_to_dict(run_row), "processed": 0})
+        return "nothing_left", run_row, 0
 
     if _limit_reached(run_row["max_usd"], db.get_run_scoring_cost(run_id)):
-        # Nothing is written and the run is left as it is, so raising the limit and
-        # calling /process again carries on from the same unscored papers.
-        return jsonify(
-            {
-                "error": f"This run reached its spending limit of ${run_row['max_usd']:.2f}. "
-                "Raise the limit on the run page to continue.",
-                "limit_reached": True,
-            }
-        ), 400
+        return "limit", run_row, 0
 
     if run_row["status"] == "completed":
         # Papers have come back since the run finished (an excluded one was
@@ -1619,10 +1695,10 @@ def _process_run_chunk(run_id):
             want_title=want_title,
         )
     except llm.LLMError as exc:
-        # Leave the run "running" with nothing written for this chunk, so the
-        # next /process call retries the same unscored remainder instead of
-        # skipping or duplicating anything.
-        return jsonify({"error": str(exc)}), 400
+        if exc.usage is not None:
+            # The model answered (and was billed) but the answer was unusable: keep the cost.
+            db.record_llm_call("scoring", run_row["ai_api"], exc.usage.model, exc.usage, run_id=run_id)
+        raise
 
     scores_by_paper_id = {int(paper_id): scored for paper_id, scored in scores.items()}
     db.record_analysis_chunk(run_id, scores_by_paper_id, usage)
@@ -1632,7 +1708,7 @@ def _process_run_chunk(run_id):
     if not db.count_unscored_papers(run_id):
         db.mark_run_completed(run_id)
     run_row = db.get_analysis_run(run_id)
-    return jsonify({**_run_to_dict(run_row), "processed": len(scores_by_paper_id)})
+    return "scored", run_row, len(scores_by_paper_id)
 
 
 MAX_PROMPT_NAME_CHARS = 120
@@ -1990,6 +2066,361 @@ def _tray_wanted(argv):
     return bundle.is_frozen() or "--tray" in argv
 
 
+# ---------------------------------------------------------------------------------------------
+# Background jobs. jobs.py runs them on two worker threads; these are the pieces of work (the same
+# code the routes above always used, now not tied to a request) and the routes that queue, stop
+# and resume them. The pages poll GET /api/jobs, so work carries on whatever page is open.
+
+_ENQUEUE_LOCK = threading.Lock()  # the look-then-create steps below must not interleave
+
+
+def _enqueue(kind, dataset_id=None, run_id=None, params=None, dedupe_key=None):
+    job, created = db.enqueue_job(kind, dataset_id=dataset_id, run_id=run_id, params=params, dedupe_key=dedupe_key)
+    jobs.wake()
+    return job, created
+
+
+def _job_index():
+    """The latest jobs grouped by dataset and by run, for the pages' badges (one query)."""
+    by_dataset, by_run = {}, {}
+    for job in db.latest_jobs():
+        if job["dataset_id"] is not None:
+            by_dataset.setdefault(job["dataset_id"], []).append(job)
+        if job["run_id"] is not None:
+            by_run.setdefault(job["run_id"], []).append(job)
+    return by_dataset, by_run
+
+
+def _with_dataset_state(item, by_dataset):
+    """Adds `state` and `job` (see jobs.dataset_state) to a dataset dict."""
+    state, job = jobs.dataset_state(bool(item.get("pending")), by_dataset.get(item["id"], []))
+    return {**item, "pending": bool(item.get("pending")), "state": state, "job": jobs.public_job(job)}
+
+
+def _queue_lookups_for_all_datasets():
+    """After a new lookup key is saved: look for the abstracts it may now find, in every dataset
+    that still has papers to try."""
+    try:
+        for dataset in db.list_datasets():
+            if dataset["pending"]:
+                continue
+            missing = db.get_dataset_papers_missing_abstract(dataset["id"])
+            if any(abstracts.normalize_doi(doi) and not checked for _, doi, checked, _ in missing):
+                _enqueue("find_abstracts", dataset_id=dataset["id"])
+    except (OSError, sqlite3.Error):
+        app.logger.error("Could not queue abstract lookups:\n%s", redact(traceback.format_exc()))
+
+
+def _retry_unit(ctx, call):
+    """Run `call()` (one AI call) as a unit of work. If it fails in a way that may pass (a rate
+    limit, an overloaded service, a dropped connection) wait and ask again, a few times; anything
+    else is raised at once, since asking again would only be billed again."""
+    for attempt in range(len(jobs.RETRY_WAITS) + 1):
+        try:
+            with ctx.unit():
+                result = call()
+            ctx.set_progress(note=None)
+            return result
+        except llm.LLMError as exc:
+            if not exc.retryable or attempt >= len(jobs.RETRY_WAITS):
+                raise
+            wait = jobs.RETRY_WAITS[attempt]
+            ctx.set_progress(note=f"The AI service is busy. Trying again in {wait} seconds.")
+            ctx.sleep(wait)
+
+
+def _job_run_score(ctx):
+    run_id = ctx.job["run_id"]
+    with _exclusive("run", run_id) as acquired:
+        if not acquired:
+            raise jobs.JobFailed("This run is already being graded. Wait for it to finish.")
+        if db.get_analysis_run(run_id) is None:
+            raise jobs.JobStopped("This evaluation was deleted.")
+        total = len(db.get_run_candidate_papers(run_id))
+        while True:
+            try:
+                outcome, run_row, processed = _retry_unit(ctx, lambda: _score_next_chunk(run_id))
+            except llm.LLMError as exc:
+                raise jobs.JobFailed(str(exc)) from exc
+            if outcome == "missing":
+                raise jobs.JobStopped("This evaluation was deleted.")
+            if outcome == "limit":
+                raise jobs.JobFailed(_limit_message(run_row))
+            remaining = db.count_unscored_papers(run_id)
+            ctx.set_progress(done=max(total - remaining, 0), total=total, remaining=remaining)
+            if outcome == "nothing_left" or remaining == 0:
+                return
+            if processed == 0:
+                # Never loop on a model that keeps returning nothing: each call is billed.
+                raise jobs.JobFailed("The AI did not grade any of the papers it was sent. Try again later.")
+
+
+def _job_find_abstracts(ctx):
+    dataset_id = ctx.job["dataset_id"]
+    attempted, skipped = set(), set()
+    filled = 0
+    source_errors = {}
+    with _exclusive("lookup", dataset_id) as acquired:
+        if not acquired:
+            raise jobs.JobFailed("A lookup is already running for this dataset.")
+        while True:
+            with ctx.unit():
+                dataset_row = db.get_dataset(dataset_id)
+                if dataset_row is None:
+                    raise jobs.JobStopped("This dataset was deleted.")
+                if dataset_row.get("pending"):
+                    return
+                result = _find_abstracts_chunk(dataset_id, attempted, skipped)
+            attempted.update(result["attempted"])
+            filled += len(result["filled"])
+            source_errors.update(result["source_errors"])
+            ctx.set_progress(
+                attempted=len(attempted),
+                total=len(attempted) + max(result["remaining"], 0),
+                filled=filled,
+                no_doi=result["no_doi"],
+                source_errors=source_errors,
+            )
+            # The same stopping rule the page's loop always had: nothing left, or a pass that
+            # found nothing it could try (everything left has been tried or has no DOI).
+            if result["remaining"] <= 0 or not result["attempted"]:
+                return
+
+
+def _job_dataset_search(ctx):
+    dataset_id = ctx.job["dataset_id"]
+    params = ctx.params
+    question = params["question"]
+    from_date, to_date = params.get("from_date"), params.get("to_date")
+    sources, limit = params["sources"], params["search_limit"]
+    if db.get_dataset(dataset_id) is None:
+        raise jobs.JobStopped("This dataset was deleted.")
+
+    queries = params.get("queries")
+    if not queries:
+        # The AI step. Its queries are kept with the job, so resuming after a failed search never
+        # pays for it twice.
+        ctx.set_progress(stage="Processing the topic...")
+        try:
+            queries, usage, title = _retry_unit(
+                ctx, lambda: llm.expand_query(question, params["ai_api"], params["ai_model"])
+            )
+        except llm.LLMError as exc:
+            if exc.usage is not None:
+                # The model answered (and was billed) but the answer was unusable.
+                db.record_llm_call("query_expansion", params["ai_api"], exc.usage.model, exc.usage, dataset_id=dataset_id)
+            raise jobs.JobFailed(str(exc)) from exc
+        db.record_llm_call("query_expansion", usage.provider, usage.model, usage, dataset_id=dataset_id)
+        title = (title or "")[:MAX_DATASET_NAME_CHARS]
+        db.set_pending_dataset_queries(dataset_id, queries, title)
+        ctx.save_params(queries=queries, title=title)
+
+    # A long search spends the sources' quotas, so the same search is not run twice at once.
+    search_key = (question.lower(), from_date, to_date, tuple(sources), tuple(q.lower() for q in queries), limit)
+    with _exclusive("search", search_key) as acquired:
+        if not acquired:
+            raise jobs.JobFailed("This search is already running. Wait for it to finish.")
+        try:
+            candidates, retrieval, used = _run_searches(
+                queries,
+                sources,
+                from_date,
+                to_date,
+                limit,
+                unit=ctx.unit,
+                on_progress=lambda done, total: ctx.set_progress(
+                    stage="Searching the paper databases...", done=done, total=total
+                ),
+            )
+        except (requests.RequestException, SourceError) as exc:
+            raise jobs.JobFailed(_search_failure_message(exc)[0]) from exc
+        with ctx.unit():
+            saved = db.complete_dataset(dataset_id, candidates, retrieval)
+        if not saved:
+            raise jobs.JobStopped("This dataset was deleted.")
+        _forget_searches(used)
+    # Queued before this job is marked finished, so there is never a moment with no job showing.
+    _enqueue("find_abstracts", dataset_id=dataset_id)
+    ctx.set_progress(stage="Done", papers=len(candidates))
+
+
+def _job_dataset_refresh(ctx):
+    dataset_id = ctx.job["dataset_id"]
+    dataset_row = db.get_dataset(dataset_id)
+    if dataset_row is None or dataset_row.get("pending"):
+        raise jobs.JobStopped("This dataset was deleted.")
+    try:
+        sources = search_sources.validate_sources(dataset_row["sources"])
+        queries = llm.clean_queries([q for q in dataset_row["expanded_queries"] if isinstance(q, str)])
+        from_date, to_date = _refresh_window(dataset_row, datetime.date.today())
+    except ValueError as exc:  # InvalidRequest is one
+        raise jobs.JobFailed(str(exc)) from exc
+    with _exclusive("search", ("refresh", dataset_id)) as acquired:
+        if not acquired:
+            raise jobs.JobFailed("This dataset is already being checked. Wait for it to finish.")
+        try:
+            candidates, retrieval, used = _run_searches(
+                queries,
+                sources,
+                from_date,
+                to_date,
+                # Not the dataset's own limit: see REFRESH_SEARCH_LIMIT.
+                search_sources.REFRESH_SEARCH_LIMIT,
+                unit=ctx.unit,
+                on_progress=lambda done, total: ctx.set_progress(
+                    stage="Checking the paper sources...", done=done, total=total
+                ),
+            )
+        except (requests.RequestException, SourceError) as exc:
+            raise jobs.JobFailed(_search_failure_message(exc)[0]) from exc
+        with ctx.unit():
+            new_ids = db.save_refresh(
+                dataset_id, candidates, {"from_date": from_date, "to_date": to_date, "retrieval": retrieval}
+            )
+        _forget_searches(used)
+    _enqueue("find_abstracts", dataset_id=dataset_id)
+    ctx.set_progress(stage="Done", new_count=len(new_ids))
+
+
+jobs.configure(_GATE)
+jobs.register("run_score", _job_run_score)
+jobs.register("find_abstracts", _job_find_abstracts)
+jobs.register("dataset_search", _job_dataset_search)
+jobs.register("dataset_refresh", _job_dataset_refresh)
+
+
+@app.get("/api/jobs")
+def list_jobs():
+    return jsonify({"jobs": [jobs.public_job(job) for job in db.list_jobs()]})
+
+
+def _dataset_for_job(body, *, check_refresh=False):
+    """The dataset a job in this request works on (404 as a JSON response if it is gone), or a
+    (response, status) tuple to return. Raises InvalidRequest."""
+    dataset_id = _int_id(body.get("dataset_id"), "dataset_id")
+    dataset_row = db.get_dataset(dataset_id)
+    if dataset_row is None:
+        return None, (jsonify({"error": "dataset not found"}), 404)
+    if dataset_row.get("pending"):
+        raise InvalidRequest("This dataset's search has not finished.")
+    if check_refresh:
+        _refresh_window(dataset_row, datetime.date.today())  # raises InvalidRequest if its dates are over
+    return dataset_row, None
+
+
+def _queue_dataset_search(body):
+    question = _str(body, "question", MAX_QUESTION_CHARS)
+    if not question:
+        return jsonify({"error": "missing 'question'"}), 400
+    try:
+        from_date, to_date = _optional_range(body)
+        ai_api, ai_model = _ai_choice(body)
+        sources = search_sources.validate_sources(body.get("sources"))
+        search_limit = _search_limit(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    # An identical search that already finished is reused, as it always was (force_new opts out).
+    if not body.get("force_new"):
+        existing_id = db.find_dataset(
+            question,
+            from_date=from_date,
+            to_date=to_date,
+            sources=sources,
+            search_limit=search_limit,
+            legacy_limit=search_sources.DEFAULT_SEARCH_LIMIT,
+        )
+        if existing_id is not None:
+            dataset_row = db.get_dataset(existing_id)
+            return jsonify({"reused": True, "dataset": _dataset_to_dict(dataset_row, db.get_dataset_papers(existing_id))})
+
+    key = "dataset_search:" + json.dumps([question.lower(), from_date, to_date, sorted(sources), search_limit])
+    params = {
+        "question": question,
+        "from_date": from_date,
+        "to_date": to_date,
+        "sources": sources,
+        "search_limit": search_limit,
+        "ai_api": ai_api,
+        "ai_model": ai_model,
+    }
+    # The same search already queued or running is that one (a second click, a second tab).
+    running = db.find_job(key, ("queued", "running"))
+    if running is not None and db.get_dataset(running["dataset_id"]) is not None:
+        dataset = _dataset_to_dict(db.get_dataset(running["dataset_id"]), [])
+        return jsonify({"job": jobs.public_job(running), "dataset": dataset, "existing": True}), 202
+    # The same search left unfinished (stopped, or it failed): carry that on instead of piling up copies.
+    stopped = db.find_job(key, ("incomplete",))
+    if stopped is not None and db.get_dataset(stopped["dataset_id"]) is not None:
+        db.update_job(stopped["id"], params={**stopped["params"], "ai_api": ai_api, "ai_model": ai_model})
+        job = db.requeue_job(stopped["id"])
+        jobs.wake()
+        dataset = _dataset_to_dict(db.get_dataset(stopped["dataset_id"]), [])
+        return jsonify({"job": jobs.public_job(job), "dataset": dataset, "existing": True}), 202
+
+    dataset_id = db.create_pending_dataset(question, from_date, to_date, sources, search_limit)
+    job, _ = _enqueue("dataset_search", dataset_id=dataset_id, params=params, dedupe_key=key)
+    return jsonify({"job": jobs.public_job(job), "dataset": _dataset_to_dict(db.get_dataset(dataset_id), [])}), 202
+
+
+@app.post("/api/jobs")
+def queue_job():
+    """Queue a piece of work: {kind: "dataset_search", question, ...}, {kind: "run_score", run_id},
+    {kind: "dataset_refresh", dataset_id} or {kind: "find_abstracts", dataset_id}. Answers at once;
+    the work is done in the background (see jobs.py). Asking again for work that is already queued or
+    running returns that job."""
+    body = _json_body()
+    kind = body.get("kind")
+    if kind not in jobs.ALL_KINDS:
+        raise InvalidRequest("'kind' must be one of: " + ", ".join(jobs.ALL_KINDS))
+    with _ENQUEUE_LOCK:
+        if kind == "dataset_search":
+            return _queue_dataset_search(body)
+        if kind == "run_score":
+            run_id = _int_id(body.get("run_id"), "run_id")
+            if db.get_analysis_run(run_id) is None:
+                return jsonify({"error": "analysis run not found"}), 404
+            if db.pending_dataset_ids(d["id"] for d in db.get_run_datasets(run_id)):
+                raise InvalidRequest("A dataset in this evaluation is still being created.")
+            job, _ = _enqueue("run_score", run_id=run_id)
+        else:
+            dataset_row, refused = _dataset_for_job(body, check_refresh=kind == "dataset_refresh")
+            if refused:
+                return refused
+            job, _ = _enqueue(kind, dataset_id=dataset_row["id"])
+    return jsonify({"job": jobs.public_job(job)}), 202
+
+
+@app.post("/api/jobs/<int:job_id>/stop")
+def stop_job(job_id):
+    """Stop a job: a waiting one ends at once, a running one finishes the batch it is on (still
+    billed) and then ends as Incomplete. Anything already finished is returned as it is."""
+    job = db.get_job(job_id)
+    if job is None:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify({"job": jobs.public_job(db.request_stop(job_id) or job)})
+
+
+@app.post("/api/jobs/<int:job_id>/resume")
+def resume_job(job_id):
+    """Put an Incomplete job back in the queue; what it already did is kept."""
+    job = db.get_job(job_id)
+    if job is None:
+        return jsonify({"error": "job not found"}), 404
+    if job["status"] != "incomplete":
+        return jsonify({"error": "That job is not stopped, so there is nothing to resume."}), 409
+    if job["dataset_id"] is not None and db.get_dataset(job["dataset_id"]) is None:
+        return jsonify({"error": "dataset not found"}), 404
+    if job["run_id"] is not None and db.get_analysis_run(job["run_id"]) is None:
+        return jsonify({"error": "analysis run not found"}), 404
+    with _ENQUEUE_LOCK:
+        job = db.requeue_job(job_id)
+    if job is None:
+        return jsonify({"error": "That job is not stopped, so there is nothing to resume."}), 409
+    jobs.wake()
+    return jsonify({"job": jobs.public_job(job)})
+
+
 def _confirm_quit():
     """Quitting while a search, lookup or scoring run is in progress would lose a
     call to the AI model that has already been paid for, so ask first."""
@@ -1998,8 +2429,9 @@ def _confirm_quit():
     return ui.confirm(
         "Lit Review",
         "Lit Review is still working (searching, looking up abstracts or grading papers).\n\n"
-        "If you quit now, what it is doing is lost, and a grading step you have already "
-        "been charged for may be wasted. Graded papers so far are kept.\n\n"
+        "If you quit now, it stops where it is, and a grading step you have already "
+        "been charged for may be wasted. Graded papers so far are kept, and you can "
+        "resume the rest next time.\n\n"
         "Quit anyway?",
     )
 
@@ -2098,6 +2530,9 @@ def main(argv=None):
         # Everything that touches the data folder happens here, so a folder that
         # cannot be used is reported plainly at launch instead of as errors later.
         db.ensure_ready()
+        # Nothing is running yet, so any job still marked as running was cut off when the last
+        # copy closed: paid ones wait for the user to resume them, free lookups start again.
+        db.interrupt_stale_jobs()
         token = access.load_or_create_token(state_dir)
     except (OSError, sqlite3.Error) as exc:
         logfile.teardown()
@@ -2136,9 +2571,10 @@ def main(argv=None):
     updater.cleanup_stale()
     updater.restore_status()
     if due_update:
-        updater.mark_applying(due_update)  # no checking: this copy is about to be replaced
+        updater.mark_applying(due_update)  # no checking, no background work: this copy is about to be replaced
     else:
         _start_checking()
+        jobs.start()
     use_tray = _tray_wanted(argv)
     Timer(1, _open_browser, args=(port, token)).start()
     if due_update:
@@ -2158,6 +2594,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         pass
     finally:
+        jobs.stop()
         updater.stop_background()
         telemetry.stop_background()
         server.server_close()

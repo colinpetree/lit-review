@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
 import NewEvaluationModal from '../components/NewEvaluationModal'
+import JobStatus from '../components/JobStatus'
+import { useJobs } from '../components/JobsProvider'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
@@ -19,7 +21,9 @@ export default function PaperEvaluationsPage() {
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
   // The dataset ids a New Evaluation starts with selected; null while the dialog is closed.
   const [creating, setCreating] = useState(null)
+  const [actionError, setActionError] = useState(null)
   const [searchParams, setSearchParams] = useSearchParams()
+  const { statusKey, refreshJobs } = useJobs()
 
   // /evaluations?new=1&dataset=<id> (from a dataset page or the prompts page) opens the New
   // Evaluation dialog, then drops the parameters.
@@ -31,11 +35,25 @@ export default function PaperEvaluationsPage() {
     }
   }, [searchParams, setSearchParams])
 
+  // Loaded again whenever a job starts, stops or ends, so each card's status stays true. A
+  // failed reload keeps the list that is showing; only the first load reports an error.
+  const loaded = useRef(false)
   useEffect(() => {
+    let cancelled = false
     fetchJson('/api/analysis-runs')
-      .then((data) => setRuns(data.runs ?? []))
-      .catch((err) => setError(err.message))
-  }, [])
+      .then((data) => {
+        if (cancelled) return
+        loaded.current = true
+        setRuns(data.runs ?? [])
+        setError(null)
+      })
+      .catch((err) => {
+        if (!cancelled && !loaded.current) setError(err.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [statusKey])
 
   const visible = useMemo(
     () =>
@@ -55,6 +73,7 @@ export default function PaperEvaluationsPage() {
   const deleteRun = async (id) => {
     await deleteJson(`/api/analysis-runs/${id}`)
     setRuns((prev) => prev.filter((r) => r.id !== id))
+    refreshJobs()
   }
 
   return (
@@ -72,6 +91,7 @@ export default function PaperEvaluationsPage() {
         New Evaluation
       </button>
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      {actionError ? <p className="mb-3 text-sm text-red-600 dark:text-red-400">{actionError}</p> : null}
       {runs && runs.length === 0 ? (
         <p className="text-sm text-gray-500">
           No evaluations yet. Click <span className="font-medium">+ New Evaluation</span> to grade a dataset against your research criteria.
@@ -113,11 +133,9 @@ export default function PaperEvaluationsPage() {
                     <span>{formatDateTime(run.completed_at || run.created_at)} ·</span>
                     <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} cost={run.cost} costNote={RUN_COST_NOTE} />
                   </div>
-                  {/* Only a run with papers still ungraded gets a label; finished is the normal case. This
-                      counts the papers, not the status, which can lag (excluded since) or be stale (restored). */}
-                  {run.unscored_count > 0 ? (
-                    <span className="shrink-0 font-medium text-amber-600 dark:text-amber-400">Incomplete</span>
-                  ) : null}
+                  {/* The server works the state out (a run with papers still ungraded and nothing grading
+                      them is Incomplete, whatever its status says). */}
+                  <JobStatus item={run} />
                 </div>
               </Card>
             </Link>
@@ -126,6 +144,7 @@ export default function PaperEvaluationsPage() {
               run={run}
               onRenamed={(name) => renameRun(run.id, name)}
               onDelete={() => deleteRun(run.id)}
+              onError={setActionError}
             />
           </div>
         )}

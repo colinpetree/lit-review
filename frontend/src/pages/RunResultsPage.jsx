@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { PageShell, BackLink, Card } from '../components/ui'
 import PaperCard from '../components/PaperCard'
@@ -8,7 +8,9 @@ import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/pa
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
 import { exportMenuItems } from '../lib/exportFile'
 import { formatUsd } from '../lib/spendSetting'
-import { driveAnalysisRun, mergeRunResults } from '../lib/driveAnalysisRun'
+import { mergeRunResults } from '../lib/runResults'
+import { useJobs } from '../components/JobsProvider'
+import { isActiveJob, isWorking, jobsFor, progressSignature, statusSignature } from '../lib/jobs'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import { StageIndicator } from '../components/Spinner'
 import ModelBadge from '../components/ModelBadge'
@@ -18,79 +20,94 @@ export default function RunResultsPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [run, setRun] = useState(null)
+  // Set only when the run could not be loaded at all. Anything that goes wrong afterwards is shown
+  // beside the run (actionError) and never replaces it.
   const [error, setError] = useState(null)
-  const [resuming, setResuming] = useState(false)
+  const { jobs, startJob, refreshJobs } = useJobs()
+  // Only this evaluation's own jobs make the page load it again: another job moving along (some other
+  // evaluation, a lookup on a dataset) says nothing about what this page shows.
+  const myJobs = useMemo(() => jobsFor(jobs, 'run_id', Number(id)), [jobs, id])
+  const progressKey = useMemo(() => progressSignature(myJobs), [myJobs])
+  const statusKey = useMemo(() => statusSignature(myJobs), [myJobs])
   const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
   const [actionError, setActionError] = useState(null)
   // What the user has typed as the new spending limit (null: show the suggestion).
   const [limitInput, setLimitInput] = useState(null)
   const [raising, setRaising] = useState(false)
-  // /evaluations/:id is one long-lived route element - React Router doesn't
-  // remount it on a param-only change, so a "Resume grading" loop started
-  // on one run keeps running (and keeps calling setRun) even after the
-  // user navigates to a different run's id. Aborting the leftover request
-  // when id changes stops both the stale network calls and the stale
-  // setRun calls that would otherwise overwrite the newly-loaded run.
-  const activeRequestRef = useRef(null)
-  // The user's latest Read/relevance choice per paper id. A grading response
-  // can be built before a save lands and would show the old value, so every
-  // grading update is re-overlaid with these.
+  // /evaluations/:id is one long-lived route element - React Router doesn't remount it on a
+  // param-only change, so this says which run a reload belongs to.
+  const idRef = useRef(id)
+  const loadedRef = useRef(false)
+  const lastLoadRef = useRef(0)
+  // The user's latest Read/relevance choice per paper id. The run is loaded again as it is graded, and a
+  // copy can be built before a save lands and would show the old value, so every reload is re-overlaid
+  // with these.
   const editsRef = useRef(new Map())
   // Same idea for a rename made while grading (the AI prompt title can also
-  // change the name in a grading response, until the user picks one).
+  // change the name in a reload, until the user picks one).
   const renamedRef = useRef(null)
-  const withEdits = (r) => ({
-    ...r,
-    ...(renamedRef.current ? { name: renamedRef.current } : {}),
-    results: r.results.map((p) => (editsRef.current.has(p.id) ? { ...p, ...editsRef.current.get(p.id) } : p)),
-  })
+  const withEdits = useCallback(
+    (r) => ({
+      ...r,
+      ...(renamedRef.current ? { name: renamedRef.current } : {}),
+      results: r.results.map((p) => (editsRef.current.has(p.id) ? { ...p, ...editsRef.current.get(p.id) } : p)),
+    }),
+    [],
+  )
 
   useEffect(() => {
     let cancelled = false
-    activeRequestRef.current?.abort()
+    idRef.current = id
+    loadedRef.current = false
     editsRef.current = new Map()
     renamedRef.current = null
     setError(null)
     setRun(null)
-    setResuming(false)
     setFilter(EMPTY_PAPER_FILTER)
     setActionError(null)
     setLimitInput(null)
     setRaising(false)
     fetchJson(`/api/analysis-runs/${id}`)
-      .then((r) => !cancelled && setRun(mergeRunResults(r)))
+      .then((r) => {
+        if (cancelled) return
+        loadedRef.current = true
+        lastLoadRef.current = Date.now()
+        setRun(mergeRunResults(r))
+      })
       .catch((err) => !cancelled && setError(err.message))
     return () => {
       cancelled = true
     }
   }, [id])
 
-  const resumeScoring = async () => {
-    activeRequestRef.current?.abort()
-    const controller = new AbortController()
-    activeRequestRef.current = controller
-
-    setResuming(true)
-    setError(null)
+  // The run is graded in the background, so the page follows it: when a batch is graded, or the job starts,
+  // stops or ends, the run is loaded again (at most every 3 seconds). A reload that fails changes nothing:
+  // what is showing stays, and the next change tries again.
+  const reload = useCallback(async () => {
+    const forId = idRef.current
+    lastLoadRef.current = Date.now()
     try {
-      await driveAnalysisRun(id, controller.signal, (updated) => {
-        if (!controller.signal.aborted) setRun(withEdits(updated))
-      })
+      const latest = await fetchJson(`/api/analysis-runs/${forId}`)
+      if (idRef.current === forId) setRun(withEdits(mergeRunResults(latest)))
+    } catch {
+      // keep what is showing
+    }
+  }, [withEdits])
+  useEffect(() => {
+    if (!loadedRef.current) return
+    const wait = Math.max(0, 3000 - (Date.now() - lastLoadRef.current))
+    const timer = setTimeout(reload, wait)
+    return () => clearTimeout(timer)
+  }, [progressKey, statusKey, reload])
+
+  // Queue the grading of whatever is still ungraded (the work itself happens in the background).
+  const startGrading = async () => {
+    setActionError(null)
+    try {
+      await startJob({ kind: 'run_score', run_id: Number(id) })
+      await reload()
     } catch (err) {
-      if (err.limitReached) {
-        // Not a failure: the run is paused at its spending limit. Reload it so the page
-        // shows that (and what is left), instead of replacing the page with an error.
-        try {
-          const latest = await fetchJson(`/api/analysis-runs/${id}`)
-          if (!controller.signal.aborted) setRun(withEdits(mergeRunResults(latest)))
-        } catch (reloadErr) {
-          if (!controller.signal.aborted) setActionError(reloadErr.message)
-        }
-      } else if (err.name !== 'AbortError') {
-        setError(err.message)
-      }
-    } finally {
-      if (!controller.signal.aborted) setResuming(false)
+      setActionError(err.message)
     }
   }
 
@@ -102,14 +119,33 @@ export default function RunResultsPage() {
       await patchJson(`/api/analysis-runs/${id}`, { max_usd: amount })
       setRun((prev) => ({ ...prev, max_usd: amount, limit_reached: false }))
       setLimitInput(null)
+      await startJob({ kind: 'run_score', run_id: Number(id) })
+      await reload()
     } catch (err) {
       setActionError(err.message)
-      return
     } finally {
       setRaising(false)
     }
-    await resumeScoring()
   }
+
+  // Filtered and exportable lists are worked out once per change, not on every draw: a run can hold
+  // hundreds of papers, and the page is drawn again whenever its job moves along.
+  const results = run?.results
+  const runId = run?.id
+  const visibleResults = useMemo(() => (results ? filterPapers(results, filter) : []), [results, filter])
+  const exportItems = useMemo(
+    () =>
+      results?.length
+        ? exportMenuItems({
+            url: `/api/analysis-runs/${runId}/export`,
+            all: results.map((p) => p.id),
+            shown: visibleResults.map((p) => p.id),
+            filterActive: isPaperFilterActive(filter),
+            onError: setActionError,
+          })
+        : [],
+    [results, runId, visibleResults, filter],
+  )
 
   if (error) {
     return (
@@ -177,17 +213,20 @@ export default function RunResultsPage() {
     }
   }
 
+  // Grading is going on (or waiting its turn) in the background. The live job list is newer than the
+  // run's own copy of its state, which is refreshed a moment after a job starts or ends.
+  const liveJob = jobs.filter((j) => j.run_id === run.id && j.kind === 'run_score' && isActiveJob(j)).at(-1)
+  const job = liveJob ?? (isWorking(run) ? run.job : null)
+  const working = Boolean(job)
+  const done = job?.progress?.done ?? Math.max(run.results.length - run.remaining, 0)
+  const left = job?.progress?.remaining ?? run.remaining
+  const workingLabel =
+    job?.status === 'queued'
+      ? 'Waiting for other work to finish…'
+      : job?.stop_requested
+        ? 'Stopping after this batch…'
+        : `Grading papers… ${done} done, ${left} remaining`
   const canMarkExamples = run.prompt && !run.prompt.deleted
-  const visibleResults = filterPapers(run.results, filter)
-  const exportItems = run.results.length
-    ? exportMenuItems({
-        url: `/api/analysis-runs/${run.id}/export`,
-        all: run.results.map((p) => p.id),
-        shown: visibleResults.map((p) => p.id),
-        filterActive: isPaperFilterActive(filter),
-        onError: setActionError,
-      })
-    : []
   // When it finished, or when it was started if it hasn't.
   const runDate = formatDateTime(run.completed_at || run.created_at)
 
@@ -208,9 +247,10 @@ export default function RunResultsPage() {
                 renamedRef.current = name
                 setRun((prev) => ({ ...prev, name }))
               }}
+              onError={setActionError}
               onDelete={async () => {
-                activeRequestRef.current?.abort()
                 await deleteJson(`/api/analysis-runs/${run.id}`)
+                refreshJobs()
                 navigate('/evaluations')
               }}
             />
@@ -327,7 +367,7 @@ export default function RunResultsPage() {
               />
               <button
                 type="button"
-                disabled={raising || resuming || !(Number(limitInput ?? run.max_usd * 2) > run.scoring_cost)}
+                disabled={raising || working || !(Number(limitInput ?? run.max_usd * 2) > run.scoring_cost)}
                 onClick={() => raiseLimit(Number(limitInput ?? Math.ceil(run.max_usd * 2 * 100) / 100))}
                 className="rounded-md border border-gray-300 bg-surface px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
               >
@@ -337,21 +377,27 @@ export default function RunResultsPage() {
           </div>
         ) : null}
 
-        {resuming ? (
-          <StageIndicator
-            label={`Grading papers… ${Math.max(run.candidate_papers.length - run.remaining, 0)} done, ${run.remaining} remaining`}
-          />
+        {working ? (
+          <div className="flex flex-col gap-1">
+            <StageIndicator label={workingLabel} />
+            {job?.progress?.note ? <p className="text-xs text-gray-400">{job.progress.note}</p> : null}
+          </div>
         ) : run.remaining > 0 && !run.limit_reached ? (
-          <button
-            type="button"
-            onClick={resumeScoring}
-            className="self-start rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
-          >
-            {run.status === 'completed'
-              ? // Papers came back (or were added) after the run finished.
-                `Grade ${run.remaining} new paper${run.remaining === 1 ? '' : 's'}`
-              : `Resume grading (${run.remaining} ungraded)`}
-          </button>
+          <div className="flex flex-col items-start gap-2">
+            {run.state === 'incomplete' && run.job?.error ? (
+              <p className="text-sm text-amber-700 dark:text-amber-400">{run.job.error}</p>
+            ) : null}
+            <button
+              type="button"
+              onClick={startGrading}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+            >
+              {run.status === 'completed'
+                ? // Papers came back (or were added) after the run finished.
+                  `Grade ${run.remaining} new paper${run.remaining === 1 ? '' : 's'}`
+                : `Resume grading (${run.remaining} ungraded)`}
+            </button>
+          </div>
         ) : null}
       </Card>
 

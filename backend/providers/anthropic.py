@@ -25,11 +25,11 @@ def _call(client, **kwargs):
     except anthropic.AuthenticationError as exc:
         raise LLMError("Anthropic rejected the API key - check it in Settings.") from exc
     except anthropic.RateLimitError as exc:
-        raise LLMError("Anthropic rate limit reached. Please wait and try again.") from exc
+        raise LLMError("Anthropic rate limit reached. Please wait and try again.", retryable=True) from exc
     except anthropic.APIStatusError as exc:
-        raise LLMError(f"Anthropic API error: {exc.message}") from exc
+        raise LLMError(f"Anthropic API error: {exc.message}", retryable=exc.status_code >= 500) from exc
     except anthropic.APIConnectionError as exc:
-        raise LLMError("Failed to reach Anthropic. Check your network connection.") from exc
+        raise LLMError("Failed to reach Anthropic. Check your network connection.", retryable=True) from exc
 
 
 def _parsed_json(response):

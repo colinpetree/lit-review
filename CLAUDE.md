@@ -148,14 +148,15 @@ its status and is JSON for `/api/*`. The two long text boxes (research question,
 a matching `maxLength` in the page. `tests/test_validation.py` has the table of bad bodies; add a
 row there for any new route field.
 
-**One slow job per run or dataset.** `POST /api/analysis-runs/<id>/process` and
-`POST /api/datasets/<id>/find-abstracts` hold an `_exclusive(kind, id)` lock (non-blocking) for
-the whole call; a second request for the same run or dataset gets **409** at once. Stopping a
-request in the browser does not stop the server's call to the AI model, so without this a quick
-Stop then Resume, or a second tab, scores the same papers twice and pays twice. Any new route
-that does slow billable work should use it. Clients treat 409 as "busy, not failed":
-`driveAnalysisRun` waits 2 s and retries (up to 30 times, honoring Abort) and `startLookup` ends
-quietly; `lib/api.js` puts the HTTP status on thrown errors as `error.status` for this.
+**Slow work is a background job, one at a time per run or dataset.** Searching, checking for new
+papers, grading a run and looking up abstracts do not happen inside a request: a route queues a
+`job` row (`POST /api/jobs`) and the worker threads in `jobs.py` do the work, so it carries on
+whatever page is open (see "Background jobs" below). The older blocking routes
+(`/process`, `/find-abstracts`, `/refresh`, `POST /api/datasets`) still exist and hold the same
+`_exclusive(kind, id)` lock (non-blocking) as the jobs do; a second request for the same run or
+dataset gets **409** at once. Stopping a request in the browser does not stop the server's call to
+the AI model, so without a lock a second tab would score the same papers twice and pay twice. Any
+new code that does slow billable work should take the lock too.
 
 **One app per user, and only that user.** Loopback is shared by every account on the computer,
 so the port alone is not private: another signed-in user could open your copy (your datasets, AI
@@ -340,10 +341,10 @@ against real copies on spare ports works well.
   `source_http.get` words the cause in the message ("Could not reach Europe PMC (it took too long
   to answer)") and logs the real exception, without any key; only a real answer (including 404
   "not found") counts as asked, so an outage never marks a paper checked. DOIs go into URL paths
-  through `source_http.quote_doi` (some contain `?`, `#`, `<`). Driven by `POST /api/datasets/<id>/find-abstracts` (one chunk of `FIND_ABSTRACTS_CHUNK_SIZE`=10 papers per call, looked up **at the same time** by `app._look_up_batch`, so a slow source delays only its own paper; a lookup that crashes is logged and leaves its paper to be retried, and Semantic Scholar's requests still queue one interval apart under a lock in `source_http` however many are waiting; stateless:
-  the client sends back `skip_ids`/`skip_sources`; loop in `frontend/src/lib/findAbstracts.js`).
-  Filled abstracts record `paper.abstract_source`. The dataset page starts this lookup
-  automatically when it loads; `paper.abstract_checked_at` marks papers a lookup completed
+  through `source_http.quote_doi` (some contain `?`, `#`, `<`). Done in chunks of `FIND_ABSTRACTS_CHUNK_SIZE`=10 papers by `app._find_abstracts_chunk`, looked up **at the same time** by `app._look_up_batch`, so a slow source delays only its own paper; a lookup that crashes is logged and leaves its paper to be retried, and Semantic Scholar's requests still queue one interval apart under a lock in `source_http` however many are waiting. The `find_abstracts` job (`app._job_find_abstracts`) loops the chunks, keeping the attempted ids and skipped sources in memory; the old `POST /api/datasets/<id>/find-abstracts` route returns one chunk and is stateless (the caller sends back `skip_ids`/`skip_sources`).
+  Filled abstracts record `paper.abstract_source`. The lookup is queued automatically when a dataset
+  is created or checked for new papers, and for every dataset with papers left to try when a
+  lookup key is saved (no page needs to be open); `paper.abstract_checked_at` marks papers a lookup completed
   for without finding an abstract, so neither the automatic run nor the button asks again
   (saving a new Elsevier/Springer/Semantic Scholar key clears the marks, since a new source
   can be asked). A paper is marked only once **every source that applies has answered** (`abstracts.Lookup.complete`):
@@ -388,7 +389,7 @@ against real copies on spare ports works well.
   database stamped higher than the code (`DatabaseTooNew`) is refused. (Version 3 added
   `dataset.last_refresh`; 4 added `paper.is_retracted`, `paper.work_type` and
   `analysis_run.include_retracted`; 5 added `dataset.search_limit`; 6 added
-  `paper.abstract_answered`; 7 added `analysis_run.max_usd`.) Foreign keys are enforced.
+  `paper.abstract_answered`; 7 added `analysis_run.max_usd`; 8 added the `job` table and `dataset.pending`.) Foreign keys are enforced.
   Papers without a DOI match on `paper.title_key` (`title_match.title_key`: markup, accents, case
   and punctuation ignored, `+` and `#` kept) plus year; it is stored, so a change to that rule
   needs a version bump and re-backfill. `get_or_create_papers` inserts a whole search in one
@@ -489,9 +490,46 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   the threshold); New Evaluation shows the estimate (`lib/useRunEstimate.js`), asks through `ConfirmModal`
   above the threshold, and a run stopped by its limit sends the user to the run page, which offers
   "Raise limit and continue".
-- Runs are resumable. The client repeatedly POSTs `/api/analysis-runs/<id>/process`, and
-  each call scores one chunk (`SCORE_CHUNK_SIZE`=20) of still-unscored papers until the
-  run's status is `completed`. `frontend/src/lib/driveAnalysisRun.js` is that loop.
+- Runs are resumable. The `run_score` job (`app._job_run_score`) scores one chunk
+  (`SCORE_CHUNK_SIZE`=20) of still-unscored papers at a time with `app._score_next_chunk` until none are
+  left; what is left is always re-read from `analysis_result`, never remembered. `POST
+  /api/analysis-runs/<id>/process` is the same chunk as one request.
+
+**Background jobs (`jobs.py`, the `job` table).** `POST /api/jobs` with `{kind: "dataset_search" |
+"run_score" | "dataset_refresh" | "find_abstracts", ...}` queues work and answers at once;
+`POST /api/analysis-runs` takes `start: true` to create a run and queue it in one request. Two daemon
+threads started by `main()` (never at import, so tests stay in control; they call `jobs.drain()`) take
+rows from the table: the **paid lane** (searches, checks, grading) one at a time in the order queued, and
+the **lookup lane** (free abstract lookups), which never waits behind a long evaluation. The pieces of
+work live in `app.py` (`_job_*`) and are registered with `jobs.register`; each does its work in small
+units inside `ctx.unit()`.
+- *Statuses* are `queued`, `running`, `completed`, `incomplete` (stopped, failed or interrupted). The
+  server works out each item's `state` (adds `stopping`) and `job` for the pages: `jobs.dataset_state` /
+  `jobs.run_state`, attached to every dataset and run dict. A finished dataset shows Running only while a
+  check or lookup is under way, and a failed check or lookup never makes it Incomplete; a run with papers
+  left and nothing grading them is Incomplete even if no job ever ran.
+- *Stop* takes effect between units (`ctx.check()` raises `JobStopped`); the call in flight finishes and is
+  billed. `POST /api/jobs/<id>/stop` ends a waiting job at once. *Resume* (`/resume`) re-queues an
+  incomplete job; a run with no job is started with a new `run_score` job. Deleting a dataset or run stops
+  its jobs; purging from the trash is refused while one is active.
+- *Datasets are created before they are searched.* `dataset_search` makes a placeholder (`dataset.pending =
+  1`, no papers) so it shows on the list; `db.complete_dataset` fills it in one transaction. Everything that
+  uses datasets treats a pending one as not ready (`find_dataset`, run create/estimate, refresh, lookup,
+  the New Evaluation list). The expanded queries are saved on the job, so resuming never pays for the AI
+  step twice. The same search queued or stopped already is that job (`dedupe_key`), not a copy.
+- *Retries:* `llm.LLMError.retryable` (set by each provider for rate limits, overloads, 5xx, dropped
+  connections) is the only thing the worker retries (3 times, 5/20/60 s); an unusable-but-billed answer
+  (`exc.usage`) is logged once and never retried.
+- *Restore, update, quit:* each unit runs inside `_GATE` (`ctx.unit`), so a restore or update install waits
+  for it. `db.epoch()` goes up when a backup replaces the data; a job that sees it change ends without
+  writing. Launch (and a restore) runs `db.interrupt_stale_jobs()`: paid jobs become Incomplete (the user
+  resumes them; nothing spends money by itself), lookups are queued again. `_jobs_running()` also counts
+  queued/running jobs, so the quit prompt and the updater know.
+- *Pages* follow jobs through `JobsProvider` (polls `GET /api/jobs`, 2.5 s while any is active, 20 s
+  otherwise; a failed poll keeps the last answer). It exposes `statusKey` (a job started, stopped or
+  ended) and `progressKey` (one moved along): lists reload on `statusKey`, detail pages on either (at most
+  every 3 s), always quietly, so a failed reload never replaces what is showing. A full-page error is for
+  the first load only.
 
 - A `prompt` (name + description/ideal research paper contents) is reusable across datasets. Each
   run points at one via `prompt_id` but keeps its own snapshot: `grading_prompt` (the text)
@@ -531,7 +569,7 @@ API-returned abstracts and must never invent citations.
 ### Frontend
 
 React 19 + Vite + Tailwind v3 (PostCSS, `tailwind.config.js`, same as an earlier project) + react-router. Routes are in
-`src/main.jsx` under a shared `AppLayout`: datasets (+ `:id`), prompts (+ `:id`), evaluations (+ `:id`), trash (Deleted Items, reached from Settings). Creating things is not a page: "+ New Dataset" (`PaperDataSetsPage`, `components/NewDatasetModal.jsx`) and "+ New Evaluation" (`PaperEvaluationsPage`, `NewEvaluationModal.jsx`) open modals. Both pages also open theirs from `?new=1` (the evaluations one takes `&dataset=<id>` to preselect), which is how other pages start one, then clear it. The old `/discover`, `/evaluate`, `/results` and `/results/:id` addresses redirect. Shared UI: `MoreMenu` (more-horizontal
+`src/main.jsx` under a shared `AppLayout`: datasets (+ `:id`), prompts (+ `:id`), evaluations (+ `:id`), trash (Deleted Items, reached from Settings). Creating things is not a page: "+ New Dataset" (`PaperDataSetsPage`, `components/NewDatasetModal.jsx`) and "+ New Evaluation" (`PaperEvaluationsPage`, `NewEvaluationModal.jsx`) open modals that only queue a background job (`POST /api/jobs`, or `POST /api/analysis-runs` with `start: true`) and close at once; the new item appears on the list with its status. Both pages also open theirs from `?new=1` (the evaluations one takes `&dataset=<id>` to preselect), which is how other pages start one, then clear it. The old `/discover`, `/evaluate`, `/results` and `/results/:id` addresses redirect. Shared UI: `MoreMenu` (more-horizontal
 popover), `Modal`/`ConfirmModal`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
 
 **Settings** is a large modal over the app, not a route. The Settings button at the bottom of the `Sidebar` calls

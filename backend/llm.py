@@ -319,7 +319,10 @@ def score_batch(grading_prompt, candidates, ai_api, model, examples=None, want_t
 
     A paper the model skips is retried once on its own. If it is skipped
     again it gets score None with an explanatory rationale, so the run can
-    finish instead of re-selecting the same unscored paper forever."""
+    finish instead of re-selecting the same unscored paper forever. If that
+    second call fails outright, the first call's grades are returned without
+    the skipped papers (which stay ungraded); a failure of the first call
+    raises."""
     if ai_api not in MODELS or model not in MODELS[ai_api]:
         raise LLMError(f"The model '{model}' ({ai_api}) is no longer supported.")
     scores, usage, title = _score_call(
@@ -328,9 +331,19 @@ def score_batch(grading_prompt, candidates, ai_api, model, examples=None, want_t
 
     missing = [c for c in candidates if str(c["id"]) not in scores]
     if missing:
-        retry_scores, retry_usage, _ = _score_call(
-            grading_prompt, missing, ai_api, model, examples, False
-        )
+        try:
+            retry_scores, retry_usage, _ = _score_call(
+                grading_prompt, missing, ai_api, model, examples, False
+            )
+        except LLMError as exc:
+            if not scores:
+                raise
+            # The first call's grades are already paid for, so keep them rather than throw them
+            # away (and pay for them again on a retry). The skipped papers are left out, not given
+            # "no judgment": they stay ungraded, and a later batch asks about them again.
+            if exc.usage is not None:
+                usage.add(exc.usage)
+            return scores, usage, title
         scores.update(retry_scores)
         usage.add(retry_usage)
 

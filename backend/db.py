@@ -39,11 +39,16 @@ _LOCK = threading.Lock()
 # 4 = paper.is_retracted, paper.work_type and analysis_run.include_retracted.
 # 5 = dataset.search_limit.
 # 6 = paper.abstract_answered.
-# 7 = analysis_run.max_usd. A database stamped higher than this was made by a newer
-# version and is not opened.
-SCHEMA_VERSION = 7
+# 7 = analysis_run.max_usd.
+# 8 = the job table (background work) and dataset.pending (a dataset whose search has not
+# finished). A database stamped higher than this was made by a newer version and is not opened.
+SCHEMA_VERSION = 8
 
 _INIT_LOCK = threading.Lock()
+# Goes up each time a backup replaces the database. A background job remembers the number it
+# started under and stops without writing if it changed, since its ids mean nothing in the
+# restored data.
+_EPOCH = 0
 _ready_for = None  # the DB_PATH that has been created, migrated and tuned
 
 
@@ -133,6 +138,24 @@ CREATE TABLE IF NOT EXISTS prompt_example (
     rationale TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE (prompt_id, paper_id)
+);
+
+-- Background work the app does by itself (see jobs.py): one row per piece of work, kept after
+-- it finishes so the pages can show how it ended.
+CREATE TABLE IF NOT EXISTS job (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    dataset_id INTEGER REFERENCES dataset(id),
+    run_id INTEGER REFERENCES analysis_run(id),
+    dedupe_key TEXT NOT NULL,
+    params TEXT,
+    progress TEXT,
+    error TEXT,
+    stop_requested INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS llm_call (
@@ -273,6 +296,13 @@ def _migrate(conn):
         conn.execute("ALTER TABLE dataset ADD COLUMN last_refresh TEXT")
         conn.commit()
 
+    # 1 while a dataset's search has not finished (queued, running, stopped or failed): the dataset
+    # is a placeholder with no papers and is not offered for evaluating. NULL/0 once complete, and
+    # on every dataset from before searches ran in the background.
+    if "pending" not in dataset_columns:
+        conn.execute("ALTER TABLE dataset ADD COLUMN pending INTEGER")
+        conn.commit()
+
     # The search's publication date bounds ("YYYY-MM-DD"), replacing the bare
     # years in from_year/to_year (still filled in, as the year of each bound).
     # Datasets from before get a bound from their year: Jan 1 / Dec 31.
@@ -397,6 +427,10 @@ def _create_indexes(conn):
         "CREATE INDEX IF NOT EXISTS idx_llm_call_run ON llm_call(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_llm_call_dataset ON llm_call(dataset_id)",
         "CREATE INDEX IF NOT EXISTS idx_prompt_example_paper ON prompt_example(paper_id)",
+        "CREATE INDEX IF NOT EXISTS idx_job_status ON job(status)",
+        "CREATE INDEX IF NOT EXISTS idx_job_dataset ON job(dataset_id)",
+        "CREATE INDEX IF NOT EXISTS idx_job_run ON job(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_job_dedupe ON job(dedupe_key)",
     ):
         conn.execute(statement)
     conn.commit()
@@ -835,6 +869,56 @@ def _insert_dataset(
     return cur.lastrowid
 
 
+def create_pending_dataset(verbose_query, from_date, to_date, sources, search_limit):
+    """The placeholder a queued search is shown as: no papers, not offered for evaluating, until
+    complete_dataset. Returns the dataset id."""
+    with _LOCK, closing(_connect()) as conn:
+        dataset_id = _insert_dataset(conn, verbose_query, [], from_date, to_date, None, sources, None, search_limit)
+        conn.execute("UPDATE dataset SET pending = 1 WHERE id = ?", (dataset_id,))
+        conn.commit()
+        return dataset_id
+
+
+def set_pending_dataset_queries(dataset_id, expanded_queries, name):
+    """The expanded queries and AI-written title, as soon as they exist, so the card shows the
+    title while the papers are still being fetched."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE dataset SET expanded_queries = ?, name = COALESCE(NULLIF(?, ''), name) WHERE id = ? AND pending = 1",
+            (json.dumps(expanded_queries), (name or "").strip(), dataset_id),
+        )
+        conn.commit()
+
+
+def complete_dataset(dataset_id, candidates, retrieval):
+    """A pending dataset's finished retrieval, as one unit: its papers (in the shape
+    openalex._work_to_result() returns), their membership and how complete each search was. A failure
+    part way leaves it pending with no papers. Returns False if it is gone or already complete."""
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute("SELECT pending FROM dataset WHERE id = ? AND deleted_at IS NULL", (dataset_id,)).fetchone()
+        if row is None or not row["pending"]:
+            return False
+        paper_ids = [_get_or_create_paper(conn, candidate) for candidate in candidates]
+        _insert_dataset_papers(conn, dataset_id, paper_ids)
+        conn.execute(
+            "UPDATE dataset SET pending = 0, retrieval = ? WHERE id = ?",
+            (json.dumps(retrieval) if retrieval is not None else None, dataset_id),
+        )
+        conn.commit()
+        return True
+
+
+def pending_dataset_ids(dataset_ids):
+    """Which of these datasets are still waiting for their search to finish."""
+    ids = list(dataset_ids)
+    if not ids:
+        return []
+    with closing(_connect()) as conn:
+        marks = ",".join("?" * len(ids))
+        rows = conn.execute(f"SELECT id FROM dataset WHERE pending = 1 AND id IN ({marks})", ids).fetchall()
+        return [row["id"] for row in rows]
+
+
 def save_retrieved_dataset(
     verbose_query,
     expanded_queries,
@@ -916,6 +1000,7 @@ def find_dataset(verbose_query, from_date=None, to_date=None, sources=None, sear
             SELECT id, sources FROM dataset
             WHERE verbose_query = ?
               AND deleted_at IS NULL
+              AND COALESCE(pending, 0) = 0
               AND (from_date IS ? OR from_date = ?)
               AND (to_date IS ? OR to_date = ?)
               AND COALESCE(search_limit, ?) IS ?
@@ -934,6 +1019,7 @@ def list_datasets():
         rows = conn.execute(
             """
             SELECT d.id, d.name, d.verbose_query, d.from_year, d.to_year, d.created_at,
+                   COALESCE(d.pending, 0) AS pending,
                    -- When the dataset was last checked for new papers (NULL if never, or if
                    -- the record is unreadable: json_extract raises on malformed JSON, which
                    -- would fail the whole list over one bad row).
@@ -1449,16 +1535,23 @@ def count_retracted_left_out(run_id):
         return row["total"]
 
 
-def get_run_candidate_papers(run_id):
+def get_run_candidate_papers(run_id, unscored_only=False):
     """Every candidate paper for a run (scored or not) - the full list a
-    run's results get merged onto for progressive/resumed display."""
+    run's results get merged onto for progressive/resumed display. With
+    `unscored_only`, just the ones with no result yet: the run's results already hold
+    the others, so that is all a page showing a run in progress needs to be sent."""
     subquery, params = _run_papers_subquery(run_id)
+    where = ""
+    if unscored_only:
+        where = "LEFT JOIN analysis_result ar ON ar.run_id = ? AND ar.paper_id = included.paper_id WHERE ar.id IS NULL"
+        params = (*params, run_id)
     with closing(_connect()) as conn:
         rows = conn.execute(
             f"""
             SELECT p.*, included.paper_id AS paper_id
             FROM ({subquery}) included
             JOIN paper p ON p.id = included.paper_id
+            {where}
             """,
             params,
         ).fetchall()
@@ -1690,6 +1783,224 @@ def get_run_cost(run_id):
 
 # Backup, restore and the trash
 
+
+# Background jobs (see jobs.py). A job is one row; its work is saved as it goes in the tables it
+# changes (scores, abstracts, papers), so a job resumes by looking at what is left, and `progress`
+# is only for showing how far along it is.
+
+JOB_ACTIVE = ("queued", "running")
+FINISHED_JOB_KEEP_SECONDS = 600
+
+
+def _job_to_dict(row):
+    job = dict(row)
+    for column in ("params", "progress"):
+        try:
+            job[column] = json.loads(job[column]) if job.get(column) else {}
+        except ValueError:
+            job[column] = {}
+    job["stop_requested"] = bool(job["stop_requested"])
+    return job
+
+
+def epoch():
+    """See _EPOCH."""
+    return _EPOCH
+
+
+def enqueue_job(kind, dataset_id=None, run_id=None, params=None, dedupe_key=None):
+    """Queue a job. If one with the same dedupe key is already queued or running, that one is
+    returned instead and nothing is added: a second click or a second tab cannot double the work.
+    The default key is the kind and what it works on. Returns (job, created)."""
+    key = dedupe_key or f"{kind}:{dataset_id or ''}:{run_id or ''}"
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT * FROM job WHERE dedupe_key = ? AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        if row:
+            return _job_to_dict(row), False
+        cur = conn.execute(
+            """
+            INSERT INTO job (kind, status, dataset_id, run_id, dedupe_key, params, progress, created_at)
+            VALUES (?, 'queued', ?, ?, ?, ?, '{}', ?)
+            """,
+            (kind, dataset_id, run_id, key, json.dumps(params or {}), _now()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM job WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return _job_to_dict(row), True
+
+
+def get_job(job_id):
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
+        return _job_to_dict(row) if row else None
+
+
+def find_job(dedupe_key, statuses):
+    """The newest job with this dedupe key in one of these statuses, or None."""
+    marks = ",".join("?" * len(statuses))
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            f"SELECT * FROM job WHERE dedupe_key = ? AND status IN ({marks}) ORDER BY id DESC LIMIT 1",
+            (dedupe_key, *statuses),
+        ).fetchone()
+        return _job_to_dict(row) if row else None
+
+
+def claim_next_job(kinds):
+    """Take the oldest queued job of these kinds and mark it running, or None. Atomic: two
+    workers cannot take the same job."""
+    marks = ",".join("?" * len(kinds))
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute(
+            f"SELECT * FROM job WHERE status = 'queued' AND kind IN ({marks}) ORDER BY id LIMIT 1", tuple(kinds)
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE job SET status = 'running', started_at = ?, finished_at = NULL, error = NULL WHERE id = ?",
+            (_now(), row["id"]),
+        )
+        conn.commit()
+        return _job_to_dict(conn.execute("SELECT * FROM job WHERE id = ?", (row["id"],)).fetchone())
+
+
+def update_job(job_id, progress=None, params=None):
+    """Save how far a running job is (and anything it needs to resume with)."""
+    with _LOCK, closing(_connect()) as conn:
+        if progress is not None:
+            conn.execute("UPDATE job SET progress = ? WHERE id = ?", (json.dumps(progress), job_id))
+        if params is not None:
+            conn.execute("UPDATE job SET params = ? WHERE id = ?", (json.dumps(params), job_id))
+        conn.commit()
+
+
+def finish_job(job_id, status, error=None):
+    """End a job as 'completed' or 'incomplete' (stopped, failed or interrupted)."""
+    with _LOCK, closing(_connect()) as conn:
+        conn.execute(
+            "UPDATE job SET status = ?, error = ?, stop_requested = 0, finished_at = ? WHERE id = ?",
+            (status, error, _now(), job_id),
+        )
+        conn.commit()
+
+
+def request_stop(job_id):
+    """Ask a job to stop. A queued job ends at once; a running one is flagged and ends at its next
+    safe point. Returns the job, or None if it does not exist or has already ended."""
+    with _LOCK, closing(_connect()) as conn:
+        row = conn.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone()
+        if row is None or row["status"] not in JOB_ACTIVE:
+            return None
+        if row["status"] == "queued":
+            conn.execute(
+                "UPDATE job SET status = 'incomplete', error = 'Stopped before it started.', finished_at = ? WHERE id = ?",
+                (_now(), job_id),
+            )
+        else:
+            conn.execute("UPDATE job SET stop_requested = 1 WHERE id = ?", (job_id,))
+        conn.commit()
+        return _job_to_dict(conn.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone())
+
+
+def stop_requested(job_id):
+    """True when a running job should wind down: it was asked to stop, or is no longer running
+    (it was ended or deleted behind its back)."""
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT stop_requested, status FROM job WHERE id = ?", (job_id,)).fetchone()
+        return row is None or bool(row["stop_requested"]) or row["status"] != "running"
+
+
+def requeue_job(job_id):
+    """Put an incomplete job back in the queue. Returns the job, or None if it is not incomplete."""
+    with _LOCK, closing(_connect()) as conn:
+        cur = conn.execute(
+            """
+            UPDATE job SET status = 'queued', error = NULL, stop_requested = 0, finished_at = NULL
+            WHERE id = ? AND status = 'incomplete'
+            """,
+            (job_id,),
+        )
+        conn.commit()
+        if not cur.rowcount:
+            return None
+        return _job_to_dict(conn.execute("SELECT * FROM job WHERE id = ?", (job_id,)).fetchone())
+
+
+def active_jobs_for(dataset_id=None, run_id=None):
+    column, value = ("dataset_id", dataset_id) if dataset_id is not None else ("run_id", run_id)
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM job WHERE {column} = ? AND status IN ('queued', 'running') ORDER BY id", (value,)
+        ).fetchall()
+        return [_job_to_dict(row) for row in rows]
+
+
+def stop_jobs_for(dataset_id=None, run_id=None):
+    """Ask every active job on a dataset or run to stop (it is being deleted). Their dedupe keys are
+    changed too: a job still winding down must not be mistaken for the same work asked for again
+    (a search repeated at once would otherwise be handed that job, and its deleted dataset)."""
+    for job in active_jobs_for(dataset_id=dataset_id, run_id=run_id):
+        request_stop(job["id"])
+        with _LOCK, closing(_connect()) as conn:
+            conn.execute("UPDATE job SET dedupe_key = dedupe_key || '#stopped' WHERE id = ?", (job["id"],))
+            conn.commit()
+
+
+def list_jobs():
+    """Jobs that are queued or running, and those that ended in the last few minutes."""
+    cutoff = datetime.fromtimestamp(time.time() - FINISHED_JOB_KEEP_SECONDS, timezone.utc).isoformat()
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM job WHERE status IN ('queued', 'running') OR finished_at >= ? ORDER BY id", (cutoff,)
+        ).fetchall()
+        return [_job_to_dict(row) for row in rows]
+
+
+def latest_jobs():
+    """For the lists: every active job, plus the newest job of each kind on each dataset or run."""
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM job
+            WHERE status IN ('queued', 'running')
+               OR id IN (SELECT MAX(id) FROM job GROUP BY kind, COALESCE(dataset_id, 0), COALESCE(run_id, 0))
+            ORDER BY id
+            """
+        ).fetchall()
+        return [_job_to_dict(row) for row in rows]
+
+
+def has_active_jobs():
+    with closing(_connect()) as conn:
+        return conn.execute("SELECT 1 FROM job WHERE status IN ('queued', 'running') LIMIT 1").fetchone() is not None
+
+
+def interrupt_stale_jobs():
+    """At launch (and after a restore): nothing is running, so a job still marked running or queued
+    was cut off. Paid jobs become incomplete, for the user to resume; free abstract lookups just
+    go back in the queue. Returns the number of jobs changed."""
+    now = _now()
+    with _LOCK, closing(_connect()) as conn:
+        cur = conn.execute(
+            """
+            UPDATE job SET status = 'incomplete', stop_requested = 0, finished_at = ?,
+                           error = 'It was interrupted when Lit Review closed. Resume it to carry on.'
+            WHERE status IN ('queued', 'running') AND kind != 'find_abstracts'
+            """,
+            (now,),
+        )
+        changed = cur.rowcount
+        cur = conn.execute(
+            "UPDATE job SET status = 'queued', stop_requested = 0, started_at = NULL "
+            "WHERE status = 'running' AND kind = 'find_abstracts'"
+        )
+        conn.commit()
+        return changed + cur.rowcount
+
+
 class BackupError(Exception):
     """A backup that cannot be made or used. The message is safe to show the user."""
 
@@ -1771,7 +2082,7 @@ def replace_with_backup(upload):
     shut the request gate (see request_gate.py). An older backup is upgraded the way any
     older database is. If the result cannot be opened, the previous data is put back.
     Returns the safety copy's file name. Raises BackupError."""
-    global _ready_for
+    global _ready_for, _EPOCH
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     safety = DB_PATH.with_name(f"{DB_PATH.name}.before-restore-{stamp}")
     n = 2
@@ -1789,8 +2100,10 @@ def replace_with_backup(upload):
             _ready_for = None
             _replace_file(upload, DB_PATH)
             _ensure_ready()
+            _EPOCH += 1
         except Exception as exc:
             logging.getLogger(__name__).error("Restoring a backup failed: %s", exc)
+            _EPOCH += 1  # the file was swapped back and forth: nothing running can trust its ids
             try:
                 _ready_for = None
                 _remove_side_files(DB_PATH)
@@ -1900,6 +2213,14 @@ def purge_from_trash(kind, item_id):
         row = conn.execute(f"SELECT id FROM {table} WHERE id = ? AND deleted_at IS NOT NULL", (item_id,)).fetchone()
         if row is None:
             return None
+        if kind in ("dataset", "run"):
+            working = conn.execute(
+                f"SELECT COUNT(*) FROM job WHERE {'dataset_id' if kind == 'dataset' else 'run_id'} = ? "
+                "AND status IN ('queued', 'running')",
+                (item_id,),
+            ).fetchone()[0]
+            if working:
+                raise TrashError(f"This {kind} is still being worked on. Try again in a moment.")
         if kind == "dataset":
             use = conn.execute(
                 """
@@ -1932,6 +2253,7 @@ def purge_from_trash(kind, item_id):
         if kind == "dataset":
             paper_ids = [r[0] for r in conn.execute("SELECT paper_id FROM dataset_paper WHERE dataset_id = ?", (item_id,))]
             conn.execute("UPDATE llm_call SET dataset_id = NULL WHERE dataset_id = ?", (item_id,))
+            conn.execute("DELETE FROM job WHERE dataset_id = ?", (item_id,))
             conn.execute("DELETE FROM dataset_paper WHERE dataset_id = ?", (item_id,))
             conn.execute("DELETE FROM dataset WHERE id = ?", (item_id,))
         elif kind == "prompt":
@@ -1943,6 +2265,7 @@ def purge_from_trash(kind, item_id):
             conn.execute("UPDATE llm_call SET run_id = NULL WHERE run_id = ?", (item_id,))
             conn.execute("UPDATE prompt_example SET source_run_id = NULL WHERE source_run_id = ?", (item_id,))
             conn.execute("DELETE FROM analysis_result WHERE run_id = ?", (item_id,))
+            conn.execute("DELETE FROM job WHERE run_id = ?", (item_id,))
             conn.execute("DELETE FROM analysis_run_dataset WHERE run_id = ?", (item_id,))
             conn.execute("DELETE FROM analysis_run WHERE id = ?", (item_id,))
         removed = _delete_unreferenced_papers(conn, paper_ids)

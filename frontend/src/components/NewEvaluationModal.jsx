@@ -1,17 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSettingsModal } from './SettingsModalProvider'
 import { X } from 'lucide-react'
 import Checkbox from './Checkbox'
 import Combobox from './Combobox'
 import Modal from './Modal'
-import { StageIndicator } from './Spinner'
+import { useJobs } from './JobsProvider'
 import AiModelSelect, { hasConfiguredProvider, defaultAiChoice, usableAiChoice } from './AiModelSelect'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import PromptCombobox, { NEW_PROMPT } from './PromptCombobox'
 import AutoGrowTextarea from './AutoGrowTextarea'
 import { fetchJson, postJson } from '../lib/api'
-import { driveAnalysisRun } from '../lib/driveAnalysisRun'
 import { formatDateTime } from '../lib/format'
 import { loadEvaluateAiChoice, saveEvaluateAiChoice } from '../lib/evaluateSettings'
 import ConfirmModal from './ConfirmModal'
@@ -39,27 +38,18 @@ export default function NewEvaluationModal({ onClose, initialDatasetIds = [] }) 
   const [aiChoice, setAiChoice] = useState(loadEvaluateAiChoice)
   const [status, setStatus] = useState('idle') // idle | loading | error
   const [error, setError] = useState(null)
-  const [progress, setProgress] = useState(null)
   // A run whose estimate is above the user's threshold, waiting for their yes: { usd, papers, limit }.
   const [confirming, setConfirming] = useState(null)
   // Waiting for an estimate that the run's start needs and the form did not have yet.
   const [pricing, setPricing] = useState(false)
-  // Aborts a prior in-flight submission before starting a new one - guards
-  // against a rapid double-submit (double-click, double Enter) firing two
-  // real analysis runs (and paying for LLM grading twice) before the
-  // submit button's disabled state has re-rendered.
-  const activeRequestRef = useRef(null)
-  // The run this form created, so Stop can send the user to it (it can be resumed there).
-  const [createdId, setCreatedId] = useState(null)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
-
-  // A request still running when the dialog goes away is dropped, not left to navigate later.
-  useEffect(() => () => activeRequestRef.current?.abort(), [])
+  const { refreshJobs } = useJobs()
 
   useEffect(() => {
     fetchJson('/api/datasets')
       .then((data) => {
-        const list = data.datasets ?? []
+        // A dataset whose search is still going has no papers to evaluate yet.
+        const list = (data.datasets ?? []).filter((d) => !d.pending)
         setDatasets(list)
         // A preselected dataset to a dataset that was deleted (or never existed)
         // must not stay selected, or Run would be enabled with no badge.
@@ -77,19 +67,9 @@ export default function NewEvaluationModal({ onClose, initialDatasetIds = [] }) 
   const savedPrompt = isNewPrompt ? null : prompts.find((p) => p.id === promptChoice)
   const promptReady = isNewPrompt ? Boolean(gradingPrompt.trim()) : Boolean(savedPrompt)
 
-  // Closing with a typed grading prompt asks first, so a stray Escape does not throw it away.
+  // Closing with a typed grading prompt asks first, so nothing typed is thrown away by accident.
   const dirty = isNewPrompt && Boolean(gradingPrompt.trim())
   const requestClose = () => (dirty && !loading ? setConfirmingDiscard(true) : onClose())
-
-  // Stops grading. A run that was already created keeps what was graded and resumes from its page.
-  const stop = () => {
-    activeRequestRef.current?.abort()
-    setStatus('idle')
-    if (createdId !== null) {
-      navigate(`/evaluations/${createdId}`)
-      onClose()
-    }
-  }
 
   const toggle = (id) => {
     setSelected((prev) => {
@@ -164,41 +144,22 @@ export default function NewEvaluationModal({ onClose, initialDatasetIds = [] }) 
     startRun(limitFor({ usd: priced.usd, threshold, confirmed: false }))
   }
 
+  // Creates the evaluation and queues its grading, then the dialog closes: the grading itself runs in
+  // the background, and the evaluation appears in the list with its progress.
   const startRun = async (maxUsd) => {
     saveEvaluateAiChoice(choice)
 
-    activeRequestRef.current?.abort()
-    const controller = new AbortController()
-    activeRequestRef.current = controller
-
     setStatus('loading')
     setError(null)
-    setProgress(null)
-
-    setCreatedId(null)
-    let newId = null
     try {
-      const run = await postJson(
-        '/api/analysis-runs',
-        { ...runRequest, ...(maxUsd === null ? {} : { max_usd: maxUsd }) },
-        { signal: controller.signal }
-      )
-      newId = run.id
-      setCreatedId(run.id)
-      await driveAnalysisRun(run.id, controller.signal, (update) => {
-        setProgress({ processed: update.candidate_papers.length - update.remaining, remaining: update.remaining })
+      await postJson('/api/analysis-runs', {
+        ...runRequest,
+        ...(maxUsd === null ? {} : { max_usd: maxUsd }),
+        start: true,
       })
-      navigate(`/evaluations/${run.id}`)
+      await refreshJobs()
       onClose()
     } catch (err) {
-      if (err.name === 'AbortError') return
-      // The run's spending limit stopped it: not a failure. What was graded is saved, and
-      // the run page offers to raise the limit and carry on.
-      if (err.limitReached && newId !== null) {
-        navigate(`/evaluations/${newId}`)
-        onClose()
-        return
-      }
       setError(err.message)
       setStatus('error')
     }
@@ -320,16 +281,6 @@ export default function NewEvaluationModal({ onClose, initialDatasetIds = [] }) 
           </div>
 
           {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
-          {status === 'loading' ? (
-            <StageIndicator
-              label={
-                progress
-                  ? `Grading papers… ${progress.processed} done, ${progress.remaining} remaining`
-                  : 'Grading papers…'
-              }
-            />
-          ) : null}
-
           {runRequest ? (
             <p className="text-sm text-gray-500" aria-live="polite">
               {estimate
@@ -344,33 +295,24 @@ export default function NewEvaluationModal({ onClose, initialDatasetIds = [] }) 
             </p>
           ) : null}
 
-          <div className="flex items-center gap-2">
           <button
             type="submit"
             disabled={!providers || status === 'loading' || pricing || (configured && (!selected.size || !promptReady))}
             // White while it can't be run yet (key status still loading, no dataset
             // or prompt), blue once it can. While a run is going it stays blue,
             // just faded.
-            className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+            className={`self-start rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
               status === 'loading'
                 ? 'border-blue-600 bg-blue-600 text-white opacity-50'
                 : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-surface disabled:text-gray-400 disabled:hover:bg-surface'
             }`}
           >
-            {providers && !configured ? 'Configure API key' : status === 'loading' ? 'Evaluating…' : pricing ? 'Estimating…' : 'Run Evaluation'}
+            {providers && !configured ? 'Configure API key' : status === 'loading' ? 'Starting…' : pricing ? 'Estimating…' : 'Run Evaluation'}
           </button>
-          {loading ? (
-            <button
-              type="button"
-              onClick={stop}
-              // Only once the run exists, so Stop can take the user to it; creating it takes a moment.
-              disabled={createdId === null}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Stop
-            </button>
-          ) : null}
-          </div>
+          <p className="text-xs text-gray-400">
+            The grading runs in the background. You can close this window and keep using Lit Review; the
+            evaluation appears in the list and shows when it is done.
+          </p>
         </form>
       </div>
       {confirmingDiscard ? (
@@ -392,7 +334,7 @@ export default function NewEvaluationModal({ onClose, initialDatasetIds = [] }) 
               : `more than the ${formatUsd(confirming.threshold)} you asked to be asked about`
           }. Grading stops at about ${formatUsd(confirming.limit)}, and can pass that by up to one batch of 20 papers. You can raise the limit later from the run.`}
           confirmLabel="Run evaluation"
-          // Not awaited: the modal closes now and the dialog shows the run's progress.
+          // Not awaited: the confirmation closes now, and so does the dialog once the run is queued.
           onConfirm={() => {
             startRun(confirming.limit)
           }}

@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
 import NewDatasetModal from '../components/NewDatasetModal'
+import JobStatus from '../components/JobStatus'
+import { useJobs } from '../components/JobsProvider'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
@@ -18,7 +20,9 @@ export default function PaperDataSetsPage() {
   const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
   const [creating, setCreating] = useState(false)
+  const [actionError, setActionError] = useState(null)
   const [searchParams, setSearchParams] = useSearchParams()
+  const { statusKey, refreshJobs } = useJobs()
 
   // /datasets?new=1 (from another page) opens the New Dataset dialog, then drops the parameter.
   useEffect(() => {
@@ -28,11 +32,25 @@ export default function PaperDataSetsPage() {
     }
   }, [searchParams, setSearchParams])
 
+  // Loaded again whenever a job starts, stops or ends, so each card's status stays true. A
+  // failed reload keeps the list that is showing; only the first load reports an error.
+  const loaded = useRef(false)
   useEffect(() => {
+    let cancelled = false
     fetchJson('/api/datasets')
-      .then((data) => setDatasets(data.datasets ?? []))
-      .catch((err) => setError(err.message))
-  }, [])
+      .then((data) => {
+        if (cancelled) return
+        loaded.current = true
+        setDatasets(data.datasets ?? [])
+        setError(null)
+      })
+      .catch((err) => {
+        if (!cancelled && !loaded.current) setError(err.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [statusKey])
 
   const visible = useMemo(
     () =>
@@ -51,6 +69,7 @@ export default function PaperDataSetsPage() {
   const deleteDataset = async (id) => {
     await deleteJson(`/api/datasets/${id}`)
     setDatasets((prev) => prev.filter((d) => d.id !== id))
+    refreshJobs()
   }
 
   return (
@@ -68,6 +87,7 @@ export default function PaperDataSetsPage() {
         New Dataset
       </button>
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      {actionError ? <p className="mb-3 text-sm text-red-600 dark:text-red-400">{actionError}</p> : null}
       {datasets && datasets.length === 0 ? (
         <p className="text-sm text-gray-500">
           No datasets yet. Click <span className="font-medium">+ New Dataset</span> to search for papers on a topic.
@@ -103,17 +123,22 @@ export default function PaperDataSetsPage() {
                 <Card className="h-full hover:border-gray-300">
                   <p className="font-medium text-gray-800 pr-8">{d.name}</p>
                   <p className="mt-1 line-clamp-2 text-sm text-gray-500">{d.verbose_query}</p>
-                  <p className="mt-2 text-sm text-gray-400">
-                    {d.paper_count} paper{d.paper_count === 1 ? '' : 's'}
-                    {yearRange ? ` · ${yearRange}` : ''}
-                  </p>
+                  {d.pending ? null : (
+                    <p className="mt-2 text-sm text-gray-400">
+                      {d.paper_count} paper{d.paper_count === 1 ? '' : 's'}
+                      {yearRange ? ` · ${yearRange}` : ''}
+                    </p>
+                  )}
                   {formatDateTime(d.created_at) ? (
                     <p className="text-sm text-gray-400">created {formatDateTime(d.created_at)}</p>
                   ) : null}
                   {formatDateTime(d.updated_at) ? (
                     <p className="text-sm text-gray-400">updated {formatDateTime(d.updated_at)}</p>
                   ) : null}
-                  <ModelBadge aiApi={d.ai_api} aiModel={d.ai_model} className="mt-1 text-sm text-gray-300" />
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <ModelBadge aiApi={d.ai_api} aiModel={d.ai_model} className="text-sm text-gray-300" />
+                    <JobStatus item={d} />
+                  </div>
                 </Card>
               </Link>
               <DatasetMenu
@@ -121,6 +146,7 @@ export default function PaperDataSetsPage() {
                 dataset={d}
                 onRenamed={(name) => renameDataset(d.id, name)}
                 onDelete={() => deleteDataset(d.id)}
+                onError={setActionError}
               />
             </div>
           )

@@ -13,8 +13,12 @@ llm.py and are shared by every provider.
 class LLMError(Exception):
     """Missing credentials or an unrecoverable provider error. `usage` is set when
     the model was called and billed before the failure (an answer that could not
-    be used), so the caller can still record what it cost."""
+    be used), so the caller can still record what it cost. `retryable` is True only when
+    asking again could plausibly work (a rate limit, an overloaded or failing server, a dropped
+    connection); a rejected key, a refusal, a cut-off or an unreadable answer is not, and asking
+    again would only be billed again."""
 
-    def __init__(self, message="", usage=None):
+    def __init__(self, message="", usage=None, retryable=False):
         super().__init__(message)
         self.usage = usage
+        self.retryable = retryable

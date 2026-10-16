@@ -1,32 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useSettingsModal } from '../components/SettingsModalProvider'
+import { useNavigate } from 'react-router-dom'
+import { useSettingsModal } from './SettingsModalProvider'
 import { X } from 'lucide-react'
-import Checkbox from '../components/Checkbox'
-import Combobox from '../components/Combobox'
-import { PageShell, Card, TextLink } from '../components/ui'
-import { navIcon } from '../lib/navItems'
-import { StageIndicator } from '../components/Spinner'
-import AiModelSelect, { hasConfiguredProvider, defaultAiChoice, usableAiChoice } from '../components/AiModelSelect'
+import Checkbox from './Checkbox'
+import Combobox from './Combobox'
+import Modal from './Modal'
+import { StageIndicator } from './Spinner'
+import AiModelSelect, { hasConfiguredProvider, defaultAiChoice, usableAiChoice } from './AiModelSelect'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
-import PromptCombobox, { NEW_PROMPT } from '../components/PromptCombobox'
-import AutoGrowTextarea from '../components/AutoGrowTextarea'
+import PromptCombobox, { NEW_PROMPT } from './PromptCombobox'
+import AutoGrowTextarea from './AutoGrowTextarea'
 import { fetchJson, postJson } from '../lib/api'
 import { driveAnalysisRun } from '../lib/driveAnalysisRun'
 import { formatDateTime } from '../lib/format'
 import { loadEvaluateAiChoice, saveEvaluateAiChoice } from '../lib/evaluateSettings'
-import ConfirmModal from '../components/ConfirmModal'
+import ConfirmModal from './ConfirmModal'
 import useRunEstimate from '../lib/useRunEstimate'
 import { formatUsd, getSpendThreshold, limitFor, needsConfirmation } from '../lib/spendSetting'
 
-export default function EvaluatePapersPage() {
+export default function NewEvaluationModal({ onClose, initialDatasetIds = [] }) {
   const navigate = useNavigate()
   const { openSettings } = useSettingsModal()
-  const [searchParams] = useSearchParams()
-  const preselectedId = searchParams.get('dataset')
   const providers = useConfiguredProviders()
   const [datasets, setDatasets] = useState(null)
-  const [selected, setSelected] = useState(() => new Set(preselectedId ? [Number(preselectedId)] : []))
+  const [selected, setSelected] = useState(() => new Set(initialDatasetIds))
   // Deliberately never prefilled from a dataset's discovery question - this
   // is where the user is meant to stop and think precisely about what
   // they're actually looking for, which can (and often should) differ from
@@ -52,13 +49,19 @@ export default function EvaluatePapersPage() {
   // real analysis runs (and paying for LLM grading twice) before the
   // submit button's disabled state has re-rendered.
   const activeRequestRef = useRef(null)
+  // The run this form created, so Stop can send the user to it (it can be resumed there).
+  const [createdId, setCreatedId] = useState(null)
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
+
+  // A request still running when the dialog goes away is dropped, not left to navigate later.
+  useEffect(() => () => activeRequestRef.current?.abort(), [])
 
   useEffect(() => {
     fetchJson('/api/datasets')
       .then((data) => {
         const list = data.datasets ?? []
         setDatasets(list)
-        // A ?dataset= link to a dataset that was deleted (or never existed)
+        // A preselected dataset to a dataset that was deleted (or never existed)
         // must not stay selected, or Run would be enabled with no badge.
         const ids = new Set(list.map((d) => d.id))
         setSelected((prev) => new Set([...prev].filter((id) => ids.has(id))))
@@ -69,9 +72,24 @@ export default function EvaluatePapersPage() {
       .catch((err) => setError(err.message))
   }, [])
 
+  const loading = status === 'loading'
   const isNewPrompt = promptChoice === NEW_PROMPT
   const savedPrompt = isNewPrompt ? null : prompts.find((p) => p.id === promptChoice)
   const promptReady = isNewPrompt ? Boolean(gradingPrompt.trim()) : Boolean(savedPrompt)
+
+  // Closing with a typed grading prompt asks first, so a stray Escape does not throw it away.
+  const dirty = isNewPrompt && Boolean(gradingPrompt.trim())
+  const requestClose = () => (dirty && !loading ? setConfirmingDiscard(true) : onClose())
+
+  // Stops grading. A run that was already created keeps what was graded and resumes from its page.
+  const stop = () => {
+    activeRequestRef.current?.abort()
+    setStatus('idle')
+    if (createdId !== null) {
+      navigate(`/evaluations/${createdId}`)
+      onClose()
+    }
+  }
 
   const toggle = (id) => {
     setSelected((prev) => {
@@ -157,24 +175,28 @@ export default function EvaluatePapersPage() {
     setError(null)
     setProgress(null)
 
-    let createdId = null
+    setCreatedId(null)
+    let newId = null
     try {
       const run = await postJson(
         '/api/analysis-runs',
         { ...runRequest, ...(maxUsd === null ? {} : { max_usd: maxUsd }) },
         { signal: controller.signal }
       )
-      createdId = run.id
+      newId = run.id
+      setCreatedId(run.id)
       await driveAnalysisRun(run.id, controller.signal, (update) => {
         setProgress({ processed: update.candidate_papers.length - update.remaining, remaining: update.remaining })
       })
-      navigate(`/results/${run.id}`)
+      navigate(`/evaluations/${run.id}`)
+      onClose()
     } catch (err) {
       if (err.name === 'AbortError') return
       // The run's spending limit stopped it: not a failure. What was graded is saved, and
       // the run page offers to raise the limit and carry on.
-      if (err.limitReached && createdId !== null) {
-        navigate(`/results/${createdId}`)
+      if (err.limitReached && newId !== null) {
+        navigate(`/evaluations/${newId}`)
+        onClose()
         return
       }
       setError(err.message)
@@ -183,12 +205,11 @@ export default function EvaluatePapersPage() {
   }
 
   return (
-    <PageShell
-      title="Evaluate Papers"
-      icon={navIcon('/evaluate')}
-      description="Describe specifically what you are looking for and the AI model will grade each paper abstract from a dataset against your criteria. Results are saved and papers are shown in order of relevance."
-    >
-      <Card>
+    <Modal title="New Evaluation" onClose={requestClose} busy={loading} closeOnBackdrop={false} closeOnEscape={false} wide scroll>
+      <p className="mt-2 text-sm text-gray-600">
+        Describe specifically what you are looking for and the AI model will grade each paper abstract from a dataset against your criteria. Results are saved and papers are shown in order of relevance.
+      </p>
+      <div className="mt-4">
         <form onSubmit={runEvaluation} className="flex flex-col gap-4">
           <div>
             <span className="block text-sm font-medium text-gray-700">Datasets to evaluate</span>
@@ -233,7 +254,20 @@ export default function EvaluatePapersPage() {
               </p>
             ) : null}
             {datasets && datasets.length === 0 ? (
-              <p className="mt-1 text-sm text-gray-500">No datasets yet - create one from <TextLink to="/discover">Discover Papers</TextLink>.</p>
+              <p className="mt-1 text-sm text-gray-500">
+                No datasets yet.{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose()
+                    navigate('/datasets')
+                  }}
+                  className="text-blue-600 underline-offset-2 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  Create a dataset first
+                </button>
+                .
+              </p>
             ) : null}
           </div>
 
@@ -310,13 +344,14 @@ export default function EvaluatePapersPage() {
             </p>
           ) : null}
 
+          <div className="flex items-center gap-2">
           <button
             type="submit"
             disabled={!providers || status === 'loading' || pricing || (configured && (!selected.size || !promptReady))}
             // White while it can't be run yet (key status still loading, no dataset
             // or prompt), blue once it can. While a run is going it stays blue,
             // just faded.
-            className={`self-start rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+            className={`rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
               status === 'loading'
                 ? 'border-blue-600 bg-blue-600 text-white opacity-50'
                 : 'border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700 disabled:border-gray-200 disabled:bg-surface disabled:text-gray-400 disabled:hover:bg-surface'
@@ -324,8 +359,30 @@ export default function EvaluatePapersPage() {
           >
             {providers && !configured ? 'Configure API key' : status === 'loading' ? 'Evaluating…' : pricing ? 'Estimating…' : 'Run Evaluation'}
           </button>
+          {loading ? (
+            <button
+              type="button"
+              onClick={stop}
+              // Only once the run exists, so Stop can take the user to it; creating it takes a moment.
+              disabled={createdId === null}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+            >
+              Stop
+            </button>
+          ) : null}
+          </div>
         </form>
-      </Card>
+      </div>
+      {confirmingDiscard ? (
+        <ConfirmModal
+          title="Discard this evaluation?"
+          message="What you typed will be lost."
+          confirmLabel="Discard"
+          danger
+          onConfirm={() => onClose()}
+          onClose={() => setConfirmingDiscard(false)}
+        />
+      ) : null}
       {confirming ? (
         <ConfirmModal
           title="Run this evaluation?"
@@ -335,13 +392,13 @@ export default function EvaluatePapersPage() {
               : `more than the ${formatUsd(confirming.threshold)} you asked to be asked about`
           }. Grading stops at about ${formatUsd(confirming.limit)}, and can pass that by up to one batch of 20 papers. You can raise the limit later from the run.`}
           confirmLabel="Run evaluation"
-          // Not awaited: the modal closes now and the page shows the run's progress.
+          // Not awaited: the modal closes now and the dialog shows the run's progress.
           onConfirm={() => {
             startRun(confirming.limit)
           }}
           onClose={() => setConfirming(null)}
         />
       ) : null}
-    </PageShell>
+    </Modal>
   )
 }

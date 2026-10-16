@@ -5,7 +5,7 @@ import { postJson } from './api'
 // not send a request per key.
 const DEBOUNCE_MS = 600
 
-// The estimated cost of the run the Evaluate form describes: { usd, papers, chunks,
+// The estimated cost of the run the New Evaluation form describes: { usd, papers, chunks,
 // basis }, or null while it has none. `request` is the body of POST /api/analysis-runs
 // (or null when the form is not ready to run), and it is asked again, after a pause,
 // whenever that body changes. An answer to an older body is never shown for a newer one.

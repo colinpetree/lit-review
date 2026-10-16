@@ -1,4 +1,4 @@
-// What the Discover Papers form remembers between visits: the paper sources, the
+// What the New Dataset form remembers between visits: the paper sources, the
 // papers kept per search and the AI model from the last run. The topic and the year range are deliberately
 // not remembered, since they're different every time. Kept in this browser's
 // localStorage, which can be missing or throw (private window, blocked site

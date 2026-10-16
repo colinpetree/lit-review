@@ -116,7 +116,7 @@ const isMissingAbstract = (p) => !p.excluded && !(p.abstract || '').trim() && Bo
 const isLookupCandidate = (p) => isMissingAbstract(p) && !p.abstract_checked
 
 // A dataset is pure retrieval - never joined to any analysis run here.
-// Grades only ever appear on the Evaluate Papers / Results side; a
+// Grades only ever appear on the Paper Evaluations side; a
 // paper on this page is always shown exactly as retrieved, with no grade.
 export default function DatasetDetailPage() {
   const { id } = useParams()
@@ -357,7 +357,7 @@ export default function DatasetDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => navigate(`/evaluate?dataset=${dataset.id}`)}
+              onClick={() => navigate(`/evaluations?new=1&dataset=${dataset.id}`)}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
             >
               Evaluate Dataset

@@ -152,8 +152,8 @@ class TestRemovedRoutes:
         assert response.get_json() == {"error": "not found"}
 
     def test_app_pages_still_fall_back_to_the_frontend(self, client):
-        # Not under /api, so a client-side route such as /results/3 must not 404 as JSON.
-        response = client.get("/results/3")
+        # Not under /api, so a client-side route such as /evaluations/3 must not 404 as JSON.
+        response = client.get("/evaluations/3")
         assert response.get_json(silent=True) != {"error": "not found"}
 
 

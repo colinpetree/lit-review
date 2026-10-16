@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { PageShell, Card, TextLink } from '../components/ui'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Plus } from 'lucide-react'
+import { PageShell, Card } from '../components/ui'
+import NewDatasetModal from '../components/NewDatasetModal'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
@@ -15,6 +17,16 @@ export default function PaperDataSetsPage() {
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
+  const [creating, setCreating] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // /datasets?new=1 (from another page) opens the New Dataset dialog, then drops the parameter.
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setCreating(true)
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     fetchJson('/api/datasets')
@@ -45,12 +57,20 @@ export default function PaperDataSetsPage() {
     <PageShell
       title="Paper Datasets"
       icon={navIcon('/datasets')}
-      description="Groups of paper abstracts that serve as datasets for an AI model to grade and rank each paper according to your research criteria."
+      description="Groups of similar research papers that contain paper data including title, abstract, authors, publication, and number of citations. Datasets are used in evaluations."
     >
+      <button
+        type="button"
+        onClick={() => setCreating(true)}
+        className="mb-6 inline-flex items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:border-blue-700 hover:bg-blue-700"
+      >
+        <Plus size={16} />
+        New Dataset
+      </button>
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {datasets && datasets.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No datasets yet - run a search from <TextLink to="/discover">Discover Papers</TextLink> to create one.
+          No datasets yet. Click <span className="font-medium">+ New Dataset</span> to search for papers on a topic.
         </p>
       ) : null}
       {datasets && datasets.length > 0 ? (
@@ -106,6 +126,7 @@ export default function PaperDataSetsPage() {
           )
         }}
       />
+      {creating ? <NewDatasetModal onClose={() => setCreating(false)} /> : null}
     </PageShell>
   )
 }

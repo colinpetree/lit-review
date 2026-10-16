@@ -7,7 +7,7 @@ import useSavedState from '../../lib/useSavedState'
 import { usePubMedEnabled } from '../../lib/pubmedSetting'
 
 // PubMed needs no key, so its card is an on/off switch for offering it on
-// Discover Papers (on by default), with the same Edit/Save flow as the key cards.
+// New Dataset (on by default), with the same Edit/Save flow as the key cards.
 export default function PubMedCard() {
   const [enabled, setEnabled] = usePubMedEnabled()
   const [draft, setDraft] = useState(enabled)
@@ -28,7 +28,7 @@ export default function PubMedCard() {
       <EditableCardHeader
         title="PubMed"
         icon={PubMedIcon}
-        description="Medical and health literature from the US National Library of Medicine. Free, no key needed. Turn it off if you don’t want it offered on Discover Papers."
+        description="Medical and health literature from the US National Library of Medicine. Free, no key needed. Turn it off if you don’t want it offered in New Dataset."
         editing={editing}
         saving={saving}
         saved={saved}

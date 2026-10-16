@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-// Whether PubMed is offered as a paper source on Discover Papers. On by default;
+// Whether PubMed is offered as a paper source in New Dataset. On by default;
 // people outside medicine and health can switch it off in Settings. Kept per
 // browser in localStorage, which can be missing or throw (private window,
 // blocked site data), so every access is guarded and PubMed just stays on.

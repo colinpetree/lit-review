@@ -217,7 +217,7 @@ export default function PromptDetailPage() {
               {ex.source_run_id ? (
                 <>
                   {' from '}
-                  <Link to={`/results/${ex.source_run_id}`} className="hover:underline">
+                  <Link to={`/evaluations/${ex.source_run_id}`} className="hover:underline">
                     run #{ex.source_run_id}
                   </Link>
                 </>

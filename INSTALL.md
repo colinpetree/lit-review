@@ -49,7 +49,7 @@ Lit Review needs two kinds of key, both from the companies that provide the serv
 
 The other research databases (Semantic Scholar, Elsevier/Scopus, Springer Nature) are optional. Each card in Settings explains where to get its key.
 
-Then go to **Discover Papers**, describe your research question, and follow the steps.
+Then open **Paper Datasets**, click **+ New Dataset**, describe your research question, and follow the steps.
 
 ## Opening, closing and quitting
 

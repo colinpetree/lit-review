@@ -24,21 +24,21 @@ afterEach(() => {
 })
 
 describe('lastAppPath', () => {
-  it('falls back to Discover Papers when nothing was visited', () => {
+  it('falls back to Paper Datasets when nothing was visited', () => {
     expect(lastAppPath()).toBe(DEFAULT_APP_PATH)
   })
 
   it('remembers the path and query of the last app page', () => {
     rememberAppPath({ pathname: '/datasets/7', search: '?filter=new' })
     expect(lastAppPath()).toBe('/datasets/7?filter=new')
-    rememberAppPath({ pathname: '/results' })
-    expect(lastAppPath()).toBe('/results')
+    rememberAppPath({ pathname: '/evaluations' })
+    expect(lastAppPath()).toBe('/evaluations')
   })
 
   it('ignores the Deleted Items page, so Back skips over it', () => {
-    rememberAppPath({ pathname: '/evaluate', search: '' })
+    rememberAppPath({ pathname: '/evaluations', search: '' })
     rememberAppPath({ pathname: '/trash' })
-    expect(lastAppPath()).toBe('/evaluate')
+    expect(lastAppPath()).toBe('/evaluations')
   })
 
   it('does not treat a path that only starts with the word trash as that page', () => {
@@ -53,9 +53,9 @@ describe('lastAppPath', () => {
   })
 
   it('survives a reload, where memory is empty but storage is not', () => {
-    const store = { 'lit-review-last-app-path': '/results/4' }
+    const store = { 'lit-review-last-app-path': '/evaluations/4' }
     stubStorage(store)
-    expect(lastAppPath()).toBe('/results/4')
+    expect(lastAppPath()).toBe('/evaluations/4')
   })
 
   it.each(['https://evil.example/', '//evil.example', 'datasets', '/trash', 42])(

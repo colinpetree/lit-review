@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-// The amount above which Evaluate Papers asks before starting a run, and the limit
+// The amount above which New Evaluation asks before starting a run, and the limit
 // each run gets. A number of dollars; 0 means always ask; blank means never ask (and
 // no limit unless the user raises one on a run). Kept per browser in localStorage, which
 // can be missing or throw (private window, blocked site data), so every access is

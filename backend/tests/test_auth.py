@@ -11,7 +11,7 @@ import app as app_module
 import db
 from conftest import TEST_TOKEN
 
-PAGES = ["/", "/discover", "/datasets/3", "/results", "/settings", "/no-such-page", "/index.html", "/favicon.svg", "/assets/index.js"]
+PAGES = ["/", "/datasets", "/datasets/3", "/evaluations", "/settings", "/no-such-page", "/index.html", "/favicon.svg", "/assets/index.js"]
 API_READS = [
     "/api/datasets",
     "/api/datasets/1",

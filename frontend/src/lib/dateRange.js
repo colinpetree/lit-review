@@ -1,4 +1,4 @@
-// The Discover Papers publication date range. Each end is typed (or picked from
+// The New Dataset publication date range. Each end is typed (or picked from
 // the calendar) as a year ("2026"), a month ("2026-03") or a full date
 // ("2026-03-05"). A year or month means its first day for the From end and its
 // last day for the To end, so typing just years works as it always has.

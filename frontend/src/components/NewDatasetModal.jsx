@@ -1,13 +1,13 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useSettingsModal } from '../components/SettingsModalProvider'
-import { PageShell, Card } from '../components/ui'
-import { navIcon } from '../lib/navItems'
-import { StageIndicator } from '../components/Spinner'
-import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from '../components/AiModelSelect'
-import AutoGrowTextarea from '../components/AutoGrowTextarea'
-import Checkbox from '../components/Checkbox'
-import DateRangeField from '../components/DateRangeField'
+import { useSettingsModal } from './SettingsModalProvider'
+import Modal from './Modal'
+import ConfirmModal from './ConfirmModal'
+import { StageIndicator } from './Spinner'
+import AiModelSelect, { hasConfiguredProvider, defaultAiChoice } from './AiModelSelect'
+import AutoGrowTextarea from './AutoGrowTextarea'
+import Checkbox from './Checkbox'
+import DateRangeField from './DateRangeField'
 import useConfiguredProviders from '../lib/useConfiguredProviders'
 import { getPubMedEnabled } from '../lib/pubmedSetting'
 import { postJson } from '../lib/api'
@@ -15,7 +15,7 @@ import { DEFAULT_SOURCES, PAPER_SOURCES } from '../lib/paperSources'
 import { MODELS_BY_PROVIDER } from '../lib/models'
 import { loadDiscoverSettings, saveDiscoverSettings } from '../lib/discoverSettings'
 import { SEARCH_LIMIT_OPTIONS, normalizeSearchLimit } from '../lib/searchLimit'
-import Combobox from '../components/Combobox'
+import Combobox from './Combobox'
 import { dateBounds, dateRangeError } from '../lib/dateRange'
 
 // A source is offered (and used) only when it is enabled: it needs no API key or
@@ -23,17 +23,17 @@ import { dateBounds, dateRangeError } from '../lib/dateRange'
 const isSourceAvailable = (source, providers, pubmedEnabled) =>
   (source.id !== 'pubmed' || pubmedEnabled) && (!source.key || Boolean(providers?.[source.key]))
 
-// Discover Papers only retrieves papers into a dataset - it never grades or
+// New Dataset only retrieves papers into a dataset - it never grades or
 // evaluates them. Relevance grading is a separate, deliberate step the user
-// takes on the Evaluate Papers page (against whatever grading criteria they
+// takes with New Evaluation (against whatever grading criteria they
 // choose there, which may differ from this retrieval question) - a dataset
-// fresh out of Discover Papers should show no grades at all.
+// fresh out of a search should show no grades at all.
 const STAGE_LABELS = {
   query: 'Processing query…',
   retrieval: 'Searching the paper databases…',
 }
 
-export default function DiscoverPapersPage() {
+export default function NewDatasetModal({ onClose }) {
   const navigate = useNavigate()
   const providers = useConfiguredProviders()
   // Read on every render, not once: the switch in Settings can change while this page stays open,
@@ -61,6 +61,26 @@ export default function DiscoverPapersPage() {
   // their usage) without paying for another LLM expansion call.
   const [pendingRetrieval, setPendingRetrieval] = useState(null)
   const activeRequestRef = useRef(null)
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
+
+  // A request still running when the dialog goes away is dropped, not left to navigate later.
+  useEffect(() => () => activeRequestRef.current?.abort(), [])
+
+  const loading = status === 'loading'
+  const dirty = Boolean(question.trim() || fromDate || toDate)
+  // Closing with a typed topic asks first, so a stray Escape does not throw it away.
+  const requestClose = () => (dirty && !loading ? setConfirmingDiscard(true) : onClose())
+  const discardMessage = pendingRetrieval
+    ? "A search failed part of the way. Closing loses the Retry button, and searching again repeats the AI step. What you typed will be lost."
+    : "What you typed will be lost."
+
+  // Stops waiting. The server keeps running a search it has started, so the same search
+  // cannot be started again until it finishes.
+  const stop = () => {
+    activeRequestRef.current?.abort()
+    setStatus('idle')
+    setStage(null)
+  }
 
   const configured = hasConfiguredProvider(providers)
   // A remembered model that's no longer listed or configured falls back to the default.
@@ -73,7 +93,7 @@ export default function DiscoverPapersPage() {
   // The selected sources that can actually be used right now: a remembered one
   // whose key has since been removed (or which no longer exists) is dropped,
   // and if that leaves none the default is used. Once the user has changed the
-  // checkboxes themselves, none selected stays none (Discover Papers is then
+  // checkboxes themselves, none selected stays none (the search is then
   // disabled) instead of snapping back to the default.
   const usableSources = sources.filter((id) => {
     const source = PAPER_SOURCES.find((s) => s.id === id)
@@ -126,6 +146,7 @@ export default function DiscoverPapersPage() {
 
       if (expand.reused) {
         navigate(`/datasets/${expand.dataset.id}`)
+        onClose()
         return
       }
 
@@ -153,6 +174,7 @@ export default function DiscoverPapersPage() {
       }
 
       navigate(`/datasets/${dataset.id}`)
+      onClose()
     } catch (err) {
       if (err.name === 'AbortError') return
       setError(err.message)
@@ -185,6 +207,7 @@ export default function DiscoverPapersPage() {
       )
       setPendingRetrieval(null)
       navigate(`/datasets/${dataset.id}`)
+      onClose()
     } catch (err) {
       if (err.name === 'AbortError') return
       setError(err.message)
@@ -196,12 +219,11 @@ export default function DiscoverPapersPage() {
   }
 
   return (
-    <PageShell
-      title="Discover Papers"
-      icon={navIcon('/discover')}
-      description="Write a sentence describing the topic you want to find research papers about. Choose the databases you want to search and the AI model to process your sentence with. This will create a dataset of papers with abstracts associated with your search."
-    >
-      <Card>
+    <Modal title="New Dataset" onClose={requestClose} busy={loading} closeOnBackdrop={false} closeOnEscape={false} wide scroll>
+      <p className="mt-2 text-sm text-gray-600">
+        Write a sentence describing the topic you want to find research papers about. Choose the databases you want to search and the AI model to process your sentence with. This will create a dataset of papers with abstracts associated with your search.
+      </p>
+      <div className="mt-4">
         <form onSubmit={runDiscovery} className="flex flex-col gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">Research paper dataset topic</label>
@@ -292,6 +314,7 @@ export default function DiscoverPapersPage() {
             </button>
           ) : null}
 
+          <div className="flex items-center gap-2">
           <button
             type="submit"
             disabled={!providers || status === 'loading' || (configured && (!question.trim() || activeSources.length === 0))}
@@ -308,10 +331,35 @@ export default function DiscoverPapersPage() {
               ? 'Configure API key'
               : status === 'loading'
                 ? 'Working…'
-                : 'Discover Papers'}
+                : 'Search for Papers'}
           </button>
+          {loading ? (
+            <button
+              type="button"
+              onClick={stop}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+            >
+              Stop waiting
+            </button>
+          ) : null}
+          </div>
+          {loading ? (
+            <p className="text-xs text-gray-400">
+              A search that has started keeps running and is paid for. Searching the same thing again has to wait for it to finish.
+            </p>
+          ) : null}
         </form>
-      </Card>
-    </PageShell>
+      </div>
+      {confirmingDiscard ? (
+        <ConfirmModal
+          title="Discard this search?"
+          message={discardMessage}
+          confirmLabel="Discard"
+          danger
+          onConfirm={() => onClose()}
+          onClose={() => setConfirmingDiscard(false)}
+        />
+      ) : null}
+    </Modal>
   )
 }

@@ -9,16 +9,23 @@ import { X } from 'lucide-react'
 // outside would throw away what was typed. Otherwise a backdrop click only
 // closes when the press started on the backdrop too, so dragging to select text
 // and releasing outside the dialog doesn't close it.
-export default function Modal({ title, onClose, busy = false, closeOnBackdrop = true, wide = false, raised = false, children }) {
+// closeOnEscape={false} is for the same dialogs: only the X (or a button) closes them.
+// scroll is for a tall form: the dialog stays within the window and scrolls inside.
+// Escape closes only the last dialog in the page (a confirmation opened over a form, or Settings
+// opened from a form, answers first).
+export default function Modal({ title, onClose, busy = false, closeOnBackdrop = true, wide = false, raised = false, scroll = false, closeOnEscape = true, children }) {
   const pressStartedOnBackdrop = useRef(false)
+  const dialogRef = useRef(null)
 
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'Escape' && !busy) onClose()
+      if (e.key !== 'Escape' || busy || !closeOnEscape) return
+      const dialogs = document.querySelectorAll('[role="dialog"]')
+      if (dialogs[dialogs.length - 1] === dialogRef.current) onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [busy, onClose])
+  }, [busy, closeOnEscape, onClose])
 
   return (
     <div
@@ -32,9 +39,12 @@ export default function Modal({ title, onClose, busy = false, closeOnBackdrop = 
       }}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        className={`relative w-full rounded-lg bg-surface p-6 shadow-xl ${wide ? 'max-w-2xl' : 'max-w-md'}`}
+        className={`relative w-full rounded-lg bg-surface p-6 shadow-xl ${wide ? 'max-w-2xl' : 'max-w-md'} ${
+          scroll ? 'max-h-[90vh] overflow-y-auto' : ''
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <button

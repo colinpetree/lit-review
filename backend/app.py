@@ -776,7 +776,7 @@ def _mark_new(papers, last_refresh):
 def _dataset_to_dict(dataset_row, papers):
     # Deliberately no run/score info here - a dataset is pure retrieval
     # (PLAN.md's Paper/Dataset model), never joined to any analysis_run for
-    # display. Scores only ever appear on the Evaluate Papers / Results
+    # display. Scores only ever appear on the Paper Evaluations
     # side (RunResultsPage), never on Paper Datasets.
     # Excluded papers are in `papers` (so the detail page can show them grayed
     # out) but don't count toward the year spread, matching list_datasets.
@@ -1604,7 +1604,7 @@ def _process_run_chunk(run_id):
         db.reopen_run(run_id)
         run_row = db.get_analysis_run(run_id)
 
-    # Only a prompt created by this run (from Evaluate) is still waiting for an
+    # Only a prompt created by this run (from New Evaluation) is still waiting for an
     # AI title; existing prompts never ask for one.
     prompt = db.get_prompt(run_row["prompt_id"], include_deleted=True) if run_row["prompt_id"] else None
     want_title = bool(prompt and prompt["title_pending"])

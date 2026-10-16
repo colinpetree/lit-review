@@ -25,7 +25,7 @@ export default function RunResultsPage() {
   // What the user has typed as the new spending limit (null: show the suggestion).
   const [limitInput, setLimitInput] = useState(null)
   const [raising, setRaising] = useState(false)
-  // /results/:id is one long-lived route element - React Router doesn't
+  // /evaluations/:id is one long-lived route element - React Router doesn't
   // remount it on a param-only change, so a "Resume grading" loop started
   // on one run keeps running (and keeps calling setRun) even after the
   // user navigates to a different run's id. Aborting the leftover request
@@ -193,7 +193,7 @@ export default function RunResultsPage() {
 
   return (
     <PageShell>
-      <BackLink to="/results">Back to Results</BackLink>
+      <BackLink to="/evaluations">Back to Paper Evaluations</BackLink>
 
       <Card className="mt-4 flex flex-col gap-5">
         <div className="flex items-start justify-between gap-4">
@@ -211,7 +211,7 @@ export default function RunResultsPage() {
               onDelete={async () => {
                 activeRequestRef.current?.abort()
                 await deleteJson(`/api/analysis-runs/${run.id}`)
-                navigate('/results')
+                navigate('/evaluations')
               }}
             />
           </div>

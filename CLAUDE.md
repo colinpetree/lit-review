@@ -252,10 +252,10 @@ against real copies on spare ports works well.
   (`openalex.py`), Semantic Scholar, Elsevier (Scopus Search) and PubMed (NCBI E-utilities:
   esearch for ids, then efetch XML for abstracts; keyless, paced to 3 requests/s by
   `source_http.ncbi_get`; no citation counts). A per-browser Settings switch
-  (`lib/pubmedSetting.js`, on by default) hides PubMed from Discover Papers; it is a UI
+  (`lib/pubmedSetting.js`, on by default) hides PubMed from New Dataset; it is a UI
   preference only, the backend still accepts `pubmed`. Springer Nature is
   deliberately lookup-only (its search matched too strictly to be useful).
-  The publication date range is `from_date`/`to_date` ("YYYY-MM-DD"; the Discover fields
+  The publication date range is `from_date`/`to_date` ("YYYY-MM-DD"; the New Dataset fields
   take a year, month or full date, a bare `from_year`/`to_year` is still accepted), stored on the
   dataset and matched when reusing a search. Each source narrows by its own means (some only by
   year), then `search_sources._filtered` keeps only papers whose shown date is in range (a PubMed
@@ -459,14 +459,14 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   writes one `analysis_result` (score + rationale) per paper. `llm_call` logs token usage
   and USD for every LLM call. A run's `status` is a convenience, not the truth: what is left to
   do is "included papers with no result" (`count_unscored_papers`, and `unscored_count` in
-  `list_all_runs`, which is what the Results list's "Incomplete" label uses). `/process` on a
+  `list_all_runs`, which is what the Paper Evaluations list's "Incomplete" label uses). `/process` on a
   `completed` run with unscored papers (an excluded paper restored, a dataset that gained papers)
   reopens it (`db.reopen_run`) and scores only those; on a `running` run with none left it just
   marks it completed. A run's cost includes the query expansion of each dataset it uses, so a
   shared dataset's expansion counts in every run that uses it (the UI says so).
 - A run leaves **retracted papers out** unless created with `include_retracted` (stored on the
   run, so resuming applies the same rule; runs from before the option keep scoring everything).
-  What a run scores is defined once, in `db._included_papers_sql`, which the Results counts, the
+  What a run scores is defined once, in `db._included_papers_sql`, which the Paper Evaluations counts, the
   papers scored and what is left to score all use: never copy that SQL. A scored paper that is
   later found to be retracted keeps its result. The run page says how many were left out
   (`retracted_left_out`), so they are never omitted silently.
@@ -486,7 +486,7 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   and calling `/process` again carries on. On the client, `lib/spendSetting.js` holds the per-browser
   "ask before spending more than" amount (default $1.00, 0 = always ask, blank = never ask and no
   limit) and `limitFor` (a confirmed run is limited to its estimate plus 25%, an unconfirmed one to
-  the threshold); Evaluate shows the estimate (`lib/useRunEstimate.js`), asks through `ConfirmModal`
+  the threshold); New Evaluation shows the estimate (`lib/useRunEstimate.js`), asks through `ConfirmModal`
   above the threshold, and a run stopped by its limit sends the user to the run page, which offers
   "Raise limit and continue".
 - Runs are resumable. The client repeatedly POSTs `/api/analysis-runs/<id>/process`, and
@@ -498,7 +498,7 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   and `examples_snapshot` (the examples used), so editing a prompt never changes old runs.
   `prompt_example` rows are added only from a run's results ("Mark as example", which
   copies that paper's score and reasoning); only the newest `db.EXAMPLE_LIMIT` are sent to
-  the judge. A prompt created from Evaluate gets an AI title (requested in the run's first
+  the judge. A prompt created from New Evaluation gets an AI title (requested in the run's first
   scoring call via `title_pending`; never for existing prompts, and any user edit clears
   the flag). Datasets, prompts and runs are all soft-deleted (`deleted_at`) and kept in Deleted
   Items (Settings), the only place anything is removed for good (`db.purge_from_trash`).
@@ -513,7 +513,7 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   (`db._unique_run_name` adds " (2)" etc.; renames that clash get a 409). It starts as the
   prompt's name; for a run that created its own prompt, `name_auto` lets the AI-generated
   prompt title replace the placeholder unless the user renamed first. Renamed via
-  `PATCH /api/analysis-runs/<id>` (`RunMenu` + `RenameModal`, on the Results cards
+  `PATCH /api/analysis-runs/<id>` (`RunMenu` + `RenameModal`, on the Paper Evaluations cards
   and the run page). Old runs are backfilled from their prompt name in `_migrate`.
 - Sorting and the dataset date range prefer `paper.publication_date` over `year`, so
   `db.update_paper` clears that paper's full date when it contradicts the saved year (so
@@ -531,8 +531,7 @@ API-returned abstracts and must never invent citations.
 ### Frontend
 
 React 19 + Vite + Tailwind v3 (PostCSS, `tailwind.config.js`, same as an earlier project) + react-router. Routes are in
-`src/main.jsx` under a shared `AppLayout`: discover, datasets (+ `:id`), evaluate,
-prompts (+ `:id`), results (+ `:id`), trash (Deleted Items, reached from Settings). Shared UI: `MoreMenu` (more-horizontal
+`src/main.jsx` under a shared `AppLayout`: datasets (+ `:id`), prompts (+ `:id`), evaluations (+ `:id`), trash (Deleted Items, reached from Settings). Creating things is not a page: "+ New Dataset" (`PaperDataSetsPage`, `components/NewDatasetModal.jsx`) and "+ New Evaluation" (`PaperEvaluationsPage`, `NewEvaluationModal.jsx`) open modals. Both pages also open theirs from `?new=1` (the evaluations one takes `&dataset=<id>` to preselect), which is how other pages start one, then clear it. The old `/discover`, `/evaluate`, `/results` and `/results/:id` addresses redirect. Shared UI: `MoreMenu` (more-horizontal
 popover), `Modal`/`ConfirmModal`, `PromptCombobox`. Backend calls go through `src/lib/api.js`.
 
 **Settings** is a large modal over the app, not a route. The Settings button at the bottom of the `Sidebar` calls
@@ -548,7 +547,7 @@ a new section needs a row there and an entry in `SECTIONS` in `SettingsModal.jsx
 a key calls `openSettings('ai')` or `openSettings('databases')`, never bare `openSettings()`. Deleted Items is the
 page `/trash`; its way back goes to `lastAppPath()` (`lib/lastAppPath.js`: `AppLayout` remembers the last path other
 than `/trash`, in sessionStorage with a memory fallback, and anything that is not an in-app path falls back to
-`/discover`) and reopens Settings at Your Data. `useApiKeys` (`lib/useApiKeys.js`) is the saved-key status and
+`/datasets`) and reopens Settings at Your Data. `useApiKeys` (`lib/useApiKeys.js`) is the saved-key status and
 save/remove for the two key sections.
 
 Theme (Light/Dark/System, set in Settings, Appearance) is stored per browser in localStorage

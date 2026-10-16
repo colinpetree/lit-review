@@ -1,7 +1,7 @@
 // Where the Deleted Items page's way back goes: the last page the user was on before it.
 
 const STORAGE_KEY = 'lit-review-last-app-path'
-export const DEFAULT_APP_PATH = '/discover'
+export const DEFAULT_APP_PATH = '/datasets'
 
 let memoryPath = null
 

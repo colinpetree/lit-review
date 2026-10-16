@@ -1,13 +1,11 @@
-import { Bot, ChartColumn, Database, FlaskConical, HardDrive, Info, Library, ListChecks, Palette, Scale, Search, Settings } from 'lucide-react'
+import { Bot, ChartColumn, Database, HardDrive, Info, Library, ListChecks, Palette, Scale, Settings } from 'lucide-react'
 
 // Single source of truth for the side nav and for the icon shown beside each
 // top-level page title.
 export const NAV_ITEMS = [
-  { to: '/discover', label: 'Discover Papers', icon: Search },
   { to: '/datasets', label: 'Paper Datasets', icon: Database },
   { to: '/prompts', label: 'Grading Prompts', icon: ListChecks },
-  { to: '/evaluate', label: 'Evaluate Papers', icon: FlaskConical },
-  { to: '/results', label: 'Results', icon: ChartColumn },
+  { to: '/evaluations', label: 'Paper Evaluations', icon: ChartColumn },
 ]
 
 // The button at the bottom of the main sidebar. It opens the settings modal.

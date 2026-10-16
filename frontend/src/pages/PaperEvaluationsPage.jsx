@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { PageShell, Card, TextLink } from '../components/ui'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Plus } from 'lucide-react'
+import { PageShell, Card } from '../components/ui'
+import NewEvaluationModal from '../components/NewEvaluationModal'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
@@ -10,11 +12,24 @@ import { deleteJson, fetchJson } from '../lib/api'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
 
-export default function PastResultsPage() {
+export default function PaperEvaluationsPage() {
   const [runs, setRuns] = useState(null)
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
+  // The dataset ids a New Evaluation starts with selected; null while the dialog is closed.
+  const [creating, setCreating] = useState(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // /evaluations?new=1&dataset=<id> (from a dataset page or the prompts page) opens the New
+  // Evaluation dialog, then drops the parameters.
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      const id = Number(searchParams.get('dataset'))
+      setCreating(Number.isInteger(id) && id > 0 ? [id] : [])
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     fetchJson('/api/analysis-runs')
@@ -44,14 +59,22 @@ export default function PastResultsPage() {
 
   return (
     <PageShell
-      title="Results"
-      icon={navIcon('/results')}
-      description="Saved results from previous runs where the AI judge graded papers based on your research criteria."
+      title="Paper Evaluations"
+      icon={navIcon('/evaluations')}
+      description="Saved evaluations of research papers graded by an AI judge based on your research criteria and sorted by most relevant."
     >
+      <button
+        type="button"
+        onClick={() => setCreating([])}
+        className="mb-6 inline-flex items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:border-blue-700 hover:bg-blue-700"
+      >
+        <Plus size={16} />
+        New Evaluation
+      </button>
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {runs && runs.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No evaluation results yet - run an evaluation from <TextLink to="/evaluate">Evaluate Papers</TextLink>.
+          No evaluations yet. Click <span className="font-medium">+ New Evaluation</span> to grade a dataset against your research criteria.
         </p>
       ) : null}
       {runs && runs.length > 0 ? (
@@ -60,8 +83,8 @@ export default function PastResultsPage() {
           onChange={setFilter}
           sort={sort}
           onSortChange={setSort}
-          placeholder="Filter results by prompt or dataset"
-          noun="results"
+          placeholder="Filter evaluations by prompt or dataset"
+          noun="evaluations"
           shown={visible.length}
           total={runs.length}
           items={runs}
@@ -69,7 +92,7 @@ export default function PastResultsPage() {
         />
       ) : null}
       {runs && runs.length > 0 && visible.length === 0 ? (
-        <p className="text-sm text-gray-500">No results match these filters.</p>
+        <p className="text-sm text-gray-500">No evaluations match these filters.</p>
       ) : null}
       <InfiniteList
         as="div"
@@ -78,7 +101,7 @@ export default function PastResultsPage() {
         resetKey={JSON.stringify([filter, sort])}
         renderItem={(run) => (
           <div key={run.id} className="relative">
-            <Link to={`/results/${run.id}`}>
+            <Link to={`/evaluations/${run.id}`}>
               <Card className="hover:border-gray-300">
                 <p className="pr-8 font-medium text-gray-800">{run.name || run.prompt_name || run.grading_prompt}</p>
                 <p className="mt-1 text-sm text-gray-500">
@@ -107,6 +130,7 @@ export default function PastResultsPage() {
           </div>
         )}
       />
+      {creating ? <NewEvaluationModal initialDatasetIds={creating} onClose={() => setCreating(null)} /> : null}
     </PageShell>
   )
 }

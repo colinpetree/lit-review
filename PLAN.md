@@ -137,8 +137,8 @@ guarded (built; details and rationale in CLAUDE.md, "Architecture"):
   auto-selected port; app entry point opens the user's default browser to that URL via
   `webbrowser.open()`, so there's no separate "installer" UX — just run the script.
 - **Frontend**: React 19 + Vite + Tailwind v3 + react-router, with lucide icons and
-  self-hosted Source Sans 3 / Source Code Pro fonts. Pages: Discover Papers, Paper Datasets
-  (+ detail), Evaluate Papers, Grading Prompts (+ detail), Results (+ run results) and
+  self-hosted Source Sans 3 / Source Code Pro fonts. Pages: Paper Datasets
+  (+ detail, with a New Dataset dialog), Grading Prompts (+ detail), Paper Evaluations (+ run results, with a New Evaluation dialog) and
   Settings, under a shared layout. `vite build` writes straight into `backend/static`,
   which Flask serves, so the shipped app is a single Flask process (no separate frontend dev
   server needed at runtime; in dev, `npm run dev` proxies `/api` to Flask on 8100).
@@ -337,7 +337,7 @@ not built.
   one slow job per run or dataset, readable errors for an unusable data folder or key store
   (see Architecture).
 - Backend (pytest) and frontend (Vitest) test suites.
-- Light/Dark/System theme, and a Settings switch to hide PubMed from Discover Papers.
+- Light/Dark/System theme, and a Settings switch to hide PubMed from New Dataset.
 - Retractions and paper types: sources report whether a paper was retracted and what kind of work
   it is; errata, retraction notices, front matter and commentary are skipped at search time, a
   retracted paper is badged (with a Hide retracted filter), and evaluations leave retracted
@@ -550,7 +550,7 @@ acceptable UX. Plan:
 
 ## Open questions to resolve before/while building
 
-- **Cost estimate and cap (resolved, built).** Evaluate Papers shows an estimated cost before a
+- **Cost estimate and cap (resolved, built).** New Evaluation shows an estimated cost before a
   run, asks for confirmation above an amount the user sets in Settings, and each run carries a
   spending limit that is checked before every batch of 20 papers (so a run can pass it by up to one
   batch). The estimate counts prompt text at about four characters a token and is approximate; the

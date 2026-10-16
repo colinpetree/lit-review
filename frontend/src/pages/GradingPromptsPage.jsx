@@ -69,12 +69,12 @@ export default function GradingPromptsPage() {
         className="mb-6 inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
       >
         <Plus size={16} />
-        New prompt
+        New Prompt
       </button>
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {prompts && prompts.length === 0 ? (
         <p className="text-sm text-gray-500">
-          No prompts yet - create one here, or run an evaluation from <TextLink to="/evaluate">Evaluate Papers</TextLink>.
+          No prompts yet - create one here, or start a <TextLink to="/evaluations?new=1">New Evaluation</TextLink>.
         </p>
       ) : null}
       {prompts && prompts.length > 0 ? (

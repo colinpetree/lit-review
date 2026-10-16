@@ -52,8 +52,11 @@ export default function SettingsModal({ section, onClose }) {
 
   useEffect(() => {
     const onKey = (e) => {
-      // A dialog opened from inside Settings (a confirmation, the license) takes Escape first.
-      if (e.key === 'Escape' && document.querySelectorAll('[role="dialog"]').length === 1) onClose()
+      // A dialog opened from inside Settings (a confirmation, the license) takes Escape first:
+      // Settings answers only while it is the last dialog in the page.
+      if (e.key !== 'Escape') return
+      const dialogs = document.querySelectorAll('[role="dialog"]')
+      if (dialogs[dialogs.length - 1] === dialogRef.current) onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)

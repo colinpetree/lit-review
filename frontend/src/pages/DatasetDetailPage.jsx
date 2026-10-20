@@ -208,14 +208,13 @@ export default function DatasetDetailPage() {
 
   // Filtered, sorted and exportable lists are worked out once per change, not on every draw (the page is
   // drawn again whenever one of its jobs moves along).
+  // Sorted first, then filtered (filtering keeps the order), so Export all follows the sort too.
   const papers = dataset?.papers
-  const visiblePapers = useMemo(
-    () => (papers ? sortPapers(filterPapers(papers, filter), sort) : []),
-    [papers, filter, sort],
-  )
+  const sortedPapers = useMemo(() => (papers ? sortPapers(papers, sort) : []), [papers, sort])
+  const visiblePapers = useMemo(() => filterPapers(sortedPapers, filter), [sortedPapers, filter])
   const datasetId = dataset?.id
   const exportItems = useMemo(() => {
-    const included = papers?.filter((p) => !p.excluded) ?? []
+    const included = sortedPapers.filter((p) => !p.excluded)
     if (!included.length) return []
     return exportMenuItems({
       url: `/api/datasets/${datasetId}/export`,
@@ -224,7 +223,7 @@ export default function DatasetDetailPage() {
       filterActive: isPaperFilterActive(filter),
       onError: setToggleError,
     })
-  }, [papers, datasetId, visiblePapers, filter])
+  }, [sortedPapers, datasetId, visiblePapers, filter])
 
   const queue = async (fields) => {
     setJobError(null)

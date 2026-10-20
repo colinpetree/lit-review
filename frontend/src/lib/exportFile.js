@@ -54,20 +54,21 @@ export async function downloadExport(url, body) {
 }
 
 // The Export entries for a MoreMenu (an array, to spread into its items). `url` is the
-// page's export route, `all` and `shown` the ids of the papers the server would export in
-// full and of those the page's filter and sort currently show (in that order). With no
-// filter on, the two are the same: one "Export" entry listing the formats. With one on there
-// are two entries, "Export shown" and "Export all", each listing the formats, so the choice
-// is made once rather than beside every format. `onError(message)` is called when a download
-// fails.
+// page's export route, `all` the ids of every paper the server would export and `shown`
+// those the page's filter currently shows, both in the page's current sort order, which
+// the file keeps (the server's own order is by grade or by id, not what the page shows).
+// With no filter on, the two are the same: one "Export" entry listing the formats. With
+// one on there are two entries, "Export shown" and "Export all", each listing the formats,
+// so the choice is made once rather than beside every format. `onError(message)` is
+// called when a download fails.
 export function exportMenuItems({ url, all, shown, filterActive, onError }) {
   const start = (format, paperIds) => {
-    downloadExport(url, paperIds ? { format, paper_ids: paperIds } : { format }).catch((err) => onError(err.message))
+    downloadExport(url, { format, paper_ids: paperIds }).catch((err) => onError(err.message))
   }
   const formats = (paperIds) => FORMATS.map(({ id, label }) => ({ label, onClick: () => start(id, paperIds) }))
-  if (!filterActive) return [{ label: `Export (${all.length})`, icon: Download, submenu: formats(null) }]
+  if (!filterActive) return [{ label: `Export (${all.length})`, icon: Download, submenu: formats(all) }]
   return [
     { label: `Export shown (${shown.length})`, icon: Download, submenu: formats(shown) },
-    { label: `Export all (${all.length})`, icon: Download, submenu: formats(null) },
+    { label: `Export all (${all.length})`, icon: Download, submenu: formats(all) },
   ]
 }

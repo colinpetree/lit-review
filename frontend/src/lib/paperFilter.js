@@ -19,6 +19,15 @@ export const PAPER_SORT_OPTIONS = [
   { value: 'citations-asc', label: 'Least cited' },
 ]
 
+// Run results add the grade sorts in front of the dataset ones.
+export const DEFAULT_RUN_SORT = 'score-desc'
+
+export const RUN_SORT_OPTIONS = [
+  { value: 'score-desc', label: 'Highest grade' },
+  { value: 'score-asc', label: 'Lowest grade' },
+  ...PAPER_SORT_OPTIONS,
+]
+
 function toNumber(value) {
   if (value === '' || value === null || value === undefined) return null
   const n = Number(value)
@@ -72,21 +81,37 @@ export function filterPapers(papers, filter) {
 
 // Publication dates are ISO strings, so they compare correctly as text; the
 // year stands in when a source gave no full date. Papers missing the sort
-// value always go last, in either direction.
+// value always go last, in either direction. On a run that is still being
+// graded, every graded paper comes before every ungraded one whatever the sort,
+// so the cards at the top have a grade and reasoning. Ties (including two papers
+// both missing the value) go to the higher grade. Dataset papers have no grade,
+// so neither rule changes their order.
 function dateKey(paper) {
   return paper.publication_date || (paper.year ? String(paper.year) : null)
+}
+
+const SORT_KEYS = {
+  date: dateKey,
+  citations: (p) => p.citation_count ?? null,
+  score: (p) => p.score ?? null,
+}
+
+function compareKeys(ka, kb, sign) {
+  if (ka === null && kb === null) return 0
+  if (ka === null) return 1
+  if (kb === null) return -1
+  return ka < kb ? -sign : ka > kb ? sign : 0
 }
 
 export function sortPapers(papers, sort) {
   const [field, direction] = sort.split('-')
   const sign = direction === 'asc' ? 1 : -1
-  const key = field === 'citations' ? (p) => p.citation_count ?? null : dateKey
-  return [...papers].sort((a, b) => {
-    const ka = key(a)
-    const kb = key(b)
-    if (ka === null && kb === null) return 0
-    if (ka === null) return 1
-    if (kb === null) return -1
-    return ka < kb ? -sign : ka > kb ? sign : 0
-  })
+  const key = SORT_KEYS[field] ?? dateKey
+  const ungraded = (p) => (SORT_KEYS.score(p) === null ? 1 : 0)
+  return [...papers].sort(
+    (a, b) =>
+      ungraded(a) - ungraded(b) ||
+      compareKeys(key(a), key(b), sign) ||
+      compareKeys(SORT_KEYS.score(a), SORT_KEYS.score(b), -1),
+  )
 }

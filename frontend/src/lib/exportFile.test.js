@@ -56,7 +56,7 @@ describe('exportMenuItems', () => {
     for (const item of items) expect(labels(item)).toEqual(['CSV', 'RIS', 'BibTeX'])
   })
 
-  it('sends the shown ids in order, or no ids for all, and reports a failure', async () => {
+  it('sends the shown or all ids in the page order, and reports a failure', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: 'Nope' }) })
     vi.stubGlobal('fetch', fetchMock)
     const onError = vi.fn()
@@ -65,7 +65,17 @@ describe('exportMenuItems', () => {
     all.submenu[1].onClick()
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(2))
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ format: 'csv', paper_ids: [3, 1] })
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ format: 'ris' })
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ format: 'ris', paper_ids: [1, 2, 3, 4] })
     expect(onError).toHaveBeenCalledWith('Nope')
+  })
+
+  it('sends every id in the page order when no filter is on', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: 'Nope' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const onError = vi.fn()
+    const [only] = exportMenuItems({ ...base, all: [4, 2, 3, 1], filterActive: false, onError })
+    only.submenu[2].onClick()
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ format: 'bibtex', paper_ids: [4, 2, 3, 1] })
   })
 })

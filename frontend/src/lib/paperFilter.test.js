@@ -140,4 +140,41 @@ describe('sortPapers', () => {
     sortPapers(list, 'date-asc')
     expect(list).toEqual(copy)
   })
+
+  it('keeps the input order for ties when papers have no grade (dataset page)', () => {
+    const ungraded = [
+      { id: 'x', year: 2020 },
+      { id: 'y', year: 2020 },
+      { id: 'z' },
+      { id: 'w' },
+    ]
+    expect(ids(sortPapers(ungraded, 'date-desc'))).toEqual(['x', 'y', 'z', 'w'])
+  })
+})
+
+describe('sortPapers on run results', () => {
+  const results = [
+    { id: 'a', score: 40, year: 2020, publication_date: '2020-05-01', citation_count: 10 },
+    { id: 'b', score: 90, year: 2020, publication_date: '2020-05-01', citation_count: 10 },
+    { id: 'c', score: null, year: 2022, citation_count: 10 },
+    { id: 'd', score: 70, citation_count: null },
+    { id: 'e', score: 20, citation_count: null },
+    { id: 'f', year: 2021, citation_count: 3 },
+  ]
+
+  it('sorts by grade in either direction with ungraded papers last', () => {
+    expect(ids(sortPapers(results, 'score-desc'))).toEqual(['b', 'd', 'a', 'e', 'c', 'f'])
+    expect(ids(sortPapers(results, 'score-asc'))).toEqual(['e', 'a', 'd', 'b', 'c', 'f'])
+  })
+
+  // c and f are not graded yet: whatever the sort, they come after every graded paper.
+  it('puts graded papers first and breaks date ties by highest grade', () => {
+    expect(ids(sortPapers(results, 'date-desc'))).toEqual(['b', 'a', 'd', 'e', 'c', 'f'])
+    expect(ids(sortPapers(results, 'date-asc'))).toEqual(['b', 'a', 'd', 'e', 'f', 'c'])
+  })
+
+  it('puts graded papers first and breaks citation ties by highest grade', () => {
+    expect(ids(sortPapers(results, 'citations-desc'))).toEqual(['b', 'a', 'd', 'e', 'c', 'f'])
+    expect(ids(sortPapers(results, 'citations-asc'))).toEqual(['b', 'a', 'd', 'e', 'f', 'c'])
+  })
 })

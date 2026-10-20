@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ArrowDown01,
+  ArrowDown10,
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
   Book,
@@ -33,15 +35,19 @@ const RELEVANCE_OPTIONS = [
 
 // asPlaceholder: clicking lists every sort instead of editing the current label.
 const SORT_ICONS = {
+  'score-desc': ArrowDown10,
+  'score-asc': ArrowDown01,
   'date-desc': CalendarArrowDown,
   'date-asc': CalendarArrowUp,
   'citations-desc': ArrowDownWideNarrow,
   'citations-asc': ArrowUpNarrowWide,
 }
-const SORT_OPTIONS = PAPER_SORT_OPTIONS.map((o) => ({ ...o, icon: SORT_ICONS[o.value], asPlaceholder: true }))
+const withIcons = (options) => options.map((o) => ({ ...o, icon: SORT_ICONS[o.value], asPlaceholder: true }))
+const DEFAULT_SORT_OPTIONS = withIcons(PAPER_SORT_OPTIONS)
 
 // Search box (filters on every keystroke), a popover of extra filters and,
-// when onSortChange is given, a sort picker. shown/total are the filtered and
+// when onSortChange is given, a sort picker (sortOptions defaults to the
+// dataset sorts; pass a constant list). shown/total are the filtered and
 // unfiltered paper counts, used for the "Showing X of Y" line while a filter
 // is active. showRelevance (run results only) adds the relevance filter.
 export default function PaperFilterBar({
@@ -51,6 +57,7 @@ export default function PaperFilterBar({
   total,
   sort,
   onSortChange,
+  sortOptions,
   showRelevance,
   showNew,
 }) {
@@ -72,6 +79,7 @@ export default function PaperFilterBar({
   }, [open])
 
   const active = isPaperFilterActive(filter)
+  const sortChoices = useMemo(() => (sortOptions ? withIcons(sortOptions) : DEFAULT_SORT_OPTIONS), [sortOptions])
 
   return (
     <div className="mt-4">
@@ -237,7 +245,7 @@ export default function PaperFilterBar({
 
         {onSortChange ? (
           <div className="w-40 shrink-0">
-            <Combobox options={SORT_OPTIONS} value={sort} onChange={onSortChange} placeholder="Sort by" subtle searchable={false} />
+            <Combobox options={sortChoices} value={sort} onChange={onSortChange} placeholder="Sort by" subtle searchable={false} />
           </div>
         ) : null}
       </div>

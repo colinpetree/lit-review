@@ -4,7 +4,14 @@ import { PageShell, BackLink, Card } from '../components/ui'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
 import InfiniteList from '../components/InfiniteList'
-import { EMPTY_PAPER_FILTER, filterPapers, isPaperFilterActive } from '../lib/paperFilter'
+import {
+  DEFAULT_RUN_SORT,
+  EMPTY_PAPER_FILTER,
+  RUN_SORT_OPTIONS,
+  filterPapers,
+  isPaperFilterActive,
+  sortPapers,
+} from '../lib/paperFilter'
 import { deleteJson, fetchJson, patchJson, postJson } from '../lib/api'
 import { exportMenuItems } from '../lib/exportFile'
 import { formatUsd } from '../lib/spendSetting'
@@ -30,6 +37,7 @@ export default function RunResultsPage() {
   const progressKey = useMemo(() => progressSignature(myJobs), [myJobs])
   const statusKey = useMemo(() => statusSignature(myJobs), [myJobs])
   const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
+  const [sort, setSort] = useState(DEFAULT_RUN_SORT)
   const [actionError, setActionError] = useState(null)
   // What the user has typed as the new spending limit (null: show the suggestion).
   const [limitInput, setLimitInput] = useState(null)
@@ -128,23 +136,25 @@ export default function RunResultsPage() {
     }
   }
 
-  // Filtered and exportable lists are worked out once per change, not on every draw: a run can hold
-  // hundreds of papers, and the page is drawn again whenever its job moves along.
+  // Filtered, sorted and exportable lists are worked out once per change, not on every draw: a run can
+  // hold hundreds of papers, and the page is drawn again whenever its job moves along.
+  // Sorted first, then filtered (filtering keeps the order), so Export all follows the sort too.
   const results = run?.results
   const runId = run?.id
-  const visibleResults = useMemo(() => (results ? filterPapers(results, filter) : []), [results, filter])
+  const sortedResults = useMemo(() => (results ? sortPapers(results, sort) : []), [results, sort])
+  const visibleResults = useMemo(() => filterPapers(sortedResults, filter), [sortedResults, filter])
   const exportItems = useMemo(
     () =>
-      results?.length
+      sortedResults.length
         ? exportMenuItems({
             url: `/api/analysis-runs/${runId}/export`,
-            all: results.map((p) => p.id),
+            all: sortedResults.map((p) => p.id),
             shown: visibleResults.map((p) => p.id),
             filterActive: isPaperFilterActive(filter),
             onError: setActionError,
           })
         : [],
-    [results, runId, visibleResults, filter],
+    [sortedResults, runId, visibleResults, filter],
   )
 
   if (error) {
@@ -406,6 +416,9 @@ export default function RunResultsPage() {
         onChange={setFilter}
         shown={visibleResults.length}
         total={run.results.length}
+        sort={sort}
+        onSortChange={setSort}
+        sortOptions={RUN_SORT_OPTIONS}
         showRelevance
       />
 
@@ -418,7 +431,7 @@ export default function RunResultsPage() {
       <InfiniteList
         className="mt-4 flex flex-col gap-3"
         items={visibleResults}
-        resetKey={JSON.stringify([run.id, filter])}
+        resetKey={JSON.stringify([run.id, filter, sort])}
         renderItem={(paper, index) => (
           <PaperCard
             key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}

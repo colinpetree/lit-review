@@ -10,7 +10,12 @@ export const LIST_SORT_OPTIONS = [
   { value: 'oldest', label: 'Oldest first' },
 ]
 
-export const modelKey = (aiApi, aiModel) => `${aiApi}::${aiModel}`
+export const LIST_VIEW_OPTIONS = [
+  { value: 'table', label: 'Table' },
+  { value: 'card', label: 'Card' },
+]
+
+export const modelKey =(aiApi, aiModel) => `${aiApi}::${aiModel}`
 
 // The date fields are typed text, so a date only counts once it is complete.
 export const isFullDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value)

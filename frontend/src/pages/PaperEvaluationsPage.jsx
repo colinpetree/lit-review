@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
 import NewEvaluationModal from '../components/NewEvaluationModal'
-import JobStatus from '../components/JobStatus'
+import JobStatus, { JobStatusDot } from '../components/JobStatus'
 import { useJobs } from '../components/JobsProvider'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
@@ -13,12 +13,29 @@ import RunMenu from '../components/RunMenu'
 import { deleteJson, fetchJson } from '../lib/api'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
+import { useView } from '../lib/viewSetting'
+import { Cell, DataTable, ListRow, MenuCell, TruncatedText } from '../components/ListTable'
+import { Tooltip } from '../components/ui/Tooltip'
+
+const COLUMNS = [
+  { label: 'Name' },
+  { label: 'Datasets' },
+  { label: 'Papers' },
+  { label: 'Date' },
+  { label: 'AI model' },
+  { label: 'Est. cost' },
+  { label: '' },
+]
+
+// Module level so React keeps one component (and the table) across renders.
+const RunsTable = (props) => <DataTable columns={COLUMNS} {...props} />
 
 export default function PaperEvaluationsPage() {
   const [runs, setRuns] = useState(null)
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
+  const [view, setView] = useView()
   // The dataset ids a New Evaluation starts with selected; null while the dialog is closed.
   const [creating, setCreating] = useState(null)
   const [actionError, setActionError] = useState(null)
@@ -78,6 +95,7 @@ export default function PaperEvaluationsPage() {
 
   return (
     <PageShell
+      wide={view === 'table'}
       title="Paper Evaluations"
       icon={navIcon('/evaluations')}
       description="Saved evaluations of research papers graded by an AI judge based on your research criteria and sorted by most relevant."
@@ -103,6 +121,8 @@ export default function PaperEvaluationsPage() {
           onChange={setFilter}
           sort={sort}
           onSortChange={setSort}
+          view={view}
+          onViewChange={setView}
           placeholder="Filter evaluations by prompt or dataset"
           noun="evaluations"
           shown={visible.length}
@@ -114,6 +134,52 @@ export default function PaperEvaluationsPage() {
       {runs && runs.length > 0 && visible.length === 0 ? (
         <p className="text-sm text-gray-500">No evaluations match these filters.</p>
       ) : null}
+      {view === 'table' ? (
+        <InfiniteList
+          as={RunsTable}
+          items={visible}
+          resetKey={JSON.stringify([filter, sort])}
+          renderItem={(run) => {
+            const [name, datasets, papers, date, model, cost, menu] = COLUMNS
+            const title = run.name || run.prompt_name || run.grading_prompt
+            const datasetText = datasetLabels(run.datasets).join(', ')
+            return (
+              <ListRow key={run.id} to={`/evaluations/${run.id}`}>
+                <Cell column={name}>
+                  <div className="flex items-center gap-2">
+                    <JobStatusDot item={run} />
+                    <Tooltip content="View details">
+                      <Link to={`/evaluations/${run.id}`} className="block max-w-xs truncate font-medium text-gray-800 hover:underline">
+                        {title}
+                      </Link>
+                    </Tooltip>
+                  </div>
+                </Cell>
+                <Cell column={datasets}>
+                  <TruncatedText text={datasetText} className="max-w-md text-gray-500" />
+                </Cell>
+                <Cell column={papers} className="text-gray-600">{run.paper_count}</Cell>
+                <Cell column={date} className="text-gray-600">{formatDateTime(run.completed_at || run.created_at)}</Cell>
+                <Cell column={model}>
+                  <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} className="text-sm text-gray-600" />
+                </Cell>
+                <Cell column={cost} className="text-gray-600">
+                  {run.cost != null ? <span title={RUN_COST_NOTE}>${run.cost.toFixed(2)}</span> : null}
+                </Cell>
+                <MenuCell column={menu}>
+                  <RunMenu
+                    floating
+                    run={run}
+                    onRenamed={(n) => renameRun(run.id, n)}
+                    onDelete={() => deleteRun(run.id)}
+                    onError={setActionError}
+                  />
+                </MenuCell>
+              </ListRow>
+            )
+          }}
+        />
+      ) : (
       <InfiniteList
         as="div"
         className="flex flex-col gap-3"
@@ -135,7 +201,7 @@ export default function PaperEvaluationsPage() {
                   </div>
                   {/* The server works the state out (a run with papers still ungraded and nothing grading
                       them is Incomplete, whatever its status says). */}
-                  <JobStatus item={run} />
+                  <JobStatus item={run} showProgress={false} hideCompleted />
                 </div>
               </Card>
             </Link>
@@ -149,6 +215,7 @@ export default function PaperEvaluationsPage() {
           </div>
         )}
       />
+      )}
       {creating ? <NewEvaluationModal initialDatasetIds={creating} onClose={() => setCreating(null)} /> : null}
     </PageShell>
   )

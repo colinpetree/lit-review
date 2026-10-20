@@ -13,7 +13,7 @@ const MAX_RUN_NAME_CHARS = 120 // matches MAX_RUN_NAME_CHARS in db.py
 // new name, then calls onRenamed(name)) and, when onDelete is given, Delete
 // behind a confirmation. A run being graded (or waiting to be) can be stopped here, and one
 // with papers still ungraded started again; `onError` hears why that failed.
-export default function RunMenu({ run, onRenamed, onDelete, onError, className, extraItems = [] }) {
+export default function RunMenu({ run, onRenamed, onDelete, onError, className, floating = false, extraItems = [] }) {
   const [modal, setModal] = useState(null) // 'rename' | 'delete' | null
   const { stopJob, startJob } = useJobs()
 
@@ -32,7 +32,7 @@ export default function RunMenu({ run, onRenamed, onDelete, onError, className, 
 
   return (
     <>
-      <MoreMenu className={className} items={items} />
+      <MoreMenu className={className} floating={floating} items={items} />
       {modal === 'rename' ? (
         <RenameModal
           title="Rename run"

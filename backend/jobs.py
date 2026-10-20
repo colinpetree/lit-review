@@ -96,7 +96,7 @@ class JobContext:
         if _stop_all.is_set():
             raise JobStopped("Lit Review was closed before this finished. Resume it to carry on.")
         if db.stop_requested(self.id):
-            raise JobStopped("Stopped. What was finished is kept; resume it to carry on.")
+            raise JobStopped(db.STOPPED_BY_USER)
 
     def set_progress(self, **fields):
         """Merge fields into the job's saved progress (shown on the pages)."""

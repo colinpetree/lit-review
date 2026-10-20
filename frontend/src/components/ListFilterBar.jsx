@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarArrowDown, CalendarArrowUp, Search, SlidersHorizontal, X } from 'lucide-react'
+import { CalendarArrowDown, CalendarArrowUp, LayoutGrid, Search, SlidersHorizontal, Table, X } from 'lucide-react'
 import Combobox from './Combobox'
 import DatePicker from './DatePicker'
 import { PROVIDER_LABELS, modelName, providerIcon } from '../lib/models'
-import { EMPTY_LIST_FILTER, LIST_SORT_OPTIONS, isFullDate, isListFilterActive, modelKey } from '../lib/listFilter'
+import {
+  EMPTY_LIST_FILTER,
+  LIST_SORT_OPTIONS,
+  LIST_VIEW_OPTIONS,
+  isFullDate,
+  isListFilterActive,
+  modelKey,
+} from '../lib/listFilter'
 
 const SORT_ICONS = { newest: CalendarArrowDown, oldest: CalendarArrowUp }
 const SORT_OPTIONS = LIST_SORT_OPTIONS.map((o) => ({ ...o, icon: SORT_ICONS[o.value], asPlaceholder: true }))
+const VIEW_ICONS = { table: Table, card: LayoutGrid }
+const VIEW_OPTIONS = LIST_VIEW_OPTIONS.map((o) => ({ ...o, icon: VIEW_ICONS[o.value], asPlaceholder: true }))
 
 // Search box, a popover with a created-date range (and a model picker when
 // `items` carry ai_api/ai_model), and a newest/oldest sort picker. `items` is
@@ -17,6 +26,8 @@ export default function ListFilterBar({
   onChange,
   sort,
   onSortChange,
+  view,
+  onViewChange,
   placeholder,
   noun,
   shown,
@@ -64,8 +75,9 @@ export default function ListFilterBar({
 
   return (
     <div className="mb-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
+      {/* On a phone the search box gets its own row and the controls share the next one. */}
+      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+        <div className="relative min-w-0 basis-full sm:basis-auto sm:flex-1">
           <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
@@ -86,7 +98,7 @@ export default function ListFilterBar({
           ) : null}
         </div>
 
-        <div ref={ref} className="relative">
+        <div ref={ref} className="relative shrink-0">
           <button
             type="button"
             aria-haspopup="menu"
@@ -103,7 +115,9 @@ export default function ListFilterBar({
             ) : null}
           </button>
           {open ? (
-            <div className="absolute right-0 z-10 mt-1 w-72 rounded-md border border-gray-200 bg-surface p-3 shadow-lg">
+            // Opens to the right on a phone, where the button starts the second row, and to the left
+            // beside the search box on wider screens.
+            <div className="absolute left-0 z-10 mt-1 w-72 sm:left-auto sm:right-0 rounded-md border border-gray-200 bg-surface p-3 shadow-lg">
               <div className="text-sm text-gray-700">
                 <span className="block">Created</span>
                 <div className="mt-1 flex items-center gap-2">
@@ -140,9 +154,15 @@ export default function ListFilterBar({
           ) : null}
         </div>
 
-        <div className="w-40 shrink-0">
+        <div className="min-w-0 flex-1 sm:w-40 sm:flex-none">
           <Combobox options={SORT_OPTIONS} value={sort} onChange={onSortChange} placeholder="Sort by" subtle searchable={false} />
         </div>
+
+        {onViewChange ? (
+          <div className="min-w-0 flex-1 sm:w-36 sm:flex-none">
+            <Combobox options={VIEW_OPTIONS} value={view} onChange={onViewChange} placeholder="View" subtle searchable={false} />
+          </div>
+        ) : null}
       </div>
 
       {active ? (

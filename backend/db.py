@@ -44,6 +44,10 @@ _LOCK = threading.Lock()
 # finished). A database stamped higher than this was made by a newer version and is not opened.
 SCHEMA_VERSION = 8
 
+# What a job the user stopped says (set by jobs.JobContext.check). Here, not in jobs.py, because
+# _migrate rewrites older wordings to it and jobs.py imports this module.
+STOPPED_BY_USER = "Stopped by user."
+
 _INIT_LOCK = threading.Lock()
 # Goes up each time a backup replaces the database. A background job remembers the number it
 # started under and stops without writing if it changed, since its ids mean nothing in the
@@ -403,6 +407,18 @@ def _migrate(conn):
         conn.execute("UPDATE analysis_run SET name = ? WHERE id = ?", (name, row["id"]))
     if unnamed:
         conn.commit()
+
+    # Jobs stopped before the stop message was shortened keep the wording they were saved with;
+    # give them the current one, so every stopped job reads the same.
+    conn.execute(
+        "UPDATE job SET error = ? WHERE error IN (?, ?)",
+        (
+            STOPPED_BY_USER,
+            "Stopped. What was finished is kept; resume it to carry on.",
+            "Stopped by user. What was finished is kept.",
+        ),
+    )
+    conn.commit()
 
 
 def _backfill_title_keys(conn):

@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom'
 import { ChevronLeft } from 'lucide-react'
 
-export function PageShell({ title, icon: Icon, description, actions, children }) {
+export function PageShell({ title, icon: Icon, description, actions, wide = false, children }) {
   return (
-    <div className="max-w-3xl mx-auto px-4 py-10">
+    <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto px-4 py-10`}>
       {title || actions ? (
         <div className="flex items-start justify-between gap-4">
           <div>

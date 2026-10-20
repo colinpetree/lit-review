@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
 import NewDatasetModal from '../components/NewDatasetModal'
-import JobStatus from '../components/JobStatus'
+import JobStatus, { JobStatusDot } from '../components/JobStatus'
 import { useJobs } from '../components/JobsProvider'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
@@ -13,12 +13,30 @@ import DatasetMenu from '../components/DatasetMenu'
 import ModelBadge from '../components/ModelBadge'
 import { deleteJson, fetchJson } from '../lib/api'
 import { formatDateTime, formatYearRange } from '../lib/format'
+import { useView } from '../lib/viewSetting'
+import { Cell, DataTable, ListRow, MenuCell, TruncatedText } from '../components/ListTable'
+import { Tooltip } from '../components/ui/Tooltip'
+
+const COLUMNS = [
+  { label: 'Name' },
+  { label: 'Topic' },
+  { label: 'Papers' },
+  { label: 'Years' },
+  { label: 'Created' },
+  { label: 'Updated' },
+  { label: 'AI model' },
+  { label: '' },
+]
+
+// Module level so React keeps one component (and the table) across renders.
+const DatasetsTable = (props) => <DataTable columns={COLUMNS} {...props} />
 
 export default function PaperDataSetsPage() {
   const [datasets, setDatasets] = useState(null)
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
+  const [view, setView] = useView()
   const [creating, setCreating] = useState(false)
   const [actionError, setActionError] = useState(null)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -74,6 +92,7 @@ export default function PaperDataSetsPage() {
 
   return (
     <PageShell
+      wide={view === 'table'}
       title="Paper Datasets"
       icon={navIcon('/datasets')}
       description="Groups of similar research papers that contain paper data including title, abstract, authors, publication, and number of citations. Datasets are used in evaluations."
@@ -99,6 +118,8 @@ export default function PaperDataSetsPage() {
           onChange={setFilter}
           sort={sort}
           onSortChange={setSort}
+          view={view}
+          onViewChange={setView}
           placeholder="Filter datasets by title or topic"
           noun="datasets"
           shown={visible.length}
@@ -110,6 +131,50 @@ export default function PaperDataSetsPage() {
       {datasets && datasets.length > 0 && visible.length === 0 ? (
         <p className="text-sm text-gray-500">No datasets match these filters.</p>
       ) : null}
+      {view === 'table' ? (
+        <InfiniteList
+          as={DatasetsTable}
+          items={visible}
+          resetKey={JSON.stringify([filter, sort])}
+          renderItem={(d) => {
+            const [name, query, papers, years, created, updated, model, menu] = COLUMNS
+            const yearRange = formatYearRange(d.oldest_year, d.newest_year, d.newest_publication_date)
+            return (
+              <ListRow key={d.id} to={`/datasets/${d.id}`}>
+                <Cell column={name}>
+                  <div className="flex items-center gap-2">
+                    <JobStatusDot item={d} />
+                    <Tooltip content="View details">
+                      <Link to={`/datasets/${d.id}`} className="block max-w-xs truncate font-medium text-gray-800 hover:underline">
+                        {d.name}
+                      </Link>
+                    </Tooltip>
+                  </div>
+                </Cell>
+                <Cell column={query}>
+                  <TruncatedText text={d.verbose_query} className="max-w-md text-gray-500" />
+                </Cell>
+                <Cell column={papers} className="text-gray-600">{d.pending ? '' : d.paper_count}</Cell>
+                <Cell column={years} className="text-gray-600">{d.pending ? '' : yearRange}</Cell>
+                <Cell column={created} className="text-gray-600">{formatDateTime(d.created_at)}</Cell>
+                <Cell column={updated} className="text-gray-600">{formatDateTime(d.updated_at)}</Cell>
+                <Cell column={model}>
+                  <ModelBadge aiApi={d.ai_api} aiModel={d.ai_model} className="text-sm text-gray-600" />
+                </Cell>
+                <MenuCell column={menu}>
+                  <DatasetMenu
+                    floating
+                    dataset={d}
+                    onRenamed={(n) => renameDataset(d.id, n)}
+                    onDelete={() => deleteDataset(d.id)}
+                    onError={setActionError}
+                  />
+                </MenuCell>
+              </ListRow>
+            )
+          }}
+        />
+      ) : (
       <InfiniteList
         as="div"
         className="grid grid-cols-1 sm:grid-cols-2 gap-4"
@@ -137,7 +202,7 @@ export default function PaperDataSetsPage() {
                   ) : null}
                   <div className="mt-1 flex items-center justify-between gap-2">
                     <ModelBadge aiApi={d.ai_api} aiModel={d.ai_model} className="text-sm text-gray-300" />
-                    <JobStatus item={d} />
+                    <JobStatus item={d} showProgress={false} hideCompleted />
                   </div>
                 </Card>
               </Link>
@@ -152,6 +217,7 @@ export default function PaperDataSetsPage() {
           )
         }}
       />
+      )}
       {creating ? <NewDatasetModal onClose={() => setCreating(false)} /> : null}
     </PageShell>
   )

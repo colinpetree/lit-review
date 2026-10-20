@@ -593,6 +593,15 @@ than `/trash`, in sessionStorage with a memory fallback, and anything that is no
 `/datasets`) and reopens Settings at Your Data. `useApiKeys` (`lib/useApiKeys.js`) is the saved-key status and
 save/remove for the two key sections.
 
+The Paper Datasets and Paper Evaluations lists have a View dropdown beside Sort: Table (default) or Card, kept per
+browser (`lib/viewSetting.js`, shared by both). The table (`components/ListTable.jsx`) is fed to `InfiniteList` as
+its `as` component, draws nothing while there are no rows, keeps every row on one line and scrolls sideways when wider
+than the page (wheel, arrow keys once focused, or resting the pointer near either edge: nothing is drawn, and it
+waits a moment so passing through the edge does not scroll). Its row menus pass `floating` to `MoreMenu`, which draws the popover fixed in `document.body` (closing on any
+scroll) so the scroll box never clips it; the menu cell stops click propagation so a menu or modal click never opens
+the row. Table view widens the page through `PageShell`'s `wide` prop. Status in both views shows only queued,
+running or incomplete work (`JobStatusDot` in the table, `JobStatus hideCompleted` on cards).
+
 Theme (Light/Dark/System, set in Settings, Appearance) is stored per browser in localStorage
 (`lib/theme.js`) and applied as a `dark` class on `<html>`; an inline script in `index.html`
 applies it before first paint. Neutrals are CSS variables in `index.css` (`:root` and `.dark`)

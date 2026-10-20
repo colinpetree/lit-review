@@ -318,6 +318,22 @@ class TestInterruptions:
         jobs.drain()
         assert len(attempts) >= 4 and run_info(client, run_id)["state"] == "completed"
 
+    def test_a_job_stopped_with_the_old_wording_reads_the_current_message_after_an_upgrade(self, client):
+        _, _, run_id = make_run()
+        old = queue(client, "run_score", run_id=run_id)["job"]
+        other = queue(client, "run_score", run_id=make_run(1, name="Other")[2])["job"]
+        with closing(db.sqlite3.connect(str(db.DB_PATH))) as conn:
+            conn.execute(
+                "UPDATE job SET status = 'incomplete', error = ? WHERE id = ?",
+                ("Stopped. What was finished is kept; resume it to carry on.", old["id"]),
+            )
+            conn.execute("UPDATE job SET status = 'incomplete', error = 'Out of credit.' WHERE id = ?", (other["id"],))
+            conn.commit()
+        db._ready_for = None
+        db.ensure_ready()
+        assert db.get_job(old["id"])["error"] == db.STOPPED_BY_USER == "Stopped by user."
+        assert db.get_job(other["id"])["error"] == "Out of credit."  # other reasons are left alone
+
 
 class TestDeleting:
     def test_deleting_a_run_stops_its_waiting_job(self, client, scoring):

@@ -14,7 +14,7 @@ const MAX_DATASET_NAME_CHARS = 120 // matches MAX_DATASET_NAME_CHARS in app.py
 // a confirmation. A dataset with work going on (its search, a check for new papers, an
 // abstract lookup) can be stopped here, and an unfinished search resumed; `onError` hears
 // why that failed.
-export default function DatasetMenu({ dataset, onRenamed, onDelete, onError, className, extraItems = [] }) {
+export default function DatasetMenu({ dataset, onRenamed, onDelete, onError, className, floating = false, extraItems = [] }) {
   const [modal, setModal] = useState(null) // 'rename' | 'delete' | null
   const { stopJob, resumeJob } = useJobs()
 
@@ -29,7 +29,7 @@ export default function DatasetMenu({ dataset, onRenamed, onDelete, onError, cla
 
   return (
     <>
-      <MoreMenu className={className} items={items} />
+      <MoreMenu className={className} floating={floating} items={items} />
       {modal === 'rename' ? (
         <RenameModal
           title="Rename dataset"

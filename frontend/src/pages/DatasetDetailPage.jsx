@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { PageShell, Card, BackLink } from '../components/ui'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { PageShell, Card, BackLink, TextLink } from '../components/ui'
 import Spinner, { StageIndicator } from '../components/Spinner'
 import PaperCard from '../components/PaperCard'
 import PaperFilterBar from '../components/PaperFilterBar'
@@ -19,6 +19,60 @@ import { formatDateTime, formatYearRange } from '../lib/format'
 import { summarizeRetrieval } from '../lib/retrieval'
 import SearchCompletenessModal from '../components/SearchCompletenessModal'
 import { useSettingsModal } from '../components/SettingsModalProvider'
+import RunsTableList from '../components/RunsTable'
+import { Tabs, TabPanel, useTab } from '../components/Tabs'
+import { Cell, DataTable, ListRow } from '../components/ListTable'
+import { Tooltip } from '../components/ui/Tooltip'
+import useRuns from '../lib/useRuns'
+import { promptsUsedBy } from '../lib/promptUsage'
+
+const TABS = ['dataset', 'prompts', 'evaluations']
+
+const PROMPT_COLUMNS = [{ label: 'Name' }, { label: 'Evaluations' }, { label: 'Examples' }, { label: 'Last used' }]
+
+// Module level so React keeps one component (and the table) across renders.
+const PromptsTable = (props) => <DataTable columns={PROMPT_COLUMNS} {...props} />
+
+// The prompts that graded this dataset (from `promptsUsedBy`), one row each. A prompt in Deleted
+// Items has no page, so its row is not a link.
+function PromptsUsedTable({ prompts, resetKey }) {
+  const [name, evaluations, examples, lastUsed] = PROMPT_COLUMNS
+  const cells = (p) => (
+    <>
+      <Cell column={name}>
+        {p.deleted ? (
+          <p className="max-w-[20rem] truncate text-gray-500">
+            {p.name} <span className="text-gray-400">(deleted)</span>
+          </p>
+        ) : (
+          <Tooltip content="View details">
+            <Link to={`/prompts/${p.id}`} className="block max-w-[20rem] truncate font-medium text-gray-800 hover:underline">
+              {p.name}
+            </Link>
+          </Tooltip>
+        )}
+      </Cell>
+      <Cell column={evaluations} className="text-gray-600">{p.evaluations}</Cell>
+      <Cell column={examples} className="text-gray-600">{p.examples ?? ''}</Cell>
+      <Cell column={lastUsed} className="text-gray-600">{formatDateTime(p.lastUsed)}</Cell>
+    </>
+  )
+  return (
+    <InfiniteList
+      as={PromptsTable}
+      items={prompts}
+      resetKey={resetKey}
+      renderItem={(p) =>
+        p.deleted ? (
+          // Not a `group`, so it does not light up on hover like the rows that open something.
+          <tr key={p.id}>{cells(p)}</tr>
+        ) : (
+          <ListRow key={p.id} to={`/prompts/${p.id}`}>{cells(p)}</ListRow>
+        )
+      }
+    />
+  )
+}
 
 // Whether every paper the sources reported for the searches was retrieved, with the
 // numbers per source and search behind it. A search that stopped short says why,
@@ -156,6 +210,18 @@ export default function DatasetDetailPage() {
   const [jobError, setJobError] = useState(null)
   // The Search completeness dialog (the numbers behind the summary on the details card).
   const [showCompleteness, setShowCompleteness] = useState(false)
+  const [tab, setTab] = useTab(TABS)
+  // The evaluations that used this dataset, and the live prompts (for their example counts, and to
+  // tell a prompt in Deleted Items, which is not in that list). A failed load is said in its tab.
+  const { runs, setRuns, error: runsError } = useRuns()
+  const [livePrompts, setLivePrompts] = useState(null)
+  const [promptsError, setPromptsError] = useState(null)
+  const [runError, setRunError] = useState(null)
+  const datasetRuns = useMemo(
+    () => (runs ?? []).filter((r) => r.datasets.some((d) => d.id === Number(id))),
+    [runs, id]
+  )
+  const promptsUsed = useMemo(() => promptsUsedBy(datasetRuns, livePrompts), [datasetRuns, livePrompts])
   // The page is reused when the user opens another dataset, so this says which one a reload belongs to.
   const idRef = useRef(id)
   const loadedRef = useRef(false)
@@ -167,6 +233,7 @@ export default function DatasetDetailPage() {
     loadedRef.current = false
     setError(null)
     setToggleError(null)
+    setRunError(null)
     setJobError(null)
     setShowCompleteness(false)
     setFilter(EMPTY_PAPER_FILTER)
@@ -183,6 +250,16 @@ export default function DatasetDetailPage() {
       cancelled = true
     }
   }, [id])
+
+  useEffect(() => {
+    let cancelled = false
+    fetchJson('/api/prompts')
+      .then((data) => !cancelled && setLivePrompts(data.prompts ?? []))
+      .catch((err) => !cancelled && setPromptsError(err.message))
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Loads the dataset again, without any loading state. A reload that fails changes nothing: what is
   // showing stays, and the next change tries again.
@@ -292,10 +369,23 @@ export default function DatasetDetailPage() {
     }
   }
 
+  const renameRun = (runId, name) => setRuns((prev) => prev.map((r) => (r.id === runId ? { ...r, name } : r)))
+  const deleteRun = async (runId) => {
+    await deleteJson(`/api/analysis-runs/${runId}`)
+    setRuns((prev) => prev.filter((r) => r.id !== runId))
+    refreshJobs()
+  }
+
   const detailsCard = (
     <DatasetDetailsCard
       dataset={dataset}
-      onRenamed={(name) => setDataset((prev) => ({ ...prev, name }))}
+      onRenamed={(name) => {
+        setDataset((prev) => ({ ...prev, name }))
+        // The Evaluations tab names this dataset too.
+        setRuns((prev) =>
+          prev?.map((r) => ({ ...r, datasets: r.datasets.map((d) => (d.id === dataset.id ? { ...d, name } : d)) }))
+        )
+      }}
       onDelete={async () => {
         await deleteJson(`/api/datasets/${dataset.id}`)
         refreshJobs()
@@ -387,188 +477,238 @@ export default function DatasetDetailPage() {
       <div className="relative mt-4">
         {detailsCard}
 
-        <div className="mt-6 flex items-center justify-between gap-4">
-          <p className="text-sm text-gray-500">
-            {includedCount} paper{includedCount === 1 ? '' : 's'}
-            {excludedCount ? ` (${excludedCount} excluded)` : ''}
-            {yearRange ? ` · ${yearRange}` : ''}
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => queue({ kind: 'dataset_refresh', dataset_id: dataset.id })}
-              disabled={refreshing}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Check for new papers
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate(`/evaluations?new=1&dataset=${dataset.id}`)}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              Evaluate Dataset
-            </button>
-          </div>
-        </div>
+        <Tabs
+          className="mt-6"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { id: 'dataset', label: 'Dataset' },
+            { id: 'prompts', label: 'Prompts', count: runs && livePrompts ? promptsUsed.length : null },
+            { id: 'evaluations', label: 'Evaluations', count: runs ? datasetRuns.length : null },
+          ]}
+        />
 
-        {refreshing ? (
-          <div className="mt-3">
-            <StageIndicator
-              label={
-                refreshJob.status === 'queued'
-                  ? 'A check for new papers is waiting for other work to finish…'
-                  : 'Checking the paper sources for new papers…'
-              }
-            />
-          </div>
-        ) : null}
-        {jobError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{jobError}</p> : null}
-        {refreshJob?.status === 'incomplete' ? (
-          <p className="mt-3 text-sm text-red-600 dark:text-red-400">{refreshJob.error}</p>
-        ) : null}
-        {newCount !== undefined && !refreshing ? (
-          <p className="mt-3 text-sm text-gray-700">
-            {newCount === 0
-              ? 'No new papers found.'
-              : `Found ${newCount} new paper${newCount === 1 ? '' : 's'}, marked New below.`}
-          </p>
-        ) : null}
-        {incompleteCheck ? (
-          <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
-            The last check matched more papers than were kept.{' '}
-            <button
-              type="button"
-              onClick={() => setShowCompleteness(true)}
-              className="underline underline-offset-2 hover:no-underline"
-            >
-              Show details
-            </button>
-          </p>
-        ) : null}
-        {showCompleteness ? (
-          <SearchCompletenessModal dataset={dataset} onClose={() => setShowCompleteness(false)} />
+        {/* The details card's menu (export, rename) reports here, and the card is on every tab, so
+            its error must show on every tab too. The Dataset tab draws it beside the papers. */}
+        {toggleError && tab !== 'dataset' ? (
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">{toggleError}</p>
         ) : null}
 
-        {/* On a wide window this sits just outside the right edge of the
-            content column and stays in view while the paper list scrolls, so
-            the column never moves whether it is shown or not. The breakpoint is
-            where the sidebar, the column and this panel all fit; on a narrower
-            window it takes its place in the page, above the paper list. */}
-        {showLookupPanel ? (
-          <aside className="mt-6 min-[1560px]:absolute min-[1560px]:inset-y-0 min-[1560px]:left-full min-[1560px]:mt-0 min-[1560px]:ml-6 min-[1560px]:w-64">
-            <div className="rounded-lg border border-gray-200 bg-surface p-4 shadow-sm min-[1560px]:sticky min-[1560px]:top-6">
-              <h2 className="mb-3 text-lg font-semibold text-gray-800">Missing Abstracts</h2>
-              {lookingUp ? (
-                <>
-                  <div className="flex items-center gap-2 text-sm text-gray-700">
-                    <Spinner />
-                    <span>
-                      {lookupJob.status === 'queued'
-                        ? 'Waiting for other work to finish…'
-                        : !lookupProgress.total
-                          ? 'Looking up abstracts…'
-                          : `Looking up abstracts… ${lookupProgress.attempted ?? 0} of ${lookupProgress.total}`}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm text-gray-700">It carries on in the background, whatever page you are on.</p>
-                </>
-              ) : lookupCandidates > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => queue({ kind: 'find_abstracts', dataset_id: dataset.id })}
-                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
-                >
-                  Find missing abstracts ({lookupCandidates})
-                </button>
-              ) : null}
-
-              {lookupResultShown && lookupJob.status === 'completed' ? (
-                <p className="mt-3 text-sm text-gray-700">
-                  {lookupProgress.filled > 0
-                    ? `Found ${lookupProgress.filled} abstract${lookupProgress.filled === 1 ? '' : 's'}.`
-                    : 'No new abstracts found.'}
-                </p>
-              ) : null}
-              {!lookingUp && unfindable > 0 ? (
-                <p className="mt-2 text-sm text-gray-700">
-                  {unfindable} paper{unfindable === 1 ? ' has' : 's have'} no abstract in any source checked.
-                </p>
-              ) : null}
-              {lookupProgress.no_doi > 0 ? (
-                <p className="mt-2 text-xs text-gray-500">
-                  {lookupProgress.no_doi} other paper{lookupProgress.no_doi === 1 ? ' has' : 's have'} no DOI, so can’t
-                  be looked up.
-                </p>
-              ) : null}
-              {Object.entries(lookupProgress.source_errors ?? {}).map(([source, message]) => (
-                <p key={source} className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-                  {message}
-                </p>
-              ))}
-              {lookupJob?.status === 'incomplete' ? (
-                <p className="mt-2 text-sm text-red-600 dark:text-red-400">{lookupJob.error}</p>
-              ) : null}
-
-              <p className="mt-3 text-xs text-gray-400">
-                {!providers ? (
-                  'Missing abstracts are looked up automatically.'
-                ) : keylessPublishers.length === 0 ? (
-                  'The remaining papers without abstracts require manual updating. You can open the paper DOI link and copy the abstract into the paper entry on this page.'
-                ) : (
-                  <>
-                    Missing abstracts are looked up automatically. Add {keylessPublishers.join(' and ')} API{' '}
-                    {keylessPublishers.length === 1 ? 'key' : 'keys'} in{' '}
-                    <button type="button" onClick={() => openSettings('databases')} className="underline">
-                      Settings
-                    </button>{' '}
-                    to find more, or you can update them manually.
-                  </>
-                )}
+        {tab === 'prompts' ? (
+          <TabPanel id="prompts" className="mt-4">
+            {runsError || promptsError ? (
+              <p className="text-sm text-red-600 dark:text-red-400">{runsError || promptsError}</p>
+            ) : null}
+            {runs && livePrompts && promptsUsed.length === 0 ? (
+              <p className="text-sm text-gray-500">No prompts have graded this dataset yet.</p>
+            ) : null}
+            {livePrompts ? <PromptsUsedTable prompts={promptsUsed} resetKey={dataset.id} /> : null}
+          </TabPanel>
+        ) : tab === 'evaluations' ? (
+          <TabPanel id="evaluations" className="mt-4">
+            {runsError ? <p className="text-sm text-red-600 dark:text-red-400">{runsError}</p> : null}
+            {runError ? <p className="mb-3 text-sm text-red-600 dark:text-red-400">{runError}</p> : null}
+            {runs && datasetRuns.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                No evaluations of this dataset yet.{' '}
+                <TextLink to={`/evaluations?new=1&dataset=${dataset.id}`}>Evaluate this dataset</TextLink>
               </p>
-              {missingAbstracts > 0 ? (
+            ) : null}
+            <RunsTableList
+              compact
+              runs={datasetRuns}
+              resetKey={dataset.id}
+              onRenamed={renameRun}
+              onDelete={deleteRun}
+              onError={setRunError}
+            />
+          </TabPanel>
+        ) : (
+          <TabPanel id="dataset">
+            <div className="mt-4 flex items-center justify-between gap-4">
+              <p className="text-sm text-gray-500">
+                {includedCount} paper{includedCount === 1 ? '' : 's'}
+                {excludedCount ? ` (${excludedCount} excluded)` : ''}
+                {yearRange ? ` · ${yearRange}` : ''}
+              </p>
+              <div className="flex shrink-0 items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setFilter((f) => ({ ...f, missingAbstractOnly: true }))}
-                  className="mt-3 text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                  onClick={() => queue({ kind: 'dataset_refresh', dataset_id: dataset.id })}
+                  disabled={refreshing}
+                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                 >
-                  Filter for missing abstracts
+                  Check for new papers
                 </button>
-              ) : null}
+                <button
+                  type="button"
+                  onClick={() => navigate(`/evaluations?new=1&dataset=${dataset.id}`)}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                >
+                  Evaluate Dataset
+                </button>
+              </div>
             </div>
-          </aside>
-        ) : null}
-
-        {toggleError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{toggleError}</p> : null}
-
-        <PaperFilterBar
-          filter={filter}
-          onChange={setFilter}
-          shown={visiblePapers.length}
-          total={dataset.papers.length}
-          sort={sort}
-          onSortChange={setSort}
-          showNew={Boolean(dataset.last_refresh)}
-        />
-
-        {isPaperFilterActive(filter) && visiblePapers.length === 0 ? (
-          <p className="mt-4 text-sm text-gray-500">No papers match the current filters.</p>
-        ) : null}
-
-        <InfiniteList
-          className="mt-4 flex flex-col gap-3"
-          items={visiblePapers}
-          resetKey={JSON.stringify([dataset.id, filter, sort])}
-          renderItem={(paper, index) => (
-            <PaperCard
-              key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}
-              result={paper}
-              onUpdate={handlePaperUpdate}
-              onToggleExclude={toggleExclude}
-              onToggleRead={toggleRead}
+    
+            {refreshing ? (
+              <div className="mt-3">
+                <StageIndicator
+                  label={
+                    refreshJob.status === 'queued'
+                      ? 'A check for new papers is waiting for other work to finish…'
+                      : 'Checking the paper sources for new papers…'
+                  }
+                />
+              </div>
+            ) : null}
+            {jobError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{jobError}</p> : null}
+            {refreshJob?.status === 'incomplete' ? (
+              <p className="mt-3 text-sm text-red-600 dark:text-red-400">{refreshJob.error}</p>
+            ) : null}
+            {newCount !== undefined && !refreshing ? (
+              <p className="mt-3 text-sm text-gray-700">
+                {newCount === 0
+                  ? 'No new papers found.'
+                  : `Found ${newCount} new paper${newCount === 1 ? '' : 's'}, marked New below.`}
+              </p>
+            ) : null}
+            {incompleteCheck ? (
+              <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+                The last check matched more papers than were kept.{' '}
+                <button
+                  type="button"
+                  onClick={() => setShowCompleteness(true)}
+                  className="underline underline-offset-2 hover:no-underline"
+                >
+                  Show details
+                </button>
+              </p>
+            ) : null}
+            {showCompleteness ? (
+              <SearchCompletenessModal dataset={dataset} onClose={() => setShowCompleteness(false)} />
+            ) : null}
+    
+            {/* On a wide window this sits just outside the right edge of the
+                content column and stays in view while the paper list scrolls, so
+                the column never moves whether it is shown or not. The breakpoint is
+                where the sidebar, the column and this panel all fit; on a narrower
+                window it takes its place in the page, above the paper list. */}
+            {showLookupPanel ? (
+              <aside className="mt-6 min-[1560px]:absolute min-[1560px]:inset-y-0 min-[1560px]:left-full min-[1560px]:mt-0 min-[1560px]:ml-6 min-[1560px]:w-64">
+                <div className="rounded-lg border border-gray-200 bg-surface p-4 shadow-sm min-[1560px]:sticky min-[1560px]:top-6">
+                  <h2 className="mb-3 text-lg font-semibold text-gray-800">Missing Abstracts</h2>
+                  {lookingUp ? (
+                    <>
+                      <div className="flex items-center gap-2 text-sm text-gray-700">
+                        <Spinner />
+                        <span>
+                          {lookupJob.status === 'queued'
+                            ? 'Waiting for other work to finish…'
+                            : !lookupProgress.total
+                              ? 'Looking up abstracts…'
+                              : `Looking up abstracts… ${lookupProgress.attempted ?? 0} of ${lookupProgress.total}`}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm text-gray-700">It carries on in the background, whatever page you are on.</p>
+                    </>
+                  ) : lookupCandidates > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => queue({ kind: 'find_abstracts', dataset_id: dataset.id })}
+                      className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      Find missing abstracts ({lookupCandidates})
+                    </button>
+                  ) : null}
+    
+                  {lookupResultShown && lookupJob.status === 'completed' ? (
+                    <p className="mt-3 text-sm text-gray-700">
+                      {lookupProgress.filled > 0
+                        ? `Found ${lookupProgress.filled} abstract${lookupProgress.filled === 1 ? '' : 's'}.`
+                        : 'No new abstracts found.'}
+                    </p>
+                  ) : null}
+                  {!lookingUp && unfindable > 0 ? (
+                    <p className="mt-2 text-sm text-gray-700">
+                      {unfindable} paper{unfindable === 1 ? ' has' : 's have'} no abstract in any source checked.
+                    </p>
+                  ) : null}
+                  {lookupProgress.no_doi > 0 ? (
+                    <p className="mt-2 text-xs text-gray-500">
+                      {lookupProgress.no_doi} other paper{lookupProgress.no_doi === 1 ? ' has' : 's have'} no DOI, so can’t
+                      be looked up.
+                    </p>
+                  ) : null}
+                  {Object.entries(lookupProgress.source_errors ?? {}).map(([source, message]) => (
+                    <p key={source} className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                      {message}
+                    </p>
+                  ))}
+                  {lookupJob?.status === 'incomplete' ? (
+                    <p className="mt-2 text-sm text-red-600 dark:text-red-400">{lookupJob.error}</p>
+                  ) : null}
+    
+                  <p className="mt-3 text-xs text-gray-400">
+                    {!providers ? (
+                      'Missing abstracts are looked up automatically.'
+                    ) : keylessPublishers.length === 0 ? (
+                      'The remaining papers without abstracts require manual updating. You can open the paper DOI link and copy the abstract into the paper entry on this page.'
+                    ) : (
+                      <>
+                        Missing abstracts are looked up automatically. Add {keylessPublishers.join(' and ')} API{' '}
+                        {keylessPublishers.length === 1 ? 'key' : 'keys'} in{' '}
+                        <button type="button" onClick={() => openSettings('databases')} className="underline">
+                          Settings
+                        </button>{' '}
+                        to find more, or you can update them manually.
+                      </>
+                    )}
+                  </p>
+                  {missingAbstracts > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setFilter((f) => ({ ...f, missingAbstractOnly: true }))}
+                      className="mt-3 text-sm text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                    >
+                      Filter for missing abstracts
+                    </button>
+                  ) : null}
+                </div>
+              </aside>
+            ) : null}
+    
+            {toggleError ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{toggleError}</p> : null}
+    
+            <PaperFilterBar
+              filter={filter}
+              onChange={setFilter}
+              shown={visiblePapers.length}
+              total={dataset.papers.length}
+              sort={sort}
+              onSortChange={setSort}
+              showNew={Boolean(dataset.last_refresh)}
             />
-          )}
-        />
+    
+            {isPaperFilterActive(filter) && visiblePapers.length === 0 ? (
+              <p className="mt-4 text-sm text-gray-500">No papers match the current filters.</p>
+            ) : null}
+    
+            <InfiniteList
+              className="mt-4 flex flex-col gap-3"
+              items={visiblePapers}
+              resetKey={JSON.stringify([dataset.id, filter, sort])}
+              renderItem={(paper, index) => (
+                <PaperCard
+                  key={paper.id ?? `${paper.doi ?? paper.title}-${index}`}
+                  result={paper}
+                  onUpdate={handlePaperUpdate}
+                  onToggleExclude={toggleExclude}
+                  onToggleRead={toggleRead}
+                />
+              )}
+            />
+          </TabPanel>
+        )}
       </div>
     </PageShell>
   )

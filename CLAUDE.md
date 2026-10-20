@@ -602,6 +602,13 @@ scroll) so the scroll box never clips it; the menu cell stops click propagation 
 the row. Table view widens the page through `PageShell`'s `wide` prop. Status in both views shows only queued,
 running or incomplete work (`JobStatusDot` in the table, `JobStatus hideCompleted` on cards).
 
+The dataset and prompt detail pages have tabs under the details card (`components/Tabs.jsx`; the tab is
+`?tab=<id>` in the address, the first tab has none): a dataset has Dataset (its papers), Prompts and
+Evaluations; a prompt has Examples and Evaluations. They pick their evaluations out of the one
+`GET /api/analysis-runs` list (`lib/useRuns.js`, which also feeds Paper Evaluations) by `prompt_id` and
+`datasets[].id`, and draw them with `components/RunsTable.jsx`, the same table as the list's table view
+(`compact` for the narrow detail pages). `lib/promptUsage.js` groups a dataset's runs by prompt.
+
 Theme (Light/Dark/System, set in Settings, Appearance) is stored per browser in localStorage
 (`lib/theme.js`) and applied as a `dark` class on `<html>`; an inline script in `index.html`
 applies it before first paint. Neutrals are CSS variables in `index.css` (`:root` and `.dark`)

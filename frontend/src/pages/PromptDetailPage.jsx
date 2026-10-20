@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Trash2, X } from 'lucide-react'
 import { PageShell, Card, BackLink } from '../components/ui'
@@ -9,8 +9,14 @@ import ConfirmModal from '../components/ConfirmModal'
 import InfiniteList from '../components/InfiniteList'
 import useSavedState from '../lib/useSavedState'
 import useUnsavedChangesWarning from '../lib/useUnsavedChangesWarning'
+import RunsTableList from '../components/RunsTable'
+import { Tabs, TabPanel, useTab } from '../components/Tabs'
+import { useJobs } from '../components/JobsProvider'
+import useRuns from '../lib/useRuns'
 import { deleteJson, fetchJson, patchJson } from '../lib/api'
 import { formatDate } from '../lib/format'
+
+const TABS = ['examples', 'evaluations']
 
 const inputClass = 'w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800'
 
@@ -132,10 +138,17 @@ export default function PromptDetailPage() {
   const [prompt, setPrompt] = useState(null)
   const [error, setError] = useState(null)
   const [removingExample, setRemovingExample] = useState(null)
+  const [tab, setTab] = useTab(TABS)
+  const { runs, setRuns, error: runsError } = useRuns()
+  const [runError, setRunError] = useState(null)
+  const { refreshJobs } = useJobs()
+  // Newest first, as the server lists them.
+  const promptRuns = useMemo(() => (runs ?? []).filter((r) => r.prompt_id === Number(id)), [runs, id])
 
   useEffect(() => {
     let cancelled = false
     setError(null)
+    setRunError(null)
     setPrompt(null)
     fetchJson(`/api/prompts/${id}`)
       .then((p) => !cancelled && setPrompt(p))
@@ -170,6 +183,13 @@ export default function PromptDetailPage() {
     setPrompt((prev) => ({ ...prev, examples: prev.examples.filter((e) => e.id !== example.id) }))
   }
 
+  const renameRun = (runId, name) => setRuns((prev) => prev.map((r) => (r.id === runId ? { ...r, name } : r)))
+  const deleteRun = async (runId) => {
+    await deleteJson(`/api/analysis-runs/${runId}`)
+    setRuns((prev) => prev.filter((r) => r.id !== runId))
+    refreshJobs()
+  }
+
   return (
     <PageShell>
       <BackLink to="/prompts">Back to Grading Prompts</BackLink>
@@ -182,50 +202,79 @@ export default function PromptDetailPage() {
         />
       </div>
 
-      <h2 className="mt-8 text-lg font-semibold text-gray-800">Examples</h2>
-      <p className="mt-1 text-sm text-gray-500">
-        Add examples from a run&apos;s results with Mark as example. Only the {prompt.example_limit} most recent
-        are used when grading.
-      </p>
-      {prompt.examples.length === 0 ? (
-        <p className="mt-4 text-sm text-gray-500">No examples yet.</p>
-      ) : null}
-      <InfiniteList
-        className="mt-4 flex flex-col gap-3"
-        items={prompt.examples}
-        resetKey={prompt.id}
-        renderItem={(ex) => (
-          <li key={ex.id} className="rounded-lg border border-gray-200 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <h3 className="font-medium text-gray-800">{ex.title}</h3>
-              <div className="flex shrink-0 items-center gap-2">
-                <ScoreBadge score={ex.score} />
-                <span className="text-sm text-gray-500">{ex.year ?? '—'}</span>
-                <button
-                  type="button"
-                  aria-label="Remove example"
-                  onClick={() => setRemovingExample(ex)}
-                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-600 dark:hover:text-red-400"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-            <p className="mt-2 text-sm italic text-gray-700">{ex.rationale}</p>
-            <p className="mt-2 text-xs text-gray-400">
-              Added {formatDate(ex.created_at)}
-              {ex.source_run_id ? (
-                <>
-                  {' from '}
-                  <Link to={`/evaluations/${ex.source_run_id}`} className="hover:underline">
-                    run #{ex.source_run_id}
-                  </Link>
-                </>
-              ) : null}
-            </p>
-          </li>
-        )}
+      <Tabs
+        className="mt-8"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'examples', label: 'Examples', count: prompt.examples.length },
+          { id: 'evaluations', label: 'Evaluations', count: runs ? promptRuns.length : null },
+        ]}
       />
+
+      {tab === 'evaluations' ? (
+        <TabPanel id="evaluations" className="mt-4">
+          {runsError ? <p className="text-sm text-red-600 dark:text-red-400">{runsError}</p> : null}
+          {runError ? <p className="mb-3 text-sm text-red-600 dark:text-red-400">{runError}</p> : null}
+          {runs && promptRuns.length === 0 ? (
+            <p className="text-sm text-gray-500">No evaluations have used this prompt yet.</p>
+          ) : null}
+          <RunsTableList
+            compact
+            runs={promptRuns}
+            resetKey={prompt.id}
+            onRenamed={renameRun}
+            onDelete={deleteRun}
+            onError={setRunError}
+          />
+        </TabPanel>
+      ) : (
+        <TabPanel id="examples" className="mt-4">
+          <p className="text-sm text-gray-500">
+            Add examples from a run&apos;s results with Mark as example. Only the {prompt.example_limit} most recent
+            are used when grading.
+          </p>
+          {prompt.examples.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500">No examples yet.</p>
+          ) : null}
+          <InfiniteList
+            className="mt-4 flex flex-col gap-3"
+            items={prompt.examples}
+            resetKey={prompt.id}
+            renderItem={(ex) => (
+              <li key={ex.id} className="rounded-lg border border-gray-200 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <h3 className="font-medium text-gray-800">{ex.title}</h3>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <ScoreBadge score={ex.score} />
+                    <span className="text-sm text-gray-500">{ex.year ?? '—'}</span>
+                    <button
+                      type="button"
+                      aria-label="Remove example"
+                      onClick={() => setRemovingExample(ex)}
+                      className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-600 dark:hover:text-red-400"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-2 text-sm italic text-gray-700">{ex.rationale}</p>
+                <p className="mt-2 text-xs text-gray-400">
+                  Added {formatDate(ex.created_at)}
+                  {ex.source_run_id ? (
+                    <>
+                      {' from '}
+                      <Link to={`/evaluations/${ex.source_run_id}`} className="hover:underline">
+                        run #{ex.source_run_id}
+                      </Link>
+                    </>
+                  ) : null}
+                </p>
+              </li>
+            )}
+          />
+        </TabPanel>
+      )}
 
       {removingExample ? (
         <ConfirmModal

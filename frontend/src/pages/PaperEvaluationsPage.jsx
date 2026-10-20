@@ -1,38 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageShell, Card } from '../components/ui'
 import NewEvaluationModal from '../components/NewEvaluationModal'
-import JobStatus, { JobStatusDot } from '../components/JobStatus'
+import JobStatus from '../components/JobStatus'
 import { useJobs } from '../components/JobsProvider'
 import { navIcon } from '../lib/navItems'
 import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, modelKey, sortByCreated } from '../lib/listFilter'
 import RunMenu from '../components/RunMenu'
-import { deleteJson, fetchJson } from '../lib/api'
+import RunsTableList from '../components/RunsTable'
+import { deleteJson } from '../lib/api'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import ModelBadge from '../components/ModelBadge'
 import { useView } from '../lib/viewSetting'
-import { Cell, DataTable, ListRow, MenuCell, TruncatedText } from '../components/ListTable'
-import { Tooltip } from '../components/ui/Tooltip'
-
-const COLUMNS = [
-  { label: 'Name' },
-  { label: 'Datasets' },
-  { label: 'Papers' },
-  { label: 'Date' },
-  { label: 'AI model' },
-  { label: 'Est. cost' },
-  { label: '' },
-]
-
-// Module level so React keeps one component (and the table) across renders.
-const RunsTable = (props) => <DataTable columns={COLUMNS} {...props} />
+import useRuns from '../lib/useRuns'
 
 export default function PaperEvaluationsPage() {
-  const [runs, setRuns] = useState(null)
-  const [error, setError] = useState(null)
+  const { runs, setRuns, error } = useRuns()
   const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
   const [view, setView] = useView()
@@ -40,7 +26,7 @@ export default function PaperEvaluationsPage() {
   const [creating, setCreating] = useState(null)
   const [actionError, setActionError] = useState(null)
   const [searchParams, setSearchParams] = useSearchParams()
-  const { statusKey, refreshJobs } = useJobs()
+  const { refreshJobs } = useJobs()
 
   // /evaluations?new=1&dataset=<id> (from a dataset page or the prompts page) opens the New
   // Evaluation dialog, then drops the parameters.
@@ -51,26 +37,6 @@ export default function PaperEvaluationsPage() {
       setSearchParams({}, { replace: true })
     }
   }, [searchParams, setSearchParams])
-
-  // Loaded again whenever a job starts, stops or ends, so each card's status stays true. A
-  // failed reload keeps the list that is showing; only the first load reports an error.
-  const loaded = useRef(false)
-  useEffect(() => {
-    let cancelled = false
-    fetchJson('/api/analysis-runs')
-      .then((data) => {
-        if (cancelled) return
-        loaded.current = true
-        setRuns(data.runs ?? [])
-        setError(null)
-      })
-      .catch((err) => {
-        if (!cancelled && !loaded.current) setError(err.message)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [statusKey])
 
   const visible = useMemo(
     () =>
@@ -135,49 +101,12 @@ export default function PaperEvaluationsPage() {
         <p className="text-sm text-gray-500">No evaluations match these filters.</p>
       ) : null}
       {view === 'table' ? (
-        <InfiniteList
-          as={RunsTable}
-          items={visible}
+        <RunsTableList
+          runs={visible}
           resetKey={JSON.stringify([filter, sort])}
-          renderItem={(run) => {
-            const [name, datasets, papers, date, model, cost, menu] = COLUMNS
-            const title = run.name || run.prompt_name || run.grading_prompt
-            const datasetText = datasetLabels(run.datasets).join(', ')
-            return (
-              <ListRow key={run.id} to={`/evaluations/${run.id}`}>
-                <Cell column={name}>
-                  <div className="flex items-center gap-2">
-                    <JobStatusDot item={run} />
-                    <Tooltip content="View details">
-                      <Link to={`/evaluations/${run.id}`} className="block max-w-xs truncate font-medium text-gray-800 hover:underline">
-                        {title}
-                      </Link>
-                    </Tooltip>
-                  </div>
-                </Cell>
-                <Cell column={datasets}>
-                  <TruncatedText text={datasetText} className="max-w-md text-gray-500" />
-                </Cell>
-                <Cell column={papers} className="text-gray-600">{run.paper_count}</Cell>
-                <Cell column={date} className="text-gray-600">{formatDateTime(run.completed_at || run.created_at)}</Cell>
-                <Cell column={model}>
-                  <ModelBadge aiApi={run.ai_api} aiModel={run.ai_model} className="text-sm text-gray-600" />
-                </Cell>
-                <Cell column={cost} className="text-gray-600">
-                  {run.cost != null ? <span title={RUN_COST_NOTE}>${run.cost.toFixed(2)}</span> : null}
-                </Cell>
-                <MenuCell column={menu}>
-                  <RunMenu
-                    floating
-                    run={run}
-                    onRenamed={(n) => renameRun(run.id, n)}
-                    onDelete={() => deleteRun(run.id)}
-                    onError={setActionError}
-                  />
-                </MenuCell>
-              </ListRow>
-            )
-          }}
+          onRenamed={renameRun}
+          onDelete={deleteRun}
+          onError={setActionError}
         />
       ) : (
       <InfiniteList

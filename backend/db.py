@@ -1324,8 +1324,8 @@ def list_all_runs():
         rows = conn.execute(
             f"""
             SELECT run.id, run.name, run.grading_prompt, run.ai_api, run.ai_model, run.status,
-                   run.created_at, run.completed_at, pr.name AS prompt_name,
-                   json_group_array(json_object('name', d.name, 'created_at', d.created_at)) AS datasets,
+                   run.created_at, run.completed_at, run.prompt_id, pr.name AS prompt_name,
+                   json_group_array(json_object('id', d.id, 'name', d.name, 'created_at', d.created_at)) AS datasets,
                    (SELECT COUNT(*) FROM (
                         {_included_papers_sql("run.id", "run.include_retracted")}
                    )) AS paper_count,

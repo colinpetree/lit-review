@@ -284,3 +284,10 @@ class TestResultsListIncomplete:
         _, _, run_id = make_run()
         runs = client.get("/api/analysis-runs").get_json()["runs"]
         assert runs[0]["unscored_count"] == 3
+
+    def test_the_list_route_names_the_prompt_and_dataset_ids(self, client, scoring):
+        # The dataset and prompt pages pick their evaluations out of this list by these ids.
+        dataset_id, _, run_id = make_run()
+        run = client.get("/api/analysis-runs").get_json()["runs"][0]
+        assert run["prompt_id"] == db.get_analysis_run(run_id)["prompt_id"]
+        assert [d["id"] for d in run["datasets"]] == [dataset_id]

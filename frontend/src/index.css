@@ -117,6 +117,25 @@ input:-webkit-autofill {
   display: none;
 }
 
+/* The list tables' sideways scrollbar is a real handle to grab, so it is wider than the
+   rest, and darker while held. A transparent border keeps the drawn thumb inside the bar
+   with a little space around it. Must stay below the rule above (same specificity). */
+.table-scroll::-webkit-scrollbar {
+  height: 14px;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: rgb(var(--gray-300));
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: 7px;
+}
+.table-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--gray-400));
+}
+.table-scroll::-webkit-scrollbar-thumb:active {
+  background-color: rgb(var(--gray-500));
+}
+
 /* Hovering a text field darkens its border a step, like the dataset cards do. Must stay
    above the focus rule below (same specificity) so a focused field keeps its darker border. */
 input:where(:not([type="checkbox"], [type="radio"], :disabled)):hover,

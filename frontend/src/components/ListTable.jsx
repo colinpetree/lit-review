@@ -89,7 +89,7 @@ export function DataTable({ columns, className, children }) {
       {...edgeScroll}
       tabIndex={0}
       aria-label="Table, scrolls sideways"
-      className="overflow-x-auto rounded-lg pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+      className="table-scroll overflow-x-auto rounded-lg pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
     >
       <table
         ref={tableRef}

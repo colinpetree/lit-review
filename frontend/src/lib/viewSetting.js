@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-// How the Paper Datasets and Paper Evaluations lists are laid out. Kept per browser
+// How the Paper Datasets, Grading Prompts and Paper Evaluations lists are laid out. Kept per browser
 // in localStorage, which can be missing or throw (private window, blocked site
 // data), so every access is guarded and the default applies.
 const KEY = 'lit-review.list-view'
@@ -17,7 +17,7 @@ export function getView() {
   }
 }
 
-// Current choice plus a setter, kept in step with other tabs and between the two lists.
+// Current choice plus a setter, kept in step with other tabs and between the lists.
 export function useView() {
   const [view, setViewState] = useState(getView)
 

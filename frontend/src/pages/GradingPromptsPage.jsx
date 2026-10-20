@@ -11,12 +11,28 @@ import { formatDateTime } from '../lib/format'
 import ListFilterBar from '../components/ListFilterBar'
 import InfiniteList from '../components/InfiniteList'
 import { DEFAULT_LIST_SORT, EMPTY_LIST_FILTER, filterList, sortByCreated } from '../lib/listFilter'
+import { useView } from '../lib/viewSetting'
+import { Cell, DataTable, ListRow, MenuCell, TruncatedText } from '../components/ListTable'
+import { Tooltip } from '../components/ui/Tooltip'
+
+const COLUMNS = [
+  { label: 'Name' },
+  { label: 'Criteria' },
+  { label: 'Examples' },
+  { label: 'Created' },
+  { label: 'Updated' },
+  { label: '' },
+]
+
+// Module level so React keeps one component (and the table) across renders.
+const PromptsTable = (props) => <DataTable columns={COLUMNS} {...props} />
 
 export default function GradingPromptsPage() {
   const [prompts, setPrompts] = useState(null)
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState(EMPTY_LIST_FILTER)
   const [sort, setSort] = useState(DEFAULT_LIST_SORT)
+  const [view, setView] = useView()
   // null | { type: 'create' } | { type: 'edit' | 'delete', prompt }
   const [dialog, setDialog] = useState(null)
 
@@ -54,8 +70,14 @@ export default function GradingPromptsPage() {
     setPrompts((prev) => prev.filter((p) => p.id !== id))
   }
 
+  const menuItems = (p) => [
+    { label: 'Edit', icon: Pencil, onClick: () => setDialog({ type: 'edit', prompt: p }) },
+    { label: 'Delete', icon: Trash2, danger: true, onClick: () => setDialog({ type: 'delete', prompt: p }) },
+  ]
+
   return (
     <PageShell
+      wide={view === 'table'}
       title="Grading Prompts"
       icon={navIcon('/prompts')}
       description="Reuse and refine paper grading prompts from previous evaluations to save time and get better results."
@@ -83,6 +105,8 @@ export default function GradingPromptsPage() {
           onChange={setFilter}
           sort={sort}
           onSortChange={setSort}
+          view={view}
+          onViewChange={setView}
           placeholder="Filter prompts by name or criteria"
           noun="prompts"
           shown={visible.length}
@@ -92,32 +116,57 @@ export default function GradingPromptsPage() {
       {prompts && prompts.length > 0 && visible.length === 0 ? (
         <p className="text-sm text-gray-500">No prompts match these filters.</p>
       ) : null}
-      <InfiniteList
-        as="div"
-        className="flex flex-col gap-3"
-        items={visible}
-        resetKey={JSON.stringify([filter, sort])}
-        renderItem={(p) => (
-          <div key={p.id} className="relative">
-            <Link to={`/prompts/${p.id}`}>
-              <Card className="hover:border-gray-300">
-                <p className="pr-8 font-medium text-gray-800">{p.name}</p>
-                <p className="mt-1 line-clamp-2 text-sm text-gray-500">{p.description}</p>
-                <p className="mt-1 text-sm text-gray-400">
-                  {p.example_count} example{p.example_count === 1 ? '' : 's'} · {formatDateTime(p.created_at)}
-                </p>
-              </Card>
-            </Link>
-            <MoreMenu
-              className="absolute right-5 top-[22px]"
-              items={[
-                { label: 'Edit', icon: Pencil, onClick: () => setDialog({ type: 'edit', prompt: p }) },
-                { label: 'Delete', icon: Trash2, danger: true, onClick: () => setDialog({ type: 'delete', prompt: p }) },
-              ]}
-            />
-          </div>
-        )}
-      />
+      {view === 'table' ? (
+        <InfiniteList
+          as={PromptsTable}
+          items={visible}
+          resetKey={JSON.stringify([filter, sort])}
+          renderItem={(p) => {
+            const [name, criteria, examples, created, updated, menu] = COLUMNS
+            return (
+              <ListRow key={p.id} to={`/prompts/${p.id}`}>
+                <Cell column={name}>
+                  <Tooltip content="View details">
+                    <Link to={`/prompts/${p.id}`} className="block max-w-xs truncate font-medium text-gray-800 hover:underline">
+                      {p.name}
+                    </Link>
+                  </Tooltip>
+                </Cell>
+                <Cell column={criteria}>
+                  <TruncatedText text={p.description} className="max-w-md text-gray-500" />
+                </Cell>
+                <Cell column={examples} className="text-gray-600">{p.example_count}</Cell>
+                <Cell column={created} className="text-gray-600">{formatDateTime(p.created_at)}</Cell>
+                <Cell column={updated} className="text-gray-600">{formatDateTime(p.updated_at)}</Cell>
+                <MenuCell column={menu}>
+                  <MoreMenu floating items={menuItems(p)} />
+                </MenuCell>
+              </ListRow>
+            )
+          }}
+        />
+      ) : (
+        <InfiniteList
+          as="div"
+          className="flex flex-col gap-3"
+          items={visible}
+          resetKey={JSON.stringify([filter, sort])}
+          renderItem={(p) => (
+            <div key={p.id} className="relative">
+              <Link to={`/prompts/${p.id}`}>
+                <Card className="hover:border-gray-300">
+                  <p className="pr-8 font-medium text-gray-800">{p.name}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-gray-500">{p.description}</p>
+                  <p className="mt-1 text-sm text-gray-400">
+                    {p.example_count} example{p.example_count === 1 ? '' : 's'} · {formatDateTime(p.created_at)}
+                  </p>
+                </Card>
+              </Link>
+              <MoreMenu className="absolute right-5 top-[22px]" items={menuItems(p)} />
+            </div>
+          )}
+        />
+      )}
 
       {dialog?.type === 'create' ? (
         <PromptFormModal heading="New prompt" onSave={createPrompt} onClose={() => setDialog(null)} />

@@ -10,7 +10,8 @@ import { X } from 'lucide-react'
 // closes when the press started on the backdrop too, so dragging to select text
 // and releasing outside the dialog doesn't close it.
 // closeOnEscape={false} is for the same dialogs: only the X (or a button) closes them.
-// scroll is for a tall form: the dialog stays within the window and scrolls inside.
+// scroll is for a tall form: the backdrop scrolls, not the dialog, so a dropdown inside the
+// dialog can draw past its edge instead of being clipped by it.
 // Escape closes only the last dialog in the page (a confirmation opened over a form, or Settings
 // opened from a form, answers first).
 export default function Modal({ title, onClose, busy = false, closeOnBackdrop = true, wide = false, raised = false, scroll = false, closeOnEscape = true, children }) {
@@ -29,7 +30,9 @@ export default function Modal({ title, onClose, busy = false, closeOnBackdrop = 
 
   return (
     <div
-      className={`fixed inset-0 ${raised ? 'z-[60]' : 'z-50'} flex items-center justify-center bg-black/40 px-4`}
+      className={`fixed inset-0 ${raised ? 'z-[60]' : 'z-50'} flex justify-center bg-black/40 px-4 ${
+        scroll ? 'items-start overflow-y-auto py-[5vh]' : 'items-center'
+      }`}
       onMouseDown={(e) => {
         pressStartedOnBackdrop.current = e.target === e.currentTarget
       }}
@@ -43,7 +46,7 @@ export default function Modal({ title, onClose, busy = false, closeOnBackdrop = 
         role="dialog"
         aria-modal="true"
         className={`relative w-full rounded-lg bg-surface p-6 shadow-xl ${wide ? 'max-w-2xl' : 'max-w-md'} ${
-          scroll ? 'max-h-[90vh] overflow-y-auto' : ''
+          scroll ? 'my-auto' : ''
         }`}
         onClick={(e) => e.stopPropagation()}
       >

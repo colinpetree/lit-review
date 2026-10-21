@@ -95,7 +95,7 @@ export default function SettingsModal({ section, onClose }) {
         aria-modal="true"
         aria-label="Settings"
         tabIndex={-1}
-        className="relative flex h-full w-full max-w-6xl overflow-hidden rounded-lg bg-surface shadow-xl outline-none"
+        className="relative flex h-full w-full max-w-6xl xl:max-w-7xl 2xl:max-w-[1600px] overflow-hidden rounded-lg bg-surface shadow-xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <nav
@@ -129,7 +129,7 @@ export default function SettingsModal({ section, onClose }) {
         </nav>
 
         <div ref={scrollRef} onScroll={onScroll} className="relative flex-1 overflow-y-auto [container-type:size]">
-          <div className="mx-auto max-w-3xl px-10 pb-16 pt-16">
+          <div className="mx-auto max-w-3xl px-10 pb-16 pt-16 xl:max-w-4xl 2xl:max-w-5xl">
             {SETTINGS_NAV.map((item, i) => {
               const Section = SECTIONS[item.id]
               return (

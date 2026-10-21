@@ -16,13 +16,21 @@ from source_http import SourceError
 TODAY = datetime.date(2026, 10, 3)
 
 
+def recent_date():
+    """A week ago. The route tests make their datasets now and a check searches from 45
+    days before that up to today, so a fixed date would drop out of the window as the
+    calendar moves on (a 2026-09-01 one did on 2026-10-16)."""
+    return datetime.date.today() - datetime.timedelta(days=7)
+
+
 def work(i, **extra):
+    published = recent_date()
     return {
         "id": f"W{i}",
         "source": "openalex",
         "title": f"Paper number {i}",
-        "year": 2026,
-        "publication_date": "2026-09-01",
+        "year": published.year,
+        "publication_date": published.isoformat(),
         "abstract": "",
         "authors": [],
         "citation_count": 0,
@@ -317,8 +325,9 @@ class TestKnownInDataset:
         with closing(db._connect()) as conn:
             conn.execute(
                 "INSERT INTO paper (source, source_id, title, title_key, year, authors, is_review, first_seen_at) "
-                "VALUES ('openalex', 'W1b', 'Twin Paper', (SELECT title_key FROM paper WHERE id = ?), 2026, '[]', 0, 'x')",
-                (first,),
+                "VALUES ('openalex', 'W1b', 'Twin Paper', (SELECT title_key FROM paper WHERE id = ?), "
+                "(SELECT year FROM paper WHERE id = ?), '[]', 0, 'x')",
+                (first, first),
             )
             second = conn.execute("SELECT id FROM paper WHERE source_id = 'W1b'").fetchone()[0]
             conn.commit()

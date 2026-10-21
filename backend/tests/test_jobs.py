@@ -14,6 +14,7 @@ import jobs
 import llm
 import openalex
 from providers import LLMError
+from test_refresh import recent_date
 
 ABSTRACT = "This study measures the effect of coral growth on reef output in field conditions. " * 2
 
@@ -535,9 +536,10 @@ class TestLookupAndRefreshJobs:
 
     def test_a_check_for_new_papers_runs_as_a_job_and_then_looks_up_abstracts(self, client, monkeypatch):
         dataset_id, _ = self.dataset_with(1, abstract=ABSTRACT)
+        published = recent_date()
         paper = {
-            "id": "W99", "source": "openalex", "title": "A brand new paper", "year": 2026,
-            "publication_date": "2026-09-01", "abstract": ABSTRACT, "authors": [], "citation_count": 0,
+            "id": "W99", "source": "openalex", "title": "A brand new paper", "year": published.year,
+            "publication_date": published.isoformat(), "abstract": ABSTRACT, "authors": [], "citation_count": 0,
         }
         monkeypatch.setattr(openalex, "search_all", lambda query, from_date=None, to_date=None, max_results=None: ([paper], 1))
         job = queue(client, "dataset_refresh", dataset_id=dataset_id)["job"]
@@ -550,10 +552,11 @@ class TestLookupAndRefreshJobs:
         with closing(db._connect()) as conn:
             conn.execute("UPDATE dataset SET search_limit = 50 WHERE id = ?", (dataset_id,))
             conn.commit()
+        published = recent_date()
         papers = [
             {
-                "id": f"N{i}", "source": "openalex", "title": f"Fresh paper {i}", "year": 2026,
-                "publication_date": "2026-09-01", "abstract": ABSTRACT, "authors": [], "citation_count": 0,
+                "id": f"N{i}", "source": "openalex", "title": f"Fresh paper {i}", "year": published.year,
+                "publication_date": published.isoformat(), "abstract": ABSTRACT, "authors": [], "citation_count": 0,
             }
             for i in range(120)
         ]

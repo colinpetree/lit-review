@@ -602,24 +602,6 @@ def restore_trash_item(kind, item_id):
     return jsonify(restored)
 
 
-@app.delete("/api/trash/<kind>/<int:item_id>")
-def purge_trash_item(kind, item_id):
-    """Delete one thing in the trash for good (409 while a result run still uses it)."""
-    _trash_item(kind, item_id)
-    try:
-        removed = db.purge_from_trash(kind, item_id)
-    except db.TrashError as exc:
-        return jsonify({"error": str(exc)}), 409
-    if removed is None:
-        return jsonify({"error": "That item is not in the trash."}), 404
-    return jsonify({"ok": True, "papers_removed": removed})
-
-
-@app.delete("/api/trash")
-def empty_trash():
-    return jsonify(db.empty_trash())
-
-
 MAX_QUESTION_CHARS = 4000
 MAX_TOKEN_COUNT = 10_000_000
 MAX_API_KEY_CHARS = 512

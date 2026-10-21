@@ -1,5 +1,5 @@
-"""Deleting a run hides it and keeps it (like a dataset or a prompt); deleting it for good
-from Deleted Items removes it, and keeps what other things still need."""
+"""Deleting a run hides it and keeps it (like a dataset or a prompt); purging it for good
+(db.purge_from_trash, which no route calls) removes it, and keeps what other things still need."""
 
 from contextlib import closing
 
@@ -31,7 +31,7 @@ def test_deleting_it_for_good_removes_the_run_its_scores_and_dataset_links(clien
     db.record_analysis_chunk(run_id, {ids[0]: {"score": 80, "rationale": "Good."}}, llm.Usage(1, 1, model="claude-haiku-4-5"))
     client.delete(f"/api/analysis-runs/{run_id}")
 
-    assert client.delete(f"/api/trash/run/{run_id}").status_code == 200
+    assert db.purge_from_trash("run", run_id) is not None
 
     assert count("SELECT COUNT(*) FROM analysis_run WHERE id = ?", run_id) == 0
     assert count("SELECT COUNT(*) FROM analysis_result WHERE run_id = ?", run_id) == 0
@@ -41,7 +41,7 @@ def test_deleting_it_for_good_removes_the_run_its_scores_and_dataset_links(clien
 def test_delete_leaves_the_dataset_and_papers_alone(client):
     dataset_id, ids, run_id = make_run()
     client.delete(f"/api/analysis-runs/{run_id}")
-    client.delete(f"/api/trash/run/{run_id}")
+    db.purge_from_trash("run", run_id)
     assert db.get_dataset(dataset_id) is not None
     assert count("SELECT COUNT(*) FROM paper") == len(ids)
 
@@ -61,7 +61,7 @@ def test_delete_keeps_total_spend_and_prompt_examples(client):
     assert count("SELECT COUNT(*) FROM llm_call WHERE run_id = ?", run_id) == 1
     assert db.list_prompt_examples(prompt_id)[0]["source_run_id"] is None
 
-    client.delete(f"/api/trash/run/{run_id}")
+    db.purge_from_trash("run", run_id)
     # Gone for good: the spending is detached, not lost, and the example stays with its prompt.
     assert db.get_cost() == spent
     assert count("SELECT COUNT(*) FROM llm_call WHERE run_id IS NOT NULL") == 0

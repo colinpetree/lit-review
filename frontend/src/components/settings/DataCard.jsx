@@ -75,7 +75,7 @@ export default function DataCard() {
       <div className="flex flex-col gap-1.5">
         <p className="text-sm font-medium text-gray-700">Deleted items</p>
         <p className="text-xs text-gray-400">
-          Deleted datasets, prompts and result runs are kept here until you delete them permanently.
+          Deleted datasets, prompts and result runs are kept, and can be restored at any time.
         </p>
         <Link
           to="/trash"

@@ -17,8 +17,9 @@ persistence, multi-page UI), and so is most of what came after: four search sour
 Semantic Scholar, Elsevier/Scopus, PubMed), three AI providers (Anthropic, OpenAI, Google Gemini;
 the user picks one per run), checking a dataset for new papers, retraction handling, export
 (CSV, RIS, BibTeX), a cost estimate with a spending threshold and per-run limit, backup and
-restore, and Deleted Items (datasets, prompts and runs are soft-deleted; Deleted Items is the
-only place anything is removed for good). Packaging is built (see "Packaging and release" below):
+restore, and Deleted Items (datasets, prompts and runs are soft-deleted and can always be
+restored; nothing in the app removes them for good, which is left to future database editor
+tools). Packaging is built (see "Packaging and release" below):
 a tag push builds a Windows zip and, for each Mac (Apple Silicon, Intel), a `.dmg` for people to install
 from (drag onto Applications) plus a `.zip` that the in-app updater uses, on GitHub Actions, and the
 app checks GitHub for signed newer releases and can install them. The update loop (manual and automatic) is verified on Windows, Intel Macs and Apple Silicon Macs; what is still unproven is listed in the `packaging-release` skill and RELEASING.md "Still to prove".
@@ -425,12 +426,14 @@ against real copies on spare ports works well.
   deleted), removes the old `-wal`/`-shm`, swaps the file (`os.replace`, retried on Windows
   `PermissionError`), resets `_ready_for` and migrates; if that fails the safety copy is put back.
   One restore at a time (`_exclusive("restore", 0)`). **Trash:** `GET /api/trash`,
-  `POST /api/trash/<kind>/<id>/restore` (a run gets a free name through `_unique_run_name`),
-  `DELETE /api/trash/<kind>/<id>` (purge; 409 while a result run still uses the dataset or prompt) and
-  `DELETE /api/trash` (empty: runs, then datasets, then prompts, listing what stayed and why). The
-  trash holds datasets, prompts and runs. A dataset or prompt is held back (409) while a **live** run
+  `POST /api/trash/<kind>/<id>/restore` (a run gets a free name through `_unique_run_name`). The
+  trash holds datasets, prompts and runs, and deleting is **always a soft delete**: there is no route
+  that removes anything for good (a test asserts `DELETE /api/trash` and `DELETE /api/trash/<kind>/<id>`
+  are 405), and the page offers Restore only. Do not add one; permanent removal is for future database
+  editor tools, which should build on `db.purge_from_trash` / `db.empty_trash` (kept, with tests, but
+  called by no route). Their rules: a dataset or prompt is refused (`TrashError`) while a **live** run
   uses it ("Delete that run first") and also while a run that is itself in the trash does ("Delete
-  that run permanently first": the database keeps its link), which is why Empty trash goes runs first.
+  that run permanently first": the database keeps its link), which is why `empty_trash` goes runs first.
   A purge runs in one transaction, **detaches** `llm_call` rows (`dataset_id`/`run_id` NULL) instead of
   deleting them so total spend stays right, and removes only the purged item's own papers that nothing
   else refers to (not every unreferenced paper).
@@ -521,7 +524,7 @@ units inside `ctx.unit()`.
 - *Stop* takes effect between units (`ctx.check()` raises `JobStopped`); the call in flight finishes and is
   billed. `POST /api/jobs/<id>/stop` ends a waiting job at once. *Resume* (`/resume`) re-queues an
   incomplete job; a run with no job is started with a new `run_score` job. Deleting a dataset or run stops
-  its jobs; purging from the trash is refused while one is active.
+  its jobs; `db.purge_from_trash` refuses while one is active.
 - *Datasets are created before they are searched.* `dataset_search` makes a placeholder (`dataset.pending =
   1`, no papers) so it shows on the list; `db.complete_dataset` fills it in one transaction. Everything that
   uses datasets treats a pending one as not ready (`find_dataset`, run create/estimate, refresh, lookup,
@@ -549,7 +552,8 @@ units inside `ctx.unit()`.
   the judge. A prompt created from New Evaluation gets an AI title (requested in the run's first
   scoring call via `title_pending`; never for existing prompts, and any user edit clears
   the flag). Datasets, prompts and runs are all soft-deleted (`deleted_at`) and kept in Deleted
-  Items (Settings), the only place anything is removed for good (`db.purge_from_trash`).
+  Items (Settings), where they can be restored; the app never removes them for good
+  (`db.purge_from_trash` exists for future database editor tools, but no route calls it).
   `db.delete_analysis_run` only sets `deleted_at`: every reader of runs already filters it (lists,
   `get_analysis_run`, `_unique_run_name`), so a deleted run 404s everywhere and its scores, dataset
   links and spending stay in the database. Purging a run clears its `llm_call.run_id` and

@@ -51,7 +51,7 @@ export default function RunMenu({ run, onRenamed, onDelete, onError, className, 
           title="Delete this result run?"
           message={`${
             isWorking(run) ? 'Grading will be stopped. ' : ''
-          }This moves the run and its grades out of your results into Deleted Items (in Settings, under Your Data), where you can restore it or delete it permanently. The papers and datasets are not affected.`}
+          }This moves the run and its grades out of your results into Deleted Items (in Settings, under Your Data), where you can restore it. The papers and datasets are not affected.`}
           confirmLabel="Delete"
           busyLabel="Deleting..."
           danger

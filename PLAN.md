@@ -353,8 +353,9 @@ not built.
   that pauses it, with a one-click way to raise the limit and carry on. See "Cost tracking".
 - Data safety: a backup of everything the app stores (not the API keys) that can be downloaded
   and restored, with the replaced data kept as a file so a restore can be undone; and Deleted Items,
-  where a deleted dataset, prompt or result run can be restored or removed for good, with spending
-  history kept either way and nothing removed while a result run still depends on it.
+  where a deleted dataset, prompt or result run is kept and can always be restored, with its spending
+  history. Deleting is always a soft delete; removing anything for good is left to future database
+  editor tools.
 
 **Phase 4 (optional, later)**
 Not built, roughly in priority order: packaging (see Distribution / packaging; needed for the

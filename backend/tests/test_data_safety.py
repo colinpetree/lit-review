@@ -423,98 +423,103 @@ class TestRestoreFromTrash:
         assert client.post(path).status_code == 404
 
 
+class TestNoPermanentDeleteRoute:
+    """Deleting in the app is always a soft delete: nothing removes a trashed item for good."""
+
+    def test_there_is_no_route_to_purge_or_empty_the_trash(self, client):
+        gone = trash_dataset()
+        assert client.delete(f"/api/trash/dataset/{gone}").status_code == 405
+        assert client.delete("/api/trash").status_code == 405
+        assert [d["id"] for d in client.get("/api/trash").get_json()["datasets"]] == [gone]
+
+
 class TestPurge:
-    def test_a_dataset_goes_with_its_own_papers_but_not_the_ones_others_use(self, client):
+    """db.purge_from_trash has no route; it is kept for database editor tools."""
+
+    def test_a_dataset_goes_with_its_own_papers_but_not_the_ones_others_use(self):
         shared = make_dataset((1, 2), name="Keeper")
         gone = trash_dataset((2, 3, 4), name="Gone")
         paper_in_example = paper_id_of("W4")
         prompt_id = db.create_prompt("P", "d")
         db.add_prompt_example(prompt_id, paper_in_example, None, 80, "r")
-        response = client.delete(f"/api/trash/dataset/{gone}")
-        assert response.status_code == 200
-        assert response.get_json()["papers_removed"] == 1  # only W3: W2 is in Keeper, W4 is an example
+        assert db.purge_from_trash("dataset", gone) == 1  # only W3: W2 is in Keeper, W4 is an example
         assert paper_id_of("W3") is None
         assert paper_id_of("W2") is not None and paper_id_of("W4") is not None
         assert scalar("SELECT COUNT(*) FROM dataset WHERE id = ?", gone) == 0
         assert [p["title"] for p in db.get_dataset_papers(shared)] != []
         assert integrity_ok()
 
-    def test_what_was_spent_stays_counted(self, client):
-        before_spent = None
+    def test_what_was_spent_stays_counted(self):
         gone = trash_dataset()
         before_spent = spent()
         assert before_spent > 0  # the dataset's query expansion
-        assert client.delete(f"/api/trash/dataset/{gone}").status_code == 200
+        assert db.purge_from_trash("dataset", gone) is not None
         assert spent() == pytest.approx(before_spent)
         assert scalar("SELECT COUNT(*) FROM llm_call WHERE dataset_id = ?", gone) == 0
 
-    def test_a_dataset_a_run_still_uses_is_refused_and_left_alone(self, client):
+    def test_a_dataset_a_run_still_uses_is_refused_and_left_alone(self):
         data = populate()
         db.delete_dataset(data["dataset"])
         before = counts()
-        response = client.delete(f"/api/trash/dataset/{data['dataset']}")
-        assert response.status_code == 409
-        assert "result run still uses this dataset" in response.get_json()["error"]
+        with pytest.raises(db.TrashError, match="result run still uses this dataset"):
+            db.purge_from_trash("dataset", data["dataset"])
         assert counts() == before
-        assert len(client.get("/api/trash").get_json()["datasets"]) == 1
+        assert len(db.list_trash()["datasets"]) == 1
 
-    def test_the_refusal_says_run_or_runs_to_match_how_many_use_it(self, client):
+    def test_the_refusal_says_run_or_runs_to_match_how_many_use_it(self):
         data = populate()
         db.delete_prompt(data["prompt"])
-        one = client.delete(f"/api/trash/prompt/{data['prompt']}").get_json()["error"]
-        assert one == "1 result run still uses this prompt. Delete that run first."
+        with pytest.raises(db.TrashError) as one:
+            db.purge_from_trash("prompt", data["prompt"])
+        assert str(one.value) == "1 result run still uses this prompt. Delete that run first."
         db.create_analysis_run([data["dataset"]], "g", "anthropic", "claude-haiku-4-5", data["prompt"])
         db.create_analysis_run([data["dataset"]], "g", "anthropic", "claude-haiku-4-5", data["prompt"])
-        many = client.delete(f"/api/trash/prompt/{data['prompt']}").get_json()["error"]
-        assert many == "3 result runs still use this prompt. Delete those runs first."
+        with pytest.raises(db.TrashError) as many:
+            db.purge_from_trash("prompt", data["prompt"])
+        assert str(many.value) == "3 result runs still use this prompt. Delete those runs first."
 
-    def test_a_prompt_goes_with_its_examples_and_is_refused_while_a_run_uses_it(self, client):
+    def test_a_prompt_goes_with_its_examples_and_is_refused_while_a_run_uses_it(self):
         data = populate()
         db.delete_prompt(data["prompt"])
-        assert client.delete(f"/api/trash/prompt/{data['prompt']}").status_code == 409
+        with pytest.raises(db.TrashError):
+            db.purge_from_trash("prompt", data["prompt"])
         db.delete_analysis_run(data["run"])
         # Still held back while the run is only in Deleted Items: it has to go for good first.
-        held = client.delete(f"/api/trash/prompt/{data['prompt']}")
-        assert held.status_code == 409
-        assert held.get_json()["error"] == "1 deleted result run still uses this prompt. Delete that run permanently first."
-        assert client.delete(f"/api/trash/run/{data['run']}").status_code == 200
-        response = client.delete(f"/api/trash/prompt/{data['prompt']}")
-        assert response.status_code == 200
+        with pytest.raises(db.TrashError) as held:
+            db.purge_from_trash("prompt", data["prompt"])
+        assert str(held.value) == "1 deleted result run still uses this prompt. Delete that run permanently first."
+        assert db.purge_from_trash("run", data["run"]) is not None
+        assert db.purge_from_trash("prompt", data["prompt"]) is not None
         assert scalar("SELECT COUNT(*) FROM prompt_example") == 0
         assert scalar("SELECT COUNT(*) FROM paper") == 3  # still in the live dataset
         assert integrity_ok()
 
-    def test_a_deleted_run_goes_for_good_and_its_spending_stays(self, client):
+    def test_a_deleted_run_goes_for_good_and_its_spending_stays(self):
         data = populate()
         db.delete_analysis_run(data["run"])
         before_spent = spent()
-        assert client.delete(f"/api/trash/run/{data['run']}").status_code == 200
+        assert db.purge_from_trash("run", data["run"]) is not None
         assert scalar("SELECT COUNT(*) FROM analysis_run") == 0 and scalar("SELECT COUNT(*) FROM analysis_result") == 0
         assert scalar("SELECT source_run_id FROM prompt_example") is None
         assert spent() == pytest.approx(before_spent)
         assert integrity_ok()
 
-    def test_only_what_is_in_the_trash_can_be_purged(self, client):
+    def test_only_what_is_in_the_trash_can_be_purged(self):
         data = populate()
         before = counts()
         for kind, item in (("dataset", data["dataset"]), ("prompt", data["prompt"]), ("run", data["run"])):
-            assert client.delete(f"/api/trash/{kind}/{item}").status_code == 404
+            assert db.purge_from_trash(kind, item) is None
         assert counts() == before
-
-    def test_unknown_kinds_are_a_404(self, client):
-        assert client.delete("/api/trash/paper/1").status_code == 404
 
 
 class TestEmptyTrash:
-    def test_it_removes_what_can_go_and_says_what_could_not(self, client):
+    def test_it_removes_what_can_go_and_says_what_could_not(self):
         data = populate()
         db.delete_dataset(data["dataset"])  # still used by the live run: stays
         free = trash_dataset((10, 11), name="Free")
         prompt = db.create_prompt("Old", "d")
         db.delete_prompt(prompt)
-        response = client.delete("/api/trash")
-        assert response.status_code == 200
-        body = response.get_json()
+        body = db.empty_trash()
         assert body["purged"] == {"run": 0, "dataset": 1, "prompt": 1}
         assert body["papers_removed"] == 2
         assert [s["id"] for s in body["skipped"]] == [data["dataset"]]
@@ -522,18 +527,18 @@ class TestEmptyTrash:
         assert scalar("SELECT COUNT(*) FROM dataset WHERE id = ?", free) == 0
         assert integrity_ok()
 
-    def test_runs_go_first_so_what_they_used_is_free(self, client):
+    def test_runs_go_first_so_what_they_used_is_free(self):
         data = populate()
         db.delete_analysis_run(data["run"])
         db.delete_dataset(data["dataset"])
         db.delete_prompt(data["prompt"])
-        body = client.delete("/api/trash").get_json()
+        body = db.empty_trash()
         assert body["purged"] == {"run": 1, "dataset": 1, "prompt": 1} and body["skipped"] == []
         assert counts()["paper"] == 0 and counts()["dataset"] == 0
         assert integrity_ok()
 
-    def test_an_empty_trash_is_fine(self, client):
-        assert client.delete("/api/trash").get_json() == {"purged": {"run": 0, "dataset": 0, "prompt": 0}, "papers_removed": 0, "skipped": []}
+    def test_an_empty_trash_is_fine(self):
+        assert db.empty_trash() == {"purged": {"run": 0, "dataset": 0, "prompt": 0}, "papers_removed": 0, "skipped": []}
 
 
 class TestDeletingARun:
@@ -573,7 +578,7 @@ class TestDeletingARun:
         data = populate()
         before_spent = spent()
         client.delete(f"/api/analysis-runs/{data['run']}")
-        assert client.delete(f"/api/trash/run/{data['run']}").status_code == 200
+        assert db.purge_from_trash("run", data["run"]) is not None
         assert scalar("SELECT COUNT(*) FROM analysis_run") == 0 and scalar("SELECT COUNT(*) FROM analysis_result") == 0
         assert spent() == pytest.approx(before_spent)
         assert integrity_ok()
@@ -590,9 +595,9 @@ class TestDeletingARun:
         data = populate()
         client.delete(f"/api/analysis-runs/{data['run']}")
         db.delete_dataset(data["dataset"])
-        held = client.delete(f"/api/trash/dataset/{data['dataset']}")
-        assert held.status_code == 409
-        assert held.get_json()["error"] == "1 deleted result run still uses this dataset. Delete that run permanently first."
+        with pytest.raises(db.TrashError) as held:
+            db.purge_from_trash("dataset", data["dataset"])
+        assert str(held.value) == "1 deleted result run still uses this dataset. Delete that run permanently first."
         assert scalar("SELECT COUNT(*) FROM dataset WHERE id = ?", data["dataset"]) == 1
 
     def test_a_live_run_is_what_the_message_names_when_there_are_both_kinds(self, client):
@@ -600,15 +605,16 @@ class TestDeletingARun:
         db.create_analysis_run([data["dataset"]], "g", "anthropic", "claude-haiku-4-5", data["prompt"])
         client.delete(f"/api/analysis-runs/{data['run']}")
         db.delete_dataset(data["dataset"])
-        error = client.delete(f"/api/trash/dataset/{data['dataset']}").get_json()["error"]
-        assert error == "1 result run still uses this dataset. Delete that run first."
+        with pytest.raises(db.TrashError) as error:
+            db.purge_from_trash("dataset", data["dataset"])
+        assert str(error.value) == "1 result run still uses this dataset. Delete that run first."
 
     def test_empty_trash_removes_the_run_then_what_it_used(self, client):
         data = populate()
         client.delete(f"/api/analysis-runs/{data['run']}")
         db.delete_dataset(data["dataset"])
         db.delete_prompt(data["prompt"])
-        body = client.delete("/api/trash").get_json()
+        body = db.empty_trash()
         assert body["purged"] == {"run": 1, "dataset": 1, "prompt": 1} and body["skipped"] == []
         assert counts()["analysis_run"] == 0 and counts()["dataset"] == 0 and counts()["prompt"] == 0
         assert integrity_ok()

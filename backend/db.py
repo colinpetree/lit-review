@@ -1204,7 +1204,7 @@ def rename_analysis_run(run_id, name):
 def delete_analysis_run(run_id):
     """Soft delete, like datasets and prompts: the run is hidden everywhere but kept, with
     its scores, its dataset links and what it spent, in Deleted Items. There it can be
-    restored (restore_from_trash) or removed for good (purge_from_trash)."""
+    restored (restore_from_trash); nothing in the app removes it for good."""
     with _LOCK, closing(_connect()) as conn:
         conn.execute(
             "UPDATE analysis_run SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL", (_now(), run_id)
@@ -2293,6 +2293,9 @@ def _delete_unreferenced_papers(conn, paper_ids):
 def purge_from_trash(kind, item_id):
     """Delete something in the trash for good. Returns the number of papers that went with
     it, or None if it is not in the trash. Raises TrashError if a result run still uses it.
+
+    No route calls this (or empty_trash): deleting in the app is always a soft delete the
+    user can restore. It is kept for database editor tools to build on.
 
     What is spent stays counted: the item's llm_call rows are detached from it, not deleted.
     Rows go in an order the foreign keys allow, in one transaction."""

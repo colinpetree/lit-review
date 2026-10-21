@@ -262,6 +262,21 @@ class TestUpgrade:
         assert db.DB_PATH.with_name(f"{db.DB_PATH.name}.pre-upgrade-1-to-{db.SCHEMA_VERSION}").exists()
         assert db.create_dataset("t2", ["q"], retrieval=[{"source": "pubmed"}])
 
+    def test_a_version_8_run_gets_an_empty_limit_step_and_keeps_its_limit(self):
+        db.ensure_ready()
+        dataset_id = db.create_dataset("topic", ["q"])
+        run_id = db.create_analysis_run([dataset_id], "g", "anthropic", "claude-haiku-4-5", max_usd=2.0)
+        conn = sqlite3.connect(str(db.DB_PATH))
+        conn.execute("ALTER TABLE analysis_run DROP COLUMN limit_step")
+        conn.execute("PRAGMA user_version = 8")
+        conn.commit()
+        conn.close()
+        db._ready_for = None
+        db.ensure_ready()
+        run = db.get_analysis_run(run_id)
+        assert (run["max_usd"], run["limit_step"]) == (2.0, None)
+        assert db.DB_PATH.with_name(f"{db.DB_PATH.name}.pre-upgrade-8-to-{db.SCHEMA_VERSION}").exists()
+
     def test_a_database_from_a_newer_version_is_not_opened(self):
         db.ensure_ready()
         conn = sqlite3.connect(str(db.DB_PATH))

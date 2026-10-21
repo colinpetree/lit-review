@@ -32,7 +32,7 @@ export default function SpendCard() {
       <EditableCardHeader
         title="Spending"
         icon={CircleDollarSign}
-        description="New Evaluation shows an estimated cost and asks you to confirm any run above this amount. The run stops at about the cost you confirmed. Enter 0 to confirm every run, or leave it blank for no confirmations and no limit."
+        description="New Evaluation shows an estimated cost and asks you to confirm any run above this amount. The run stops at about the cost you confirmed; Resume raises that run's limit by the same amount and carries on. Changing this affects new evaluations only. Enter 0 to confirm every run, or leave it blank for no confirmations and no limit."
         editing={editing}
         saving={saving}
         saved={saved}

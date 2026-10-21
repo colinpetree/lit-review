@@ -394,7 +394,7 @@ against real copies on spare ports works well.
   database stamped higher than the code (`DatabaseTooNew`) is refused. (Version 3 added
   `dataset.last_refresh`; 4 added `paper.is_retracted`, `paper.work_type` and
   `analysis_run.include_retracted`; 5 added `dataset.search_limit`; 6 added
-  `paper.abstract_answered`; 7 added `analysis_run.max_usd`; 8 added the `job` table and `dataset.pending`.) Foreign keys are enforced.
+  `paper.abstract_answered`; 7 added `analysis_run.max_usd`; 8 added the `job` table and `dataset.pending`; 9 added `analysis_run.limit_step`.) Foreign keys are enforced.
   Papers without a DOI match on `paper.title_key` (`title_match.title_key`: markup, accents, case
   and punctuation ignored, `+` and `#` kept) plus year; it is stored, so a change to that rule
   needs a version bump and re-backfill. `get_or_create_papers` inserts a whole search in one
@@ -488,13 +488,18 @@ Datasets and analysis runs are separate on purpose (PLAN.md, "Data model (Phase 
   create or by `PATCH`, null removes it) is checked against `db.get_run_scoring_cost` (scoring only,
   not the datasets' expansion) **before** each chunk in `_process_run_chunk`, so a run can pass it by up
   to one chunk; past it `/process` answers 400 with `limit_reached: true` and writes nothing (the run
-  is not reopened), and the run dict carries `scoring_cost` and `limit_reached`. Raising the limit
-  and calling `/process` again carries on. On the client, `lib/spendSetting.js` holds the per-browser
+  is not reopened), and the run dict carries `scoring_cost`, `limit_reached` and `next_limit`. The
+  limit is a safety net the user can always go past: **Resume** (the run page's button and `RunMenu`)
+  queues `run_score` with `extend_limit: true`, and when the limit is what stops the run, `POST /api/jobs`
+  first raises it by the run's `limit_step` (the limit it was created with; NULL on older runs, which
+  use their `max_usd`), enough steps to be above what is spent (`app._next_limit`, at most
+  `MAX_RUN_USD`; `db.extend_run_limit` is conditional, so two Resumes raise it once). So $1 → $2 → $3.
+  A run's limit is its own copy: extending it never changes the per-browser setting, and the
+  "spending limit" link in the run page's limit message opens Settings at that setting. On the client, `lib/spendSetting.js` holds the per-browser
   "ask before spending more than" amount (default $1.00, 0 = always ask, blank = never ask and no
   limit) and `limitFor` (a confirmed run is limited to its estimate plus 25%, an unconfirmed one to
-  the threshold); New Evaluation shows the estimate (`lib/useRunEstimate.js`), asks through `ConfirmModal`
-  above the threshold, and a run stopped by its limit sends the user to the run page, which offers
-  "Raise limit and continue".
+  the threshold); New Evaluation shows the estimate (`lib/useRunEstimate.js`) and asks through
+  `ConfirmModal` above the threshold.
 - Runs are resumable. The `run_score` job (`app._job_run_score`) scores one chunk
   (`SCORE_CHUNK_SIZE`=20) of still-unscored papers at a time with `app._score_next_chunk` until none are
   left; what is left is always re-read from `analysis_result`, never remembered. `POST

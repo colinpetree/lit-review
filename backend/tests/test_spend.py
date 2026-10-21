@@ -9,6 +9,7 @@ import pytest
 
 import app as app_module
 import db
+import jobs as jobs_module
 import llm
 
 ABSTRACT = "This study measures the effect of coral growth on reef output in field conditions. " * 2
@@ -247,6 +248,114 @@ class TestSpendingLimit:
         run_id = self.make_run()
         assert db.get_analysis_run(run_id)["max_usd"] is None
         assert client.get(f"/api/analysis-runs/{run_id}").get_json()["limit_reached"] is False
+
+
+class TestResumePastTheLimit:
+    """Resume (a run_score job with extend_limit) raises a limit that has stopped the run by the
+    limit the run started with, so the user can always carry on past it."""
+
+    make_run = TestSpendingLimit.make_run
+    dollar_a_chunk = TestSpendingLimit.dollar_a_chunk
+
+    @pytest.fixture(autouse=True)
+    def jobs_can_run(self):
+        # A test elsewhere may leave the "stop every job" switch set (as quitting does).
+        jobs_module._stop_all.clear()
+
+    def resume(self, client, run_id, extend=True):
+        return client.post("/api/jobs", json={"kind": "run_score", "run_id": run_id, "extend_limit": extend})
+
+    def run_info(self, client, run_id):
+        return client.get(f"/api/analysis-runs/{run_id}").get_json()
+
+    def test_each_resume_adds_the_starting_limit_again(self, client, dollar_a_chunk):
+        run_id = self.make_run(max_usd=1.0)
+        self.resume(client, run_id)
+        jobs_module.drain()
+        stopped = self.run_info(client, run_id)
+        assert (stopped["limit_reached"], stopped["next_limit"]) == (True, 2.0)
+        assert "Resume raises it by $1.00" in stopped["job"]["error"]
+
+        assert self.resume(client, run_id).status_code == 202
+        assert db.get_analysis_run(run_id)["max_usd"] == 2.0
+        jobs_module.drain()
+        assert self.run_info(client, run_id)["next_limit"] == 3.0  # $1 more, not doubled
+
+        self.resume(client, run_id)
+        jobs_module.drain()
+        done = self.run_info(client, run_id)
+        assert (done["max_usd"], done["remaining"], done["state"]) == (3.0, 0, "completed")
+
+    def test_a_batch_that_went_far_past_the_limit_gets_enough_steps(self, client, dollar_a_chunk):
+        run_id = self.make_run(max_usd=0.25)
+        self.resume(client, run_id, extend=False)
+        jobs_module.drain()  # one $1 batch against a $0.25 limit
+        assert self.run_info(client, run_id)["next_limit"] == 1.25
+        self.resume(client, run_id)
+        assert db.get_analysis_run(run_id)["max_usd"] == 1.25
+
+    @pytest.mark.parametrize(
+        "max_usd, spent, expected",
+        [(0.1, 0.3, 0.4), (0.1, 0.1 + 0.1 + 0.1, 0.4), (0.7, 2.1, 2.8), (1.0, 1.0, 2.0), (0.25, 1.0, 1.25)],
+    )
+    def test_the_next_limit_is_always_above_what_is_spent(self, max_usd, spent, expected):
+        # Spending that lands exactly on a multiple of the step once came out as "no higher limit".
+        assert app_module._next_limit({"max_usd": max_usd, "limit_step": max_usd}, spent) == expected
+
+    def test_a_tiny_limit_steps_by_a_cent_and_answers_at_once(self):
+        assert app_module._next_limit({"max_usd": 1e-300, "limit_step": 1e-300}, 0.5) == 0.51
+
+    def test_the_next_limit_stops_at_the_highest_there_is(self):
+        top = app_module.MAX_RUN_USD
+        assert app_module._next_limit({"max_usd": top - 1, "limit_step": 5}, top - 1) == top
+        assert app_module._next_limit({"max_usd": top, "limit_step": 5}, top) is None
+
+    def test_nothing_changes_unless_the_limit_is_what_stops_the_run(self, client, dollar_a_chunk):
+        under = self.make_run(max_usd=5.0)
+        self.resume(client, under)
+        assert db.get_analysis_run(under)["max_usd"] == 5.0
+        unlimited = self.make_run()
+        self.resume(client, unlimited)
+        assert db.get_analysis_run(unlimited)["max_usd"] is None
+
+    def test_without_the_flag_the_limit_holds(self, client, dollar_a_chunk):
+        run_id = self.make_run(max_usd=1.0)
+        TestSpendingLimit.process(self, client, run_id)
+        self.resume(client, run_id, extend=False)
+        jobs_module.drain()
+        assert db.get_analysis_run(run_id)["max_usd"] == 1.0
+        assert len(dollar_a_chunk.calls) == 1
+
+    def test_an_older_run_steps_by_its_current_limit(self, client, dollar_a_chunk):
+        run_id = self.make_run(max_usd=1.0)
+        with closing(db._connect()) as conn:
+            conn.execute("UPDATE analysis_run SET limit_step = NULL, max_usd = 2.0 WHERE id = ?", (run_id,))
+            conn.commit()
+        for _ in range(2):
+            TestSpendingLimit.process(self, client, run_id)
+        self.resume(client, run_id)
+        assert db.get_analysis_run(run_id)["max_usd"] == 4.0
+
+    def test_two_resumes_together_raise_it_once(self, client, dollar_a_chunk):
+        run_id = self.make_run(max_usd=1.0)
+        TestSpendingLimit.process(self, client, run_id)
+        self.resume(client, run_id)
+        self.resume(client, run_id)
+        assert db.get_analysis_run(run_id)["max_usd"] == 2.0
+
+    @pytest.mark.parametrize("value", ["yes", 1, None, [True]])
+    def test_a_flag_that_is_not_true_or_false_is_refused(self, client, value):
+        run_id = self.make_run(max_usd=1.0)
+        assert self.resume(client, run_id, extend=value).status_code == 400
+        assert client.get("/api/jobs").get_json()["jobs"] == []
+
+    def test_a_run_at_the_highest_limit_is_refused(self, client, dollar_a_chunk, monkeypatch):
+        run_id = self.make_run(max_usd=1.0)
+        TestSpendingLimit.process(self, client, run_id)
+        monkeypatch.setattr(app_module, "MAX_RUN_USD", 1.0)
+        response = self.resume(client, run_id)
+        assert response.status_code == 400 and "highest spending limit" in response.get_json()["error"]
+        assert db.get_analysis_run(run_id)["max_usd"] == 1.0
 
 
 class TestLimitInTheRequests:

@@ -25,7 +25,8 @@ export default function RunMenu({ run, onRenamed, onDelete, onError, className, 
     items.push({
       label: 'Resume',
       icon: Play,
-      onClick: () => startJob({ kind: 'run_score', run_id: run.id }).catch(report),
+      // A run its spending limit stopped has that limit raised by its starting amount first (server side).
+      onClick: () => startJob({ kind: 'run_score', run_id: run.id, extend_limit: true }).catch(report),
     })
   }
   if (onDelete) items.push({ label: 'Delete', icon: Trash2, danger: true, onClick: () => setModal('delete') })

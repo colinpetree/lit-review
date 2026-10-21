@@ -332,7 +332,7 @@ export default function NewEvaluationModal({ onClose, initialDatasetIds = [] }) 
             confirming.threshold === 0
               ? 'and you asked to be asked before every run'
               : `more than the ${formatUsd(confirming.threshold)} you asked to be asked about`
-          }. Grading stops at about ${formatUsd(confirming.limit)}, and can pass that by up to one batch of 20 papers. You can raise the limit later from the run.`}
+          }. Grading stops at about ${formatUsd(confirming.limit)}, and can pass that by up to one batch of 20 papers. If it gets there, Resume raises the limit by the same amount and carries on.`}
           confirmLabel="Run evaluation"
           // Not awaited: the confirmation closes now, and so does the dialog once the run is queued.
           onConfirm={() => {

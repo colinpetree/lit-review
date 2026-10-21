@@ -2,6 +2,7 @@ import datetime
 import errno
 import hmac
 import json
+import math
 import mimetypes
 import os
 import re
@@ -1462,6 +1463,25 @@ def _limit_reached(max_usd, spent):
     return max_usd is not None and spent >= max_usd
 
 
+def _next_limit(run_row, spent):
+    """The limit Resume raises a run to once its limit has stopped it: the current one plus the
+    limit the run started with (`limit_step`; an older run's current limit; never under a cent), as many times as it
+    takes to be above what is spent (a batch can go past the limit), at most MAX_RUN_USD. None when
+    the run has no limit or cannot go higher."""
+    max_usd = run_row["max_usd"]
+    if max_usd is None:
+        return None
+    # At least a cent, so the steps below always move the limit (a limit can be any amount above 0).
+    step = max(run_row["limit_step"] or max_usd, 0.01)
+    steps = math.floor(max(spent - max_usd, 0) / step) + 1
+    # The division can land just under a whole number ($0.30 spent on a $0.10 step gives 1.999...),
+    # which would make the new limit equal what is spent; add steps until it is truly above it.
+    while round(max_usd + steps * step, 4) <= spent and max_usd + steps * step < MAX_RUN_USD:
+        steps += 1
+    new = round(min(max_usd + steps * step, MAX_RUN_USD), 4)
+    return new if new > spent and new > max_usd else None
+
+
 def _max_usd(value):
     """A run's spending limit in dollars: None (no limit) or a number above 0."""
     if value is None:
@@ -1595,6 +1615,9 @@ def _run_to_dict(run_row):
     # holding the run back.
     run["scoring_cost"] = round(db.get_run_scoring_cost(run["id"]), 6)
     run["limit_reached"] = _limit_reached(run["max_usd"], run["scoring_cost"]) and run["remaining"] > 0
+    # What Resume would raise the limit to, so the page can say so without its own copy of the rule.
+    run["next_limit"] = _next_limit(run, run["scoring_cost"]) if run["limit_reached"] else None
+    run.pop("limit_step", None)
     _, by_run = _job_index()
     state, job = jobs.run_state(run["remaining"], by_run.get(run["id"], []))
     run["state"], run["job"] = state, jobs.public_job(job)
@@ -1662,9 +1685,10 @@ def process_analysis_run(run_id):
 
 
 def _limit_message(run_row):
+    step = max(run_row["limit_step"] or run_row["max_usd"], 0.01)
     return (
         f"This run reached its spending limit of ${run_row['max_usd']:.2f}. "
-        "Raise the limit on the run page to continue."
+        f"Resume raises it by ${step:.2f} and carries on."
     )
 
 
@@ -2401,8 +2425,9 @@ def _queue_dataset_search(body):
 
 @app.post("/api/jobs")
 def queue_job():
-    """Queue a piece of work: {kind: "dataset_search", question, ...}, {kind: "run_score", run_id},
-    {kind: "dataset_refresh", dataset_id} or {kind: "find_abstracts", dataset_id}. Answers at once;
+    """Queue a piece of work: {kind: "dataset_search", question, ...}, {kind: "run_score", run_id,
+    extend_limit?} (Resume sends extend_limit: true, which first raises a spending limit that has
+    stopped the run), {kind: "dataset_refresh", dataset_id} or {kind: "find_abstracts", dataset_id}. Answers at once;
     the work is done in the background (see jobs.py). Asking again for work that is already queued or
     running returns that job."""
     body = _json_body()
@@ -2418,6 +2443,13 @@ def queue_job():
                 return jsonify({"error": "analysis run not found"}), 404
             if db.pending_dataset_ids(d["id"] for d in db.get_run_datasets(run_id)):
                 raise InvalidRequest("A dataset in this evaluation is still being created.")
+            extend = body.get("extend_limit", False)
+            if not isinstance(extend, bool):
+                raise InvalidRequest("'extend_limit' must be true or false")
+            if extend:
+                refused = _extend_run_limit(run_id)
+                if refused:
+                    return refused
             job, _ = _enqueue("run_score", run_id=run_id)
         else:
             dataset_row, refused = _dataset_for_job(body, check_refresh=kind == "dataset_refresh")
@@ -2425,6 +2457,23 @@ def queue_job():
                 return refused
             job, _ = _enqueue(kind, dataset_id=dataset_row["id"])
     return jsonify({"job": jobs.public_job(job)}), 202
+
+
+def _extend_run_limit(run_id):
+    """Resume past a spending limit: when the run's limit is what stops it, raise the limit by the
+    amount it started with (see _next_limit). The limit is a safety net the user can always go past,
+    so this is what Resume does; a run its limit is not stopping is left alone. Returns a refusal
+    response, or None."""
+    run_row = db.get_analysis_run(run_id)
+    spent = db.get_run_scoring_cost(run_id)
+    if not _limit_reached(run_row["max_usd"], spent) or not db.count_unscored_papers(run_id):
+        return None
+    new = _next_limit(run_row, spent)
+    if new is None:
+        return jsonify({"error": f"This run is already at the highest spending limit (${MAX_RUN_USD:,})."}), 400
+    # Only from the limit just read, so two Resumes sent together raise it once.
+    db.extend_run_limit(run_id, run_row["max_usd"], new)
+    return None
 
 
 @app.post("/api/jobs/<int:job_id>/stop")

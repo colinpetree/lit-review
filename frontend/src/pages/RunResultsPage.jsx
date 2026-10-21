@@ -17,6 +17,7 @@ import { exportMenuItems } from '../lib/exportFile'
 import { formatUsd } from '../lib/spendSetting'
 import { mergeRunResults } from '../lib/runResults'
 import { useJobs } from '../components/JobsProvider'
+import { useSettingsModal } from '../components/SettingsModalProvider'
 import { isActiveJob, isWorking, jobsFor, progressSignature, statusSignature } from '../lib/jobs'
 import { datasetLabels, formatDateTime, RUN_COST_NOTE } from '../lib/format'
 import { StageIndicator } from '../components/Spinner'
@@ -39,9 +40,7 @@ export default function RunResultsPage() {
   const [filter, setFilter] = useState(EMPTY_PAPER_FILTER)
   const [sort, setSort] = useState(DEFAULT_RUN_SORT)
   const [actionError, setActionError] = useState(null)
-  // What the user has typed as the new spending limit (null: show the suggestion).
-  const [limitInput, setLimitInput] = useState(null)
-  const [raising, setRaising] = useState(false)
+  const { openSettings } = useSettingsModal()
   // /evaluations/:id is one long-lived route element - React Router doesn't remount it on a
   // param-only change, so this says which run a reload belongs to.
   const idRef = useRef(id)
@@ -73,8 +72,6 @@ export default function RunResultsPage() {
     setRun(null)
     setFilter(EMPTY_PAPER_FILTER)
     setActionError(null)
-    setLimitInput(null)
-    setRaising(false)
     fetchJson(`/api/analysis-runs/${id}`)
       .then((r) => {
         if (cancelled) return
@@ -108,31 +105,16 @@ export default function RunResultsPage() {
     return () => clearTimeout(timer)
   }, [progressKey, statusKey, reload])
 
-  // Queue the grading of whatever is still ungraded (the work itself happens in the background).
+  // Queue the grading of whatever is still ungraded (the work itself happens in the background). If the
+  // run's spending limit stopped it, the server first raises the limit by the amount it started with:
+  // the limit is a safety net, and Resume is how the user goes past it.
   const startGrading = async () => {
     setActionError(null)
     try {
-      await startJob({ kind: 'run_score', run_id: Number(id) })
+      await startJob({ kind: 'run_score', run_id: Number(id), extend_limit: true })
       await reload()
     } catch (err) {
       setActionError(err.message)
-    }
-  }
-
-  // Raise a run's spending limit and carry on grading.
-  const raiseLimit = async (amount) => {
-    setActionError(null)
-    setRaising(true)
-    try {
-      await patchJson(`/api/analysis-runs/${id}`, { max_usd: amount })
-      setRun((prev) => ({ ...prev, max_usd: amount, limit_reached: false }))
-      setLimitInput(null)
-      await startJob({ kind: 'run_score', run_id: Number(id) })
-      await reload()
-    } catch (err) {
-      setActionError(err.message)
-    } finally {
-      setRaising(false)
     }
   }
 
@@ -351,39 +333,8 @@ export default function RunResultsPage() {
           <div className="flex flex-col gap-1.5">
             <p className="text-sm font-medium text-gray-500">Spending limit</p>
             <p className="text-sm text-gray-800">
-              {formatUsd(run.max_usd)} for grading, {formatUsd(run.scoring_cost)} spent so far. A limit is checked
-              before each batch of 20 papers, so a run can pass it by up to one batch.
+              {formatUsd(run.scoring_cost)} used of {formatUsd(run.max_usd)} allowed
             </p>
-          </div>
-        ) : null}
-
-        {run.limit_reached ? (
-          <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
-            <p className="text-sm text-amber-900 dark:text-amber-200">
-              Grading paused: this run reached its spending limit of {formatUsd(run.max_usd)}.{' '}
-              {run.remaining.toLocaleString()} paper{run.remaining === 1 ? ' is' : 's are'} not graded yet. Everything
-              graded so far is kept.
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <label htmlFor="new-limit" className="text-sm text-amber-900 dark:text-amber-200">
-                New limit ($)
-              </label>
-              <input
-                id="new-limit"
-                value={limitInput ?? (Math.ceil(run.max_usd * 2 * 100) / 100).toFixed(2)}
-                onChange={(e) => setLimitInput(e.target.value)}
-                inputMode="decimal"
-                className="w-24 rounded-md border border-gray-300 bg-surface px-2 py-1 text-sm"
-              />
-              <button
-                type="button"
-                disabled={raising || working || !(Number(limitInput ?? run.max_usd * 2) > run.scoring_cost)}
-                onClick={() => raiseLimit(Number(limitInput ?? Math.ceil(run.max_usd * 2 * 100) / 100))}
-                className="rounded-md border border-gray-300 bg-surface px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-              >
-                Raise limit and continue
-              </button>
-            </div>
           </div>
         ) : null}
 
@@ -392,9 +343,27 @@ export default function RunResultsPage() {
             <StageIndicator label={workingLabel} />
             {job?.progress?.note ? <p className="text-xs text-gray-400">{job.progress.note}</p> : null}
           </div>
-        ) : run.remaining > 0 && !run.limit_reached ? (
+        ) : run.remaining > 0 ? (
           <div className="flex flex-col items-start gap-2">
-            {run.state === 'incomplete' && run.job?.error ? (
+            {run.limit_reached ? (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                This run reached its{' '}
+                <button
+                  type="button"
+                  onClick={() => openSettings('ai')}
+                  title="Settings: the limit new evaluations start with"
+                  className="text-blue-600 underline-offset-2 transition-colors hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  spending limit
+                </button>{' '}
+                of {formatUsd(run.max_usd)} ({formatUsd(run.scoring_cost)} spent).{' '}
+                {run.remaining.toLocaleString()} paper{run.remaining === 1 ? ' is' : 's are'} not graded yet; everything
+                graded so far is kept.{' '}
+                {run.next_limit != null
+                  ? `Resume grading raises this run's limit to ${formatUsd(run.next_limit)} and carries on.`
+                  : 'It is already at the highest limit there is.'}
+              </p>
+            ) : run.state === 'incomplete' && run.job?.error ? (
               <p className="text-sm text-amber-700 dark:text-amber-400">{run.job.error}</p>
             ) : null}
             <button

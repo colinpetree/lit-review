@@ -41,8 +41,10 @@ _LOCK = threading.Lock()
 # 6 = paper.abstract_answered.
 # 7 = analysis_run.max_usd.
 # 8 = the job table (background work) and dataset.pending (a dataset whose search has not
-# finished). A database stamped higher than this was made by a newer version and is not opened.
-SCHEMA_VERSION = 8
+# finished).
+# 9 = analysis_run.limit_step. A database stamped higher than this was made by a newer version
+# and is not opened.
+SCHEMA_VERSION = 9
 
 # What a job the user stopped says (set by jobs.JobContext.check). Here, not in jobs.py, because
 # _migrate rewrites older wordings to it and jobs.py imports this module.
@@ -349,6 +351,9 @@ def _migrate(conn):
         # from before it existed). Checked before each chunk, so a run can pass it by up
         # to one chunk.
         ("max_usd", "REAL"),
+        # limit_step: the limit the run was created with, which Resume adds to max_usd each
+        # time the limit stops the run. NULL on older runs (their max_usd is used instead).
+        ("limit_step", "REAL"),
     ):
         if column not in run_columns:
             conn.execute(f"ALTER TABLE analysis_run ADD COLUMN {column} {ddl}")
@@ -1251,7 +1256,8 @@ def create_analysis_run(
     transaction, with a placeholder name and title_pending set so the first
     scoring call supplies a real title. Retracted papers are left out of the run unless
     include_retracted (kept on the run, so resuming it applies the same rule). `max_usd` is
-    the most the run may spend scoring, or None for no limit."""
+    the most the run may spend scoring, or None for no limit; it is also kept as the run's
+    `limit_step`, what each Resume past the limit adds."""
     with _LOCK, closing(_connect()) as conn:
         now = _now()
         # The run's name starts as its prompt's. For a new prompt that is only a
@@ -1281,12 +1287,13 @@ def create_analysis_run(
             """
             INSERT INTO analysis_run
                 (grading_prompt, ai_api, ai_model, status, created_at, prompt_id, examples_snapshot,
-                 name, name_auto, include_retracted, max_usd)
-            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
+                 name, name_auto, include_retracted, max_usd, limit_step)
+            VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 grading_prompt, ai_api, ai_model, now, prompt_id, json.dumps(examples),
                 _unique_run_name(conn, prompt_name), name_auto, int(bool(include_retracted)), max_usd,
+                max_usd,
             ),
         )
         run_id = cur.lastrowid
@@ -1719,6 +1726,17 @@ def set_run_max_usd(run_id, max_usd):
     with _LOCK, closing(_connect()) as conn:
         conn.execute("UPDATE analysis_run SET max_usd = ? WHERE id = ?", (max_usd, run_id))
         conn.commit()
+
+
+def extend_run_limit(run_id, expected, new):
+    """Raise a run's spending limit from `expected` to `new`, only if it is still `expected`, so two
+    Resumes sent together raise it once. Returns whether it was changed."""
+    with _LOCK, closing(_connect()) as conn:
+        cur = conn.execute(
+            "UPDATE analysis_run SET max_usd = ? WHERE id = ? AND max_usd = ?", (new, run_id, expected)
+        )
+        conn.commit()
+        return cur.rowcount == 1
 
 
 def record_analysis_chunk(run_id, scores, usage):

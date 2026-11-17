@@ -606,7 +606,10 @@ class TestSourceRunIcon:
 
     @pytest.mark.parametrize("platform, name", [("win32", "LitReview.ico"), ("darwin", "icon-source.png")])
     def test_from_source_the_app_icon_is_used_when_it_exists(self, monkeypatch, tmp_path, platform, name):
+        # A real folder: macOS and Linux follow "backend/.." through the folder itself, so a path
+        # through one that does not exist is not found (Windows works it out from the text).
         backend = tmp_path / "backend"
+        backend.mkdir()
         monkeypatch.setattr(app_module.bundle, "is_frozen", lambda: False)
         monkeypatch.setattr(app_module.bundle, "resource_path", lambda *parts: backend.joinpath(*parts))
         monkeypatch.setattr(app_module.sys, "platform", platform)

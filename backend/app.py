@@ -16,7 +16,6 @@ import time
 import traceback
 import uuid
 import webbrowser
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from threading import Timer
@@ -70,11 +69,12 @@ CREDENTIAL_PROVIDERS = SUPPORTED_PROVIDERS | {"openalex", "elsevier", "springern
 # makes an earlier "no abstract found" worth retrying.
 LOOKUP_KEY_PROVIDERS = {"elsevier", "springernature", "semanticscholar"}
 
-# Papers looked up per request, all at the same time (see _look_up_batch), so a slow
-# source delays its own paper and not the other nine. Semantic Scholar's limit is about
-# one call a second however many are waiting (its requests queue, see source_http), so
-# a request takes roughly this many seconds at the least.
-FIND_ABSTRACTS_CHUNK_SIZE = 10
+# Papers looked up per chunk (abstracts.lookup_batch). Semantic Scholar and Europe PMC are
+# asked about the whole chunk in one request each, so a chunk usually takes a few seconds (up
+# to about a minute when Europe PMC is slow: see abstracts.EUROPEPMC_BATCH_TIMEOUT). It is not
+# made bigger because a chunk is one unit of a job: Stop, the progress shown and a backup
+# restore (which waits only RESTORE_WAIT_SECONDS) all wait for the chunk in hand to finish.
+FIND_ABSTRACTS_CHUNK_SIZE = 25
 
 # Sized to control cost/latency per LLM call without hitting output-token
 # limits (each candidate needs a full rationale in the response) - see
@@ -1294,42 +1294,6 @@ def find_dataset_abstracts(dataset_id):
         return jsonify(_find_abstracts_chunk(dataset_id, set(skip_ids), set(skip_sources)))
 
 
-def _look_up_batch(batch, skipped, answers):
-    """abstracts.lookup_abstract for every (paper_id, doi, title) in the batch at the same
-    time, so waiting on a slow source costs the time of the slowest paper, not the sum
-    of them all. `answers` is {paper_id: sources that already said "no abstract" for it}.
-    Returns {paper_id: Lookup}. A source that fails is added to `skipped` as soon as its
-    paper finishes, so lookups that start later do not ask it again. A lookup that
-    crashes is logged and counts as unanswered (the paper is left to be tried again)
-    instead of losing the others' results."""
-    results = {}
-    if not batch:
-        return results
-    with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-        futures = {
-            pool.submit(
-                abstracts.lookup_abstract,
-                doi,
-                skipped,
-                title=title,
-                answered_before=frozenset(answers.get(paper_id, ())),
-            ): paper_id
-            for paper_id, doi, title in batch
-        }
-        for future in as_completed(futures):
-            paper_id = futures[future]
-            try:
-                result = future.result()
-            except Exception:  # noqa: BLE001 - one paper's bug must not fail the batch
-                app.logger.error(
-                    "Abstract lookup failed for paper %s:\n%s", paper_id, redact(traceback.format_exc())
-                )
-                result = abstracts.Lookup(None, None, {}, frozenset(), False)
-            results[paper_id] = result
-            skipped.update(result.errors)
-    return results
-
-
 def _find_abstracts_chunk(dataset_id, attempted_before, skipped):
     """One chunk of the lookup, as the dict /find-abstracts returns."""
     # Papers a lookup already completed for without finding an abstract are
@@ -1348,11 +1312,14 @@ def _find_abstracts_chunk(dataset_id, attempted_before, skipped):
     source_errors = {}
     filled = []
     checked_ids = []
-    results = _look_up_batch(batch, skipped, db.get_abstract_answers([paper_id for paper_id, _, _ in batch]))
+    results = abstracts.lookup_batch(
+        batch, frozenset(skipped), db.get_abstract_answers([paper_id for paper_id, _, _ in batch])
+    )
     # Saved in the batch's own order, on this thread.
     for paper_id, doi, title in batch:
         found = results[paper_id]
         source_errors.update(found.errors)
+        skipped.update(found.errors)
         if found.abstract and db.set_paper_abstract_if_blank(paper_id, found.abstract, found.source):
             filled.append(db.get_paper(paper_id))
             continue

@@ -90,7 +90,10 @@ and progress while it runs.
 then Semantic Scholar, then Europe PMC last (it can be slow). It only accepts abstracts of
 `llm.MIN_ABSTRACT_CHARS` (100) or more, and drops one when the title the source returns
 clearly differs from the stored title (`title_match.py`). A source that fails (bad key,
-quota) is skipped for the rest of the run. See Phase 4 below for the design rationale.
+quota) is skipped for the rest of the run. Papers are looked up 25 at a time, and Semantic
+Scholar and Europe PMC are each asked about all of them in one request (asking per paper cost
+over a second a paper, mostly Semantic Scholar's rate limit); the publishers are asked per
+paper. See Phase 4 below for the design rationale.
 
 ## Core pipeline
 

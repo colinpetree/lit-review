@@ -381,10 +381,10 @@ class TestDatasetSearchJob:
         monkeypatch.setattr(openalex, "search_all", search_all)
         fake_llm.respond = lambda system, user, schema: {"queries": ["coral reef growth", "reef fish"], "title": "Coral Reefs"}
 
-        def lookup(doi, skip_sources=frozenset(), title=None, answered_before=frozenset()):
-            return abstracts.Lookup(None, None, {}, frozenset(), True)
+        def lookup(papers, skip_sources=frozenset(), answers=None):
+            return {key: abstracts.Lookup(None, None, {}, frozenset(), True) for key, _, _ in papers}
 
-        monkeypatch.setattr(abstracts, "lookup_abstract", lookup)
+        monkeypatch.setattr(abstracts, "lookup_batch", lookup)
         state["llm"] = fake_llm
         return state
 
@@ -495,25 +495,29 @@ class TestLookupAndRefreshJobs:
         return dataset_id, ids
 
     def test_abstracts_are_looked_up_in_the_background_across_batches(self, client, monkeypatch):
-        dataset_id, ids = self.dataset_with(25)
+        dataset_id, ids = self.dataset_with(30)
+        chunks = []
 
-        def find(doi, skip_sources=frozenset(), title=None, answered_before=frozenset()):
-            return abstracts.Lookup(ABSTRACT, "europepmc", {}, frozenset({"europepmc"}), True)
+        def find(papers, skip_sources=frozenset(), answers=None):
+            chunks.append(len(papers))
+            return {key: abstracts.Lookup(ABSTRACT, "europepmc", {}, frozenset({"europepmc"}), True) for key, _, _ in papers}
 
-        monkeypatch.setattr(abstracts, "lookup_abstract", find)
+        monkeypatch.setattr(abstracts, "lookup_batch", find)
         job = queue(client, "find_abstracts", dataset_id=dataset_id)["job"]
         jobs.drain()
         done = db.get_job(job["id"])
-        assert done["status"] == "completed" and done["progress"]["filled"] == 25
+        assert done["status"] == "completed" and done["progress"]["filled"] == 30
+        assert chunks == [25, 5]
         assert all(db.get_paper(i)["abstract"] for i in ids)
 
     def test_a_source_having_trouble_is_reported_but_is_not_a_failed_job(self, client, monkeypatch):
         dataset_id, _ = self.dataset_with(3)
 
-        def find(doi, skip_sources=frozenset(), title=None, answered_before=frozenset()):
-            return abstracts.Lookup(None, None, {"europepmc": "Could not reach Europe PMC"}, frozenset(), False)
+        def find(papers, skip_sources=frozenset(), answers=None):
+            failed = abstracts.Lookup(None, None, {"europepmc": "Could not reach Europe PMC"}, frozenset(), False)
+            return {key: failed for key, _, _ in papers}
 
-        monkeypatch.setattr(abstracts, "lookup_abstract", find)
+        monkeypatch.setattr(abstracts, "lookup_batch", find)
         job = queue(client, "find_abstracts", dataset_id=dataset_id)["job"]
         jobs.drain()
         done = db.get_job(job["id"])

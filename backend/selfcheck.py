@@ -77,6 +77,48 @@ def _check_tray():
         from PyObjCTools import AppHelper  # noqa: F401
 
 
+# What the app window needs on Windows, as files inside the build (pywebview's WebView2 SDK and
+# loader, and pythonnet's .NET bridge), relative to each package's own folder.
+WINDOW_FILES_WINDOWS = [
+    ("webview", "lib", "Microsoft.Web.WebView2.Core.dll"),
+    ("webview", "lib", "Microsoft.Web.WebView2.WinForms.dll"),
+    ("webview", "lib", "runtimes", "win-x64", "native", "WebView2Loader.dll"),
+    ("pythonnet", "runtime", "Python.Runtime.dll"),
+    ("clr_loader", "ffi", "dlls", "amd64", "ClrLoader.dll"),
+]
+WINDOW_MODULES = {
+    "win32": ["webview.platforms.winforms", "webview.platforms.edgechromium", "clr", "clr_loader"],
+    "darwin": ["webview.platforms.cocoa", "WebKit", "Quartz"],
+}
+
+
+def _check_window():
+    """The app window's library, its backend for this OS and the files they load are in the build.
+
+    This only looks for them; it loads nothing that depends on the computer. The updater runs a new
+    version's self-check on the user's own computer and refuses the update if it fails, while the
+    app itself falls back to the browser where the window cannot be used (no WebView2, a damaged
+    .NET, an old Windows). So a check that loaded .NET, or AppKit's application object, could stop
+    a computer from ever updating although the app works on it. What it catches is a build that
+    lost a hidden import or a data file, which would fall back to the browser on every computer."""
+    import importlib.util
+    from pathlib import Path
+
+    import webview  # pure Python until a backend is chosen
+
+    missing = [name for name in WINDOW_MODULES.get(sys.platform, []) if importlib.util.find_spec(name) is None]
+    if missing:
+        raise ModuleNotFoundError(f"missing from the build: {', '.join(missing)}")
+    if sys.platform == "win32":
+        folders = {"webview": Path(webview.__file__).parent}
+        for package in ("pythonnet", "clr_loader"):
+            folders[package] = Path(importlib.util.find_spec(package).origin).parent
+        for package, *parts in WINDOW_FILES_WINDOWS:
+            path = folders[package].joinpath(*parts)
+            if not path.is_file():
+                raise FileNotFoundError(f"missing {path}")
+
+
 def _check_files():
     required = [("static", "index.html")]
     if bundle.is_frozen():
@@ -129,6 +171,7 @@ CHECKS = {
     "certificates": _check_certificates,
     "storage": _check_storage,
     "tray": _check_tray,
+    "app window": _check_window,
     "files": _check_files,
     "update signing": _check_update_signing,
     "update helper": _check_update_helper,

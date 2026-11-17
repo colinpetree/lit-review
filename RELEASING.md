@@ -65,6 +65,22 @@ Every copy older than `--min-version` then treats the update as required: it dow
 - Windows: that a downloaded-by-the-app update raises no SmartScreen prompt, and whether **Smart App Control** (Windows Security, App and browser control) blocks the unsigned build. If it is on for a user, signing the Windows build is required regardless of the updater (for example Azure Trusted Signing).
 - Both: the browser-based install at launch (automatic installing on): the app opens as usual, the page shows "Installing the update", a new window opens with "Welcome to Lit Review X", and nothing at all appears if no browser opens (the install still happens after about 20 s). The old tab should turn into "Lit Review was updated" with an OK button within a few seconds (same port), or become closable after a minute (different port).
 - Both: a forced `--min-version` run and a deliberately broken update to see the rollback message.
+- The app window (`backend/desktop_window.py`), on the packaged build. **Windows** (already checked from source on
+  Windows 10: the window opens signed in, X hides it and the process keeps running, the first-hide notice is saved
+  once, a second launch and `/api/window/show` bring it back in front, a minimized window is restored, a sign-out
+  query is answered "OK to end the session" and the window still hides after that sign-out is cancelled, the tray's
+  Quit ends `main()` cleanly, and the right-click menu is on with developer tools and browser keys off): still to
+  see the frozen build do the same; Export (CSV, RIS, BibTeX) and Download backup show a Save dialog and write a
+  correct file; Restore's file picker; right-click Copy and Paste in a text box; a paper link opens in the default
+  browser; a real sign-out and shutdown with Lit Review running show no "preventing shutdown"; Install and restart
+  from the window, then the welcome in the new window; an update swap is not blocked by WebView2's helper processes.
+  **macOS** (nothing run on a Mac yet): the window opens and Cmd+W hides it; Dock click and the Dock menu bring it
+  back; Cmd+C/V/X/A work in text boxes (pywebview's Edit menu); **Cmd+Q from inside the window asks first while a job
+  runs** (pywebview's own key handler maps Cmd+Q to a stop with no question if the menu does not get it first; if
+  that happens, give the app menu's Quit its own key equivalent); log out while running; the menu-bar icon; Export and
+  backup through the save panel (blob downloads in WKWebView); an update install.
+- Both: a computer without WebView2 (Windows) falls back to the browser with the tray working as before, and
+  `/api/about` says `"shell": "browser"`.
 - Windows: an automatic install of an app run from a folder inside Downloads, with Explorer open on it. A launch-time install from such a folder failed once (the cause was never recorded; a security tool or Explorer holding the folder, or a second launch during the swap, is the likely one) and left the release marked as given up for good; it is now a wait of a day (a week after later give-ups) that "Check now" ends at once, and the helper's reason (the operating system's own error text) is written to the log. Opening the app again while the helper is swapping folders can still make the swap fail (no guard against it yet). Only copies of the app that include this change protect the install that follows; one without it still needs `updates\state.json` deleted by hand.
 
 ## Proven on real machines

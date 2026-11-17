@@ -1,6 +1,6 @@
 # Installing Lit Review
 
-You do not need to install anything else, and you never need a terminal. Lit Review is a program you download, open, and use in your web browser. It runs on your own computer.
+You do not need to install anything else, and you never need a terminal. Lit Review is a program you download and open like any other app. It runs on your own computer.
 
 Requirements: Windows 10 or 11, or a Mac running macOS 11 or newer. You also need an internet connection and your own API keys (see "First use" below).
 
@@ -27,7 +27,7 @@ These downloads are not signed with a paid developer certificate, so your comput
 1. Open your **Downloads** folder, right-click the zip, and choose **Extract All…**, then **Extract**. (Do not open the program from inside the zip: it will not work until it is extracted.) Moving the extracted **Lit Review** folder to your Documents or Desktop is fine.
 2. Open the extracted folder and double-click **Lit Review**.
 3. If a blue box says **"Windows protected your PC"**, click **More info**, then **Run anyway**. If your antivirus program asks, tell it to allow Lit Review.
-4. Your web browser opens with Lit Review.
+4. The Lit Review window opens.
 
 ### Mac
 
@@ -36,7 +36,7 @@ These downloads are not signed with a paid developer certificate, so your comput
 3. Close that window, then eject the disk: in the Finder sidebar, click the small eject button next to **Lit Review** (or right-click it and choose **Eject**).
 4. Open your **Applications** folder and double-click **Lit Review**. Your Mac will probably say it cannot be opened.
 5. Open **System Settings**, then **Privacy & Security**, scroll down to the message about Lit Review, and click **Open Anyway**. Type your Mac password if asked, then click **Open**.
-6. Your web browser opens with Lit Review. After this first time, it opens normally.
+6. The Lit Review window opens. After this first time, it opens normally.
 
 Do not open Lit Review from inside the disk window or from your Downloads folder. It will tell you to drag it into Applications first.
 
@@ -53,10 +53,10 @@ Then open **Paper Datasets**, click **+ New Dataset**, describe your research qu
 
 ## Opening, closing and quitting
 
-- Lit Review keeps running after you close its browser tab. You will see its icon near the clock (Windows, where it may be hidden behind the small **^** arrow) or in the menu bar at the top of the screen (Mac).
-- To open it again, double-click **Lit Review** again (your browser opens on the copy that is already running), or use the icon's **Open Lit Review**.
-- To quit, use the icon's **Quit** (on a Mac you can also press **Cmd+Q**). If it is in the middle of searching or grading, it asks first.
-- Closing the tab does not stop a search or grading run that is already going, so do not quit until it is finished unless you mean to.
+- Closing the Lit Review window (the X) does not quit it. It keeps running in the background, so a search or grading run carries on. You will see its icon near the clock (Windows, where it may be hidden behind the small **^** arrow) or in the menu bar at the top of the screen (Mac). On a Mac it also stays in the Dock.
+- To open the window again, click the icon (Windows), click Lit Review in the Dock (Mac), double-click **Lit Review** again, or use the icon's **Open Lit Review**.
+- To quit, use the icon's **Quit** (right-click the icon on Windows; on a Mac you can also press **Cmd+Q**). If it is in the middle of searching or grading, it asks first.
+- The icon's **Open in browser** opens Lit Review in your web browser instead, if you prefer that. Settings you chose in the browser before (such as dark mode) are kept separately from the window's, so set them again in the window.
 
 ## Your data
 
@@ -84,9 +84,10 @@ If an update is interrupted at the worst moment, the old program may be left as 
 - **It does not open, or shows a message box:** read the message. It says what to try.
 - **Windows says it cannot start or a file is missing:** make sure you extracted the whole zip (step 2 above).
 - **A Mac message says Lit Review is running from the installer:** you opened it from inside the disk window or from Downloads. Drag **Lit Review** into your **Applications** folder (or Documents), eject the disk, and open it from there.
-- **The browser shows "not connected":** open Lit Review again from its icon, which opens a connected window.
+- **It shows "not connected":** open Lit Review again from its icon, which opens a connected window.
+- **On Windows, a browser opens instead of the Lit Review window:** your computer is missing Microsoft's WebView2, which Windows normally installs by itself. Lit Review works the same in the browser. To get the window, install the "Evergreen Bootstrapper" from Microsoft's WebView2 page (https://developer.microsoft.com/microsoft-edge/webview2/) and start Lit Review again.
 - **Anything else:** the log is in the **Log folder** shown in **Settings → Software and Updates**. The icon's **Open log folder** shows it. Send that file to whoever is helping you.
 
 ## Removing it
 
-Quit Lit Review, then delete the program (the **Lit Review** folder on Windows, or **Lit Review** in Applications on a Mac). Your data stays in the data folder above until you delete that too.
+Quit Lit Review, then delete the program (the **Lit Review** folder on Windows, or **Lit Review** in Applications on a Mac). Your data stays in the data folder above until you delete that too. (On a Mac, the window's own small settings, such as dark mode, are kept by macOS in the WebKit folder inside your Library folder, not in the data folder.)

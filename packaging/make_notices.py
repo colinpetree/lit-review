@@ -154,6 +154,11 @@ if sys.platform == "win32":
     NATIVE_LIBRARIES.append(
         ("Microsoft Visual C++ runtime", "Microsoft redistribution terms", "https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files")
     )
+    # The app window's WebView2 SDK files (Microsoft.Web.WebView2.*.dll, WebView2Loader.dll), which
+    # pywebview carries. The WebView2 runtime itself is part of Windows and is not shipped.
+    NATIVE_LIBRARIES.append(
+        ("Microsoft Edge WebView2 SDK", "BSD-style (Microsoft)", "https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3856.49/License")
+    )
 
 
 def python_license_text():

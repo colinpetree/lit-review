@@ -91,14 +91,20 @@ def launch_url(port, token=None):
     return f"http://localhost:{port}"
 
 
-def write_instance(directory, port, instance_id):
-    _write_atomic(Path(directory) / INSTANCE_FILE, json.dumps({"port": port, "id": instance_id}))
+def write_instance(directory, port, instance_id, window_pid=None):
+    """`window_pid` is this process's id when it shows its own app window: a second launch
+    then asks it to show that window (and lets that process take the foreground, which
+    Windows otherwise refuses a program in the background) instead of opening the browser."""
+    record = {"port": port, "id": instance_id}
+    if window_pid is not None:
+        record["window_pid"] = window_pid
+    _write_atomic(Path(directory) / INSTANCE_FILE, json.dumps(record))
 
 
 def read_instance(directory):
-    """{"port": int, "id": str} for the copy that wrote it, or None if there is no
-    usable record. A record can be stale (a copy that crashed); whether the copy
-    is really there is decided by asking it, never by this file."""
+    """{"port": int, "id": str} for the copy that wrote it, plus "window_pid" when it has an
+    app window, or None if there is no usable record. A record can be stale (a copy that
+    crashed); whether the copy is really there is decided by asking it, never by this file."""
     try:
         data = json.loads((Path(directory) / INSTANCE_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -110,7 +116,11 @@ def read_instance(directory):
         return None
     if not isinstance(instance_id, str) or not instance_id:
         return None
-    return {"port": port, "id": instance_id}
+    record = {"port": port, "id": instance_id}
+    window_pid = data.get("window_pid")
+    if isinstance(window_pid, int) and not isinstance(window_pid, bool) and window_pid > 0:
+        record["window_pid"] = window_pid
+    return record
 
 
 def clear_instance(directory, instance_id):

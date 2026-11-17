@@ -601,7 +601,7 @@ class TestAnUnusableDataFolder:
         monkeypatch.setattr(app_module, "start_server", lambda *a, **k: real)
         monkeypatch.setattr(app_module, "ALLOWED_HOSTS", set())
 
-        def broken(directory, p, i):
+        def broken(directory, p, i, window_pid=None):
             raise OSError(28, "There is not enough space on the disk")
 
         monkeypatch.setattr(access, "write_instance", broken)

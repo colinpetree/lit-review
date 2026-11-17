@@ -1,6 +1,6 @@
 ---
 name: packaging-release
-description: How Lit Review is packaged, released and auto-updated (PyInstaller build, tray and macOS app behaviour, updater and signed manifest, release workflow, user docs, license notices). Use when touching packaging/, pyinstaller.spec, updater.py, tray.py, mac_app.py, ui.py, logfile.py, selfcheck.py, the release workflow, RELEASING.md, INSTALL.md, or the license/notices pages.
+description: How Lit Review is packaged, released and auto-updated (PyInstaller build, tray and macOS app behaviour, updater and signed manifest, release workflow, user docs, license notices). Use when touching packaging/, pyinstaller.spec, updater.py, desktop_window.py, tray.py, mac_app.py, ui.py, logfile.py, selfcheck.py, the release workflow, RELEASING.md, INSTALL.md, or the license/notices pages.
 ---
 
 # Packaging and release
@@ -20,14 +20,51 @@ to 824 px, squircle mask, drop shadow. `iconutil -c icns` runs only on a Mac, so
 Use `--distpath`/`--workpath` to build outside the repo; `/build`, `/dist` and `packaging/build` are
 gitignored.
 
-- **What the packaged app is:** a PyInstaller onedir folder, `console=False`, with a tray (Windows) or
-  menu-bar (macOS) icon and no console. `main()` in `app.py` serves on a thread and runs the tray
-  (`tray.py`, pystray) on the main thread, since macOS needs its event loop there. From source the
-  tray is off (console and Ctrl+C); `--tray` turns it on, `--no-tray` or `LIT_REVIEW_NO_TRAY=1`
-  turns it off (tests, CI). Quit from the tray asks first if a slow job holds an `_exclusive` lock
-  (`_jobs_running`), and the server thread dying takes the icon down with it. Shutdown and cleanup
-  (`server_close`, `clear_instance`, lock release, log teardown) all happen in `main()`'s `finally`,
-  never in the tray callback.
+- **What the packaged app is:** a PyInstaller onedir folder, `console=False`, with its own window, a tray
+  (Windows) or menu-bar (macOS) icon and no console. From source the tray is off (console and Ctrl+C); `--tray`
+  turns it on, `--no-tray` or `LIT_REVIEW_NO_TRAY=1` turns it off (tests, CI). Quit from the tray asks first if a
+  slow job holds an `_exclusive` lock (`_jobs_running`), and the server thread dying takes the icon (and window)
+  down with it. Shutdown and cleanup (`server_close`, `clear_instance`, lock release, log teardown) all happen in
+  `main()`'s `finally`, never in a tray or window callback.
+- **The app window** (`desktop_window.py`, pywebview 6: WebView2 through pythonnet on Windows, WKWebView on macOS).
+  `_window_wanted`: packaged on; from source `--tray --window`; off whenever the tray is off, with `--no-window` or
+  `LIT_REVIEW_NO_WINDOW=1` (so tests, CI and the smoke test stay on the browser path). `--debug-window` (source only)
+  turns on developer tools. Icons: the packaged app's window, taskbar and Dock icons come from the `.exe` / `.app`
+  (pywebview reads the running executable's icon on Windows), so nothing is passed then; passing `icon` on a Mac
+  would replace the bundle's icon, Liquid Glass included. From source the program is Python, so `_source_run_icon`
+  passes `packaging/build/LitReview.ico` (Windows, made by `make_icons.py`) or `packaging/icon-source.png` (Mac), and
+  `_set_source_run_taskbar_identity` gives the process its own AppUserModelID so Windows does not group it with
+  other Python windows. Threads: `webview.start` must own the **main thread**, so `_serve_with_window` runs the
+  server on a thread, the tray with `Tray.start()` (its own daemon thread on Windows; pystray's `run_detached` on
+  macOS, joining the window's AppKit loop) and the window here. The behaviour is `DesktopShell` (plain Python,
+  `tests/test_desktop_window.py`): the window starts hidden and appears when the page loads; **close hides** (and a
+  one-time Windows balloon, `app_settings` `tray_notice_shown`); `show()` restores and brings it forward; **one
+  quit path**, `DesktopShell.quit()` (tray Quit after `_confirm_quit`, `_QUIT["fn"]` for updates, a dead server, and
+  again after the loop ends), which stops the Windows tray icon and destroys the window so `start` returns. Rules
+  learned from pywebview's and pystray's source: on macOS never call pystray's `icon.stop()` after `start()` (it
+  stops `NSApplication`, which is the window's loop); pywebview sets its **own** app delegate when it makes the
+  window (its `applicationShouldTerminate_` sends Cmd+Q to the window's close, which only hides), so `mac_app.install`
+  runs **after** the window exists (`Tray.install_mac_app`, through `AppHelper.callAfter`) with `main_menu=False`,
+  keeping pywebview's menus (its Edit menu is what Cmd+C/V need in WKWebView). On Windows the decision to hide is made
+  in a `FormClosing` handler on `window.native` (the WinForms Form), which sees `CloseReason`: only `UserClosing` hides;
+  sign-out, shutdown and Task Manager are allowed, or Windows would say the app is preventing shutdown (WinForms keeps
+  the old reason after a cancelled close, so a later Task Manager close only hides and Task Manager ends the process
+  itself). The right-click menu is on but limited to editing items (`ContextMenuRequested`); developer tools and
+  browser keys stay off. **Fallbacks:** `desktop_window.available()` (called before anything is shown) refuses any
+  renderer but `edgechromium`/`wkwebview` (without WebView2 pywebview silently uses Internet Explorer), and a load
+  watchdog opens the browser if the page has not loaded 20 s after the window exists; either way the app keeps
+  working from the tray and `GET /api/about` reports `"shell": "browser"`. Page storage persists
+  (`private_mode=False`): on Windows in `<data dir>/webview` (per user, outside the install folder the updater swaps);
+  on macOS pywebview **ignores `storage_path`** and uses WebKit's default store for the bundle id (also per user and
+  outside the bundle, but not in the data folder, so deleting the data folder does not reset the window's saved secret
+  or page settings there). Either way the window's localStorage is separate from the browser's. The self-check's
+  `"app window"` check only looks for the window's modules and files (`find_spec`, file paths); it must never load
+  .NET or AppKit's application object, because the updater runs it on the user's computer and refuses an update that
+  fails it, while the app itself falls back to the browser where the window cannot be used. Downloads (`ALLOW_DOWNLOADS`) show the system Save
+  dialog; `target="_blank"` links open in the default browser. **Second launch:** the record (`access.write_instance`)
+  carries `window_pid` when there is a window; the new launch calls `AllowSetForegroundWindow(pid)` and
+  `POST /api/window/show` (with the secret), and opens the browser only on 409/404/no answer. On macOS a reopen
+  (Dock click, second open) calls `DesktopShell.show`. What is still to try on real machines is in RELEASING.md.
 - **No console means no stdout/stderr** (they are `None`: a `print` is a silent no-op and a message
   is lost). `ui.py` is how anything is told to the user: `show_error` prints when there is a console
   and otherwise opens the OS's own dialog (a Windows message box; `osascript` on macOS with the text
@@ -104,8 +141,8 @@ gitignored.
   `tests/test_mac_app.py`); `install()` is the thin AppKit layer, wrapped in `try/except` so a failure leaves
   the app working as before (and falls back to the older `tray.register_reopen` Apple-event handler).
   The app is a normal Dock app (`LSUIElement` off). An app delegate gives it: a **Dock menu** ("Open Lit
-  Review", "Open log folder"), **reopen** (a click on the Dock icon, or opening the app a second time, opens
-  the browser: Launch Services never starts a second process of a running .app, so the Windows hand-over
+  Review", "Open log folder"), **reopen** (a click on the Dock icon, or opening the app a second time, shows
+  the app window, or opens the browser without one: Launch Services never starts a second process of a running .app, so the Windows hand-over
   does not apply; ignored for 4 s after launch), a minimal **main menu** so Cmd+Q has something to trigger,
   and **quit routing**: Cmd+Q and the Dock's Quit land in `applicationShouldTerminate:`, which always answers
   "cancel" (so AppKit never ends the process under `main()`) and asks `_confirm_quit` on a worker thread

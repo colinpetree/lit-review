@@ -8,7 +8,8 @@ What macOS needs that pystray does not give us:
   drawn from 36 pixels; the system recolours a template for light and dark bars.
 * **A Dock menu with "Open Lit Review".** The Dock's right-click menu is the system's
   own unless the app's delegate supplies items (`applicationDockMenu:`).
-* **A click on the Dock icon, or a second double-click on the app, opens the browser.**
+* **A click on the Dock icon, or a second double-click on the app, shows the app** (its
+  window, or the browser when there is none).
   Launch Services does not start a second copy of a running .app; it tells the running
   one to "reopen" (`applicationShouldHandleReopen:hasVisibleWindows:`).
 * **Cmd+Q and the Dock's Quit go through our quit path.** Otherwise they end the process
@@ -165,7 +166,12 @@ def _get_delegate_class(foundation):
 
         def applicationShouldHandleReopen_hasVisibleWindows_(self, sender, has_visible_windows):
             self.actions.reopen()
-            return False  # there is no window of ours to bring forward
+            return False  # open_app brings the window (or the browser) forward itself
+
+        def applicationSupportsSecureRestorableState_(self, sender):
+            # The app window's library (pywebview) answers this in the delegate ours replaces;
+            # without it macOS 14+ logs a warning at every start.
+            return True
 
         def applicationShouldTerminate_(self, sender):
             return self.actions.terminate_requested(_is_system_quit(foundation))
@@ -208,11 +214,17 @@ def _build_main_menu(appkit, delegate):
     return main_menu
 
 
-def install(actions):
+def install(actions, main_menu=True):
     """Make the app behave like a Mac app: Dock menu, Dock-click reopen, quit routing and
     a main menu. Returns the delegate (the caller must keep it alive: AppKit holds its
     delegate weakly) or None if it could not be installed, in which case the caller
-    falls back to the older reopen handler."""
+    falls back to the older reopen handler.
+
+    With the app window, `main_menu=False`: the window library (pywebview) has built a full
+    main menu, including the Edit menu that copy and paste in the page need, and its Quit
+    item sends `terminate:`, which lands in this delegate. This must then run after the
+    window exists, since pywebview sets its own delegate when it creates the window (it
+    would send Cmd+Q to the window's close button, which only hides it)."""
     try:
         import AppKit
         import Foundation
@@ -222,7 +234,8 @@ def install(actions):
         delegate.dock_menu = _build_dock_menu(AppKit, delegate)
         app = AppKit.NSApplication.sharedApplication()
         app.setDelegate_(delegate)
-        app.setMainMenu_(_build_main_menu(AppKit, delegate))
+        if main_menu:
+            app.setMainMenu_(_build_main_menu(AppKit, delegate))
         return delegate
     except Exception:  # noqa: BLE001 - the app works without it, it just feels less like a Mac app
         log.warning("Could not set up the Mac app menu and Dock behaviour", exc_info=True)

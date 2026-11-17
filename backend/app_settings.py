@@ -14,7 +14,9 @@ import credentials
 
 log = logging.getLogger(__name__)
 
-DEFAULTS = {"auto_apply": False}
+# tray_notice_shown: the "Lit Review is still running" notice the first time the app window is
+# closed to the tray, shown once per install (desktop_window.py).
+DEFAULTS = {"auto_apply": False, "tray_notice_shown": False}
 _lock = threading.Lock()
 
 

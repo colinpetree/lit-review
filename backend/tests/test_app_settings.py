@@ -7,15 +7,21 @@ import credentials
 
 
 def test_default_is_off_when_nothing_is_saved():
-    assert app_settings.load() == {"auto_apply": False}
+    assert app_settings.load() == {"auto_apply": False, "tray_notice_shown": False}
     assert app_settings.auto_apply() is False
 
 
 def test_round_trip():
-    assert app_settings.save(auto_apply=True) == {"auto_apply": True}
+    assert app_settings.save(auto_apply=True) == {"auto_apply": True, "tray_notice_shown": False}
     assert app_settings.auto_apply() is True
     app_settings.save(auto_apply=False)
     assert app_settings.auto_apply() is False
+
+
+def test_each_setting_is_kept_apart():
+    app_settings.save(tray_notice_shown=True)
+    app_settings.save(auto_apply=True)
+    assert app_settings.load() == {"auto_apply": True, "tray_notice_shown": True}
 
 
 @pytest.mark.parametrize("content", ["", "{not json", "[]", '"x"', '{"auto_apply": "yes"}', '{"auto_apply": 1}'])

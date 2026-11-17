@@ -153,6 +153,7 @@ class TestVersion:
             "data_dir": str(isolated_data / "data"),
             "log_dir": str(isolated_data / "data" / "logs"),
             "packaged": False,
+            "shell": "browser",
         }
 
 

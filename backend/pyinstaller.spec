@@ -58,6 +58,13 @@ hiddenimports += sorted(set(llm.PROVIDERS.values()))
 hiddenimports += collect_submodules("providers")
 hiddenimports += ["pystray._win32"] if sys.platform == "win32" else []
 hiddenimports += ["pystray._darwin"] if sys.platform == "darwin" else []
+# The app window (desktop_window.py). pywebview picks its backend at run time, by name. Its own
+# PyInstaller hook (webview/__pyinstaller) brings the WebView2 DLLs and its scripts, and
+# pyinstaller-hooks-contrib brings what pythonnet needs to load .NET.
+if sys.platform == "win32":
+    hiddenimports += ["webview.platforms.winforms", "webview.platforms.edgechromium", "clr", "clr_loader"]
+elif sys.platform == "darwin":
+    hiddenimports += ["webview.platforms.cocoa", "WebKit", "Quartz", "Security", "UniformTypeIdentifiers"]
 
 datas += collect_data_files("certifi")  # HTTPS fails once frozen without the certificate bundle
 datas += [(str(SPEC_DIR / "static"), "static")]  # the built frontend

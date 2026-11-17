@@ -34,6 +34,7 @@ import access
 import bundle
 import credentials
 import db
+import desktop_window
 import export
 import jobs
 import llm
@@ -265,6 +266,9 @@ _GATE = RequestGate()
 # How the update route ends this process: set by main() once it knows how it is being served.
 _QUIT = {"fn": None}
 
+# The app window's behaviour (desktop_window.DesktopShell) while this copy shows one, else None.
+_WINDOW = {"shell": None}
+
 # A launch that installs an update on its own starts the app as usual and waits for a page to show
 # "Installing the update" before handing over to the helper. The page tells us it has by asking for the
 # update status while it says "applying". If no page ever asks (no browser opened), the install goes ahead
@@ -307,8 +311,24 @@ def about():
             "data_dir": str(db.DB_PATH.parent),
             "log_dir": str(db.DB_PATH.parent / "logs"),
             "packaged": bundle.is_frozen(),
+            # "window" when this copy shows its own app window, "browser" when it opens the browser
+            # (from source, or where the window could not be used). For the maintainer and the
+            # smoke test: a build that fell back says so here and in the log.
+            "shell": "window" if _WINDOW["shell"] is not None and _WINDOW["shell"].has_window() else "browser",
         }
     )
+
+
+@app.post("/api/window/show")
+def show_window():
+    """A second launch asks the running copy to bring its window forward (the launch that
+    wins the lock is the only one that runs; see hand_over_to_running_copy). Needs the secret,
+    like every API call. 409 when there is no window to show, so the caller opens the browser."""
+    shell = _WINDOW["shell"]
+    if shell is None or not shell.has_window():
+        return jsonify({"error": "This copy of Lit Review has no app window."}), 409
+    shell.show()
+    return "", 204
 
 
 @app.get("/api/notices")
@@ -412,7 +432,7 @@ def _start_checking():
 
 @app.get("/api/settings/updates")
 def get_update_settings():
-    return jsonify(app_settings.load())
+    return jsonify({"auto_apply": app_settings.auto_apply()})
 
 
 @app.put("/api/settings/updates")
@@ -420,7 +440,7 @@ def put_update_settings():
     value = _json_body().get("auto_apply")
     if not isinstance(value, bool):
         raise InvalidRequest("auto_apply must be true or false.")
-    return jsonify(app_settings.save(auto_apply=value))
+    return jsonify({"auto_apply": app_settings.save(auto_apply=value)["auto_apply"]})
 
 
 @app.get("/api/settings/api-key")
@@ -2059,6 +2079,9 @@ def hand_over_to_running_copy(state_dir, wait_seconds=RUNNING_COPY_WAIT_SECONDS)
         record = access.read_instance(state_dir)
         if record and check_port(record["port"], instance=record["id"]) == "ours":
             token = access.load_or_create_token(state_dir)
+            if record.get("window_pid") and _ask_to_show_window(record, token):
+                print("Lit Review is already running. Showing its window.")
+                return 0
             print(f"Lit Review is already running. Opening it at http://localhost:{record['port']}")
             _open_browser(record["port"], token)
             return 0
@@ -2079,6 +2102,42 @@ def hand_over_to_running_copy(state_dir, wait_seconds=RUNNING_COPY_WAIT_SECONDS)
             )
             return 1
         time.sleep(0.25)
+
+
+SHOW_WINDOW_SECONDS = 5
+
+
+def _allow_foreground(pid):
+    """Windows only lets the program the person is using bring a window to the front. This
+    launch is that program (it was just double-clicked), so it hands that right to the running
+    copy, whose window would otherwise only flash in the taskbar (AllowSetForegroundWindow, the
+    documented way to pass it on)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.AllowSetForegroundWindow(int(pid))
+    except Exception:  # noqa: BLE001 - the window still shows, just maybe not in front
+        pass
+
+
+def _ask_to_show_window(record, token):
+    """Ask the running copy (found in its record) to show its app window. True if it did; False
+    if it has none, is an older version without the route, or did not answer in time, in which
+    case the caller opens the browser as before. A plain request with the secret, sent straight
+    to 127.0.0.1 (no proxy, no redirects), like the health probe."""
+    import http.client
+
+    _allow_foreground(record["window_pid"])
+    connection = http.client.HTTPConnection("127.0.0.1", record["port"], timeout=SHOW_WINDOW_SECONDS)
+    try:
+        connection.request("POST", "/api/window/show", headers={"Authorization": f"Bearer {token}", "Content-Length": "0"})
+        return connection.getresponse().status == 204
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
 
 
 def _data_folder_problem(folder, exc):
@@ -2105,6 +2164,17 @@ def _tray_wanted(argv):
     if "--no-tray" in argv or os.environ.get("LIT_REVIEW_NO_TRAY"):
         return False
     return bundle.is_frozen() or "--tray" in argv
+
+
+def _window_wanted(argv):
+    """The packaged app opens in its own window (desktop_window.py) rather than the browser.
+    From source the browser stays the default (it works with the Vite dev server and its
+    developer tools); --window turns the window on. It needs the tray (a hidden window could
+    never come back without it), so anything that turns the tray off turns it off too, which
+    keeps tests and CI on the browser path; --no-window or LIT_REVIEW_NO_WINDOW also do."""
+    if not _tray_wanted(argv) or "--no-window" in argv or os.environ.get("LIT_REVIEW_NO_WINDOW"):
+        return False
+    return bundle.is_frozen() or "--window" in argv
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2547,6 +2617,133 @@ def _serve(server, open_app, log_dir):
         )
 
 
+def _first_hide_notice(holder):
+    """The first time the window is closed to the tray (once per install, Windows only), say
+    that the app is still running and where it went. On macOS the Dock icon stays, which
+    says so already."""
+    if sys.platform != "win32" or holder.get("icon") is None:
+        return
+    if app_settings.load()["tray_notice_shown"]:
+        return
+    try:
+        app_settings.save(tray_notice_shown=True)
+    except (OSError, ValueError):
+        app.logger.warning("Could not note that the tray notice was shown", exc_info=True)
+    holder["icon"].notify(desktop_window.FIRST_HIDE_TITLE, desktop_window.FIRST_HIDE_MESSAGE)
+
+
+def _source_run_icon():
+    """The icon file for the app window when running from source, else None. From source the
+    running program is Python, so the window and taskbar button (Windows) or the Dock (macOS)
+    would show Python's icon. Windows needs the .ico that packaging/make_icons.py makes; macOS
+    takes the logo itself. A packaged app gets its icon from its own executable or bundle, and
+    passing one there would replace the macOS app icon (and its Liquid Glass version), so it is
+    never passed then."""
+    if bundle.is_frozen():
+        return None
+    packaging = bundle.resource_path("..", "packaging")
+    path = packaging / "build" / "LitReview.ico" if sys.platform == "win32" else packaging / "icon-source.png"
+    return path if path.is_file() else None
+
+
+def _set_source_run_taskbar_identity():
+    """Windows, from source: give this process its own taskbar identity, so Windows does not group
+    the window with other Python programs (and show Python's button for it). Must run before the
+    window exists. The packaged app is its own program already, so it keeps its default identity
+    (and with it any pinned taskbar button)."""
+    if bundle.is_frozen() or sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("io.github.colinpetree.lit-review.source")
+    except Exception:  # noqa: BLE001 - only the taskbar grouping differs
+        pass
+
+
+def _serve_with_window(server, webview, port, token, state_dir, log_dir, debug=False):
+    """Serve with the app's own window (desktop_window.py) and the tray icon, until Quit.
+
+    The window's event loop needs the main thread (pywebview requires it, and on macOS it is
+    AppKit's), so here the server runs on a thread, the tray icon on its own thread (Windows)
+    or inside that loop (macOS), and this thread runs the window. Quitting closes the window,
+    which ends the loop and returns here; `main()` then cleans up as it always did. If the
+    window cannot run at all, the browser is opened and the app keeps serving from the tray."""
+    open_browser = lambda: _open_browser(port, token)  # noqa: E731
+    holder = {}
+    shell = desktop_window.DesktopShell(open_browser, first_hide=lambda: _first_hide_notice(holder))
+    try:
+        icon = tray.Tray(shell.show, lambda: tray.open_folder(log_dir), _confirm_quit, open_browser=open_browser, stop_app=shell.quit)
+        # Made and shown before the window, so a failure here is reported as what it is (the tray
+        # icon, not the window) and the app is served as it was without one.
+        icon.start()
+    except Exception as exc:  # noqa: BLE001 - TrayUnavailable, or the shell refusing pystray's icon
+        # Without a tray a hidden window could never be brought back, so no window either.
+        app.logger.warning("No tray icon (%s); opening the browser instead of the app window.", exc)
+        Timer(1, open_browser).start()
+        _QUIT["fn"] = lambda: threading.Thread(target=server.shutdown, daemon=True).start()
+        server.serve_forever()
+        return
+    holder["icon"] = icon
+    shell.on_quit(icon.stop)
+    _set_source_run_taskbar_identity()
+    desktop_window.create(webview, access.launch_url(port, token), shell)
+
+    failed = []
+
+    def serve():
+        try:
+            server.serve_forever()
+        except Exception:  # noqa: BLE001 - logged here, with the traceback
+            failed.append(True)
+            app.logger.error("The server stopped:\n%s", redact(traceback.format_exc()))
+        finally:
+            shell.quit()  # no window left up for a server that is gone
+
+    _WINDOW["shell"] = shell
+    _QUIT["fn"] = shell.quit
+    thread = threading.Thread(target=serve, name="server", daemon=True)
+    thread.start()
+    try:
+        after_shown = None
+        if sys.platform == "darwin":
+
+            def after_shown():
+                from PyObjCTools import AppHelper
+
+                AppHelper.callAfter(icon.install_mac_app)  # AppKit objects belong to the main thread
+
+        desktop_window.run(
+            webview, shell, state_dir / "webview", debug=debug, after_shown=after_shown, icon=_source_run_icon()
+        )
+    except Exception as exc:  # noqa: BLE001 - a window that cannot run must not stop the app
+        app.logger.error("The app window could not run (%s); using the browser.\n%s", exc, redact(traceback.format_exc()))
+        shell.broken = True
+        if sys.platform == "darwin":
+            # The menu-bar icon lives in the window's loop, which is gone, so nothing could bring
+            # the app back or quit it: say so and stop, rather than run on unseen.
+            ui.show_error(
+                "Lit Review",
+                "Lit Review could not open its window. Start it again, and if it keeps happening "
+                f"the log has the details:\n{log_dir}",
+            )
+        else:
+            open_browser()
+            shell.quit_requested.wait()  # until Quit from the tray icon
+    finally:
+        _WINDOW["shell"] = None
+        shell.quit()  # removes the tray icon however the window went away
+        if thread.is_alive():
+            server.shutdown()
+            thread.join(10)
+    if failed:
+        ui.show_error(
+            "Lit Review",
+            "Lit Review stopped unexpectedly. Start it again, and if it keeps happening "
+            f"the log has the details:\n{log_dir}",
+        )
+
+
 def _acquire_instance_lock(state_dir, after_update):
     """The instance lock. A copy started by the update helper waits up to 30 seconds for the
     old copy to let go of it, instead of treating the old one as a running copy to hand over to."""
@@ -2621,8 +2818,16 @@ def main(argv=None):
     app.config["ACCESS_TOKEN"] = token
     ALLOWED_HOSTS.update({f"127.0.0.1:{port}", f"localhost:{port}"})
 
+    use_tray = _tray_wanted(argv)
+    webview = None  # the window library, when this copy opens in its own window
+    if _window_wanted(argv):
+        try:
+            webview = desktop_window.available()
+        except desktop_window.WindowUnavailable as exc:
+            app.logger.warning("Opening in the browser: the app window cannot be used here (%s)", exc)
+
     try:
-        access.write_instance(state_dir, port, INSTANCE_ID)
+        access.write_instance(state_dir, port, INSTANCE_ID, window_pid=os.getpid() if webview else None)
     except OSError as exc:
         server.server_close()
         logfile.teardown()
@@ -2642,8 +2847,8 @@ def main(argv=None):
     else:
         _start_checking()
         jobs.start()
-    use_tray = _tray_wanted(argv)
-    Timer(1, _open_browser, args=(port, token)).start()
+    if webview is None:
+        Timer(1, _open_browser, args=(port, token)).start()
     if due_update:
         threading.Thread(target=_apply_update_at_launch, name="update-at-launch", daemon=True).start()
     # Console only, on purpose: the private link carries the secret, so it is never
@@ -2653,7 +2858,10 @@ def main(argv=None):
     print(f"Lit Review is running at http://localhost:{port}  ({stop_hint} to stop)")
     print(f"If your browser does not open, use this private link (only you can use it):\n  {access.launch_url(port, token)}")
     try:
-        if use_tray:
+        if webview is not None:
+            debug = "--debug-window" in argv and not bundle.is_frozen()
+            _serve_with_window(server, webview, port, token, state_dir, log_dir, debug=debug)
+        elif use_tray:
             _serve(server, lambda: _open_browser(port, token), log_dir)
         else:
             _QUIT["fn"] = lambda: threading.Thread(target=server.shutdown, daemon=True).start()

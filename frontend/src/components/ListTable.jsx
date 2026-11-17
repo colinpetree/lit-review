@@ -84,12 +84,16 @@ export function DataTable({ columns, className, children }) {
   return (
     // Focusable, so the arrow keys scroll it sideways too. The bottom padding keeps the scrollbar
     // a little below the table (and its shadow unclipped) instead of against its rounded corners.
+    // `relative` makes this box the containing block of anything absolutely positioned inside the
+    // table (the menu column's screen-reader-only "Actions" header): otherwise that is placed
+    // against the whole page at the table's far right, outside this box's clipping, and stretches
+    // the page sideways to the table's full width (a page scrollbar onto empty space).
     <div
       ref={boxRef}
       {...edgeScroll}
       tabIndex={0}
       aria-label="Table, scrolls sideways"
-      className="table-scroll overflow-x-auto rounded-lg pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+      className="table-scroll relative overflow-x-auto rounded-lg pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
     >
       <table
         ref={tableRef}

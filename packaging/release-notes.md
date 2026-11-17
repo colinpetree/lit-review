@@ -19,7 +19,7 @@ These builds are not signed with a paid developer certificate, so your computer 
 - **Windows:** extract the whole zip first (right-click, **Extract All**), then open `Lit Review.exe`. If a blue "Windows protected your PC" box appears, click **More info**, then **Run anyway**.
 - **Mac:** open the **.dmg**, drag **Lit Review** onto **Applications**, eject the disk, then open Lit Review from Applications. If your Mac says it cannot be opened, open **System Settings**, then **Privacy & Security**, scroll down, and click **Open Anyway** next to Lit Review.
 
-Lit Review shows an icon near the clock (Windows) or in the menu bar (Mac). Use it to open Lit Review again or to quit.
+Lit Review opens in its own window. Closing the window keeps it running in the background, with an icon near the clock (Windows) or in the menu bar (Mac): use it to open Lit Review again or to quit.
 
 Your datasets, results, prompts and API keys are kept when you update to a newer version.
 

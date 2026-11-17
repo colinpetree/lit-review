@@ -93,10 +93,12 @@ installed versions in `%APPDATA%\fnm\node-versions` and use one of those.
 ### Packaging and release
 
 The primary user gets a double-click app (PyInstaller onedir; CI builds Windows and both Macs on a
-tag push). The build, updater, macOS, workflow and license-notice details are in the
+tag push). It opens in its own window (`desktop_window.py`: pywebview with the system's web view) and
+keeps running in the tray when the window is closed, falling back to the browser where the window
+cannot be used. The build, updater, macOS, workflow and license-notice details are in the
 **`packaging-release` skill** (`.claude/skills/packaging-release/SKILL.md`): load it before touching
-`packaging/`, `pyinstaller.spec`, `updater.py`, `tray.py`, `mac_app.py`, the release workflow or the
-notices pages. Rules that apply to ordinary backend work too:
+`packaging/`, `pyinstaller.spec`, `updater.py`, `desktop_window.py`, `tray.py`, `mac_app.py`, the release
+workflow or the notices pages. Rules that apply to ordinary backend work too:
 - A packaged app has no console: stdout/stderr are `None`, so tell the user things through `ui.py`,
   never `print`.
 - Find shipped files with `bundle.resource_path`, never `__file__`.
@@ -173,7 +175,7 @@ own storage is open too, and it was the source of a startup crash on account nam
 letters). On macOS and Linux the files come out owner-only anyway, since `mkstemp` makes them that
 way. The thing the OS does *not* separate is the network port: the operating system keeps accounts'
 files apart but not their ports, so another signed-in user could otherwise open this app on
-127.0.0.1, which is what the secret is for. The app opens the browser on
+127.0.0.1, which is what the secret is for. The app opens its window (or the browser) on
 `http://localhost:PORT/#token=...`. The part after the `#` is never sent to any server, so it is in
 no request, log, or Referer. `main.jsx` calls `captureTokenFromLocation()` first: it keeps the secret
 in that page's `localStorage` (and in memory, if storage is blocked) and strips it from the address

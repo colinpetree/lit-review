@@ -22,13 +22,17 @@ from title_match import INLINE_TAG_RE
 log = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 20
+# Abstract lookups give up sooner on a source that cannot even be reached (5 s to connect, 20 s to
+# answer): another source can usually answer instead, and a search has no such fallback.
+LOOKUP_TIMEOUT = (5, 20)
 USER_AGENT = "lit-review/0.1 (local research tool)"
 
 # Semantic Scholar's unauthenticated pool is about one request per second,
 # shared with everyone else; a saved key raises it.
 _SEMANTIC_SCHOLAR_MIN_INTERVAL = 1.1
 _last_semantic_scholar_call = 0.0
-# Lookups run side by side (see app._look_up_batch), so the spacing is kept under a lock:
+# Lookups and searches can run side by side (abstracts.lookup_batch, the lookup and paid job
+# lanes), so the spacing is kept under a lock:
 # without it every thread would measure from the same last call and send at once.
 _SEMANTIC_SCHOLAR_LOCK = threading.Lock()
 
@@ -148,16 +152,24 @@ def _why(exc):
     return "the request failed"
 
 
-def get(source_label, url, **kwargs):
+def _send(send, source_label, url, timeout, kwargs):
     headers = {"User-Agent": USER_AGENT, **kwargs.pop("headers", {})}
     try:
-        return requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT, **kwargs)
+        return send(url, headers=headers, timeout=timeout, **kwargs)
     except requests.RequestException as exc:
         # Kept in the log (without any key in the address) so the real cause can be found.
         log.warning("%s request failed (%s): %s", source_label, type(exc).__name__, redact(exc))
         # A timeout is its own kind, so a caller can choose not to ask again.
         kind = SourceTimeout if isinstance(exc, requests.exceptions.Timeout) else SourceUnavailable
         raise kind(f"Could not reach {source_label} ({_why(exc)}).") from exc
+
+
+def get(source_label, url, timeout=REQUEST_TIMEOUT, **kwargs):
+    return _send(requests.get, source_label, url, timeout, kwargs)
+
+
+def post(source_label, url, timeout=REQUEST_TIMEOUT, **kwargs):
+    return _send(requests.post, source_label, url, timeout, kwargs)
 
 
 def json_of(response, source_label):
@@ -211,17 +223,20 @@ def _semanticscholar_pace():
         _last_semantic_scholar_call = time.monotonic()
 
 
-def _semanticscholar_request(url, params, key):
-    """One Semantic Scholar GET, with `key` (or none), spaced out to its rate
-    limit (see _semanticscholar_pace) and retried once on a 429. Raises SourceError
-    if it stays rate limited."""
+def _semanticscholar_request(url, params, key, body=None, timeout=REQUEST_TIMEOUT):
+    """One Semantic Scholar request (a GET, or a POST of the JSON `body`), with `key` (or
+    none), spaced out to its rate limit (see _semanticscholar_pace) and retried once on a
+    429. Raises SourceError if it stays rate limited."""
     headers = {}
     if key:
         headers["x-api-key"] = key
 
     for attempt in range(2):
         _semanticscholar_pace()
-        response = get("Semantic Scholar", url, params=params, headers=headers)
+        if body is None:
+            response = get("Semantic Scholar", url, params=params, headers=headers, timeout=timeout)
+        else:
+            response = post("Semantic Scholar", url, params=params, json=body, headers=headers, timeout=timeout)
         if response.status_code != 429:
             return response
         if attempt == 0:
@@ -234,19 +249,20 @@ def _semanticscholar_request(url, params, key):
     )
 
 
-def semanticscholar_get(url, params, keyless_fallback=False):
-    """GET a Semantic Scholar Graph API URL with the saved key, if any.
-    Returns the response (the caller handles other statuses); raises
-    SourceError if it stays rate limited or the saved key is rejected.
+def semanticscholar_get(url, params, keyless_fallback=False, body=None, timeout=REQUEST_TIMEOUT):
+    """GET a Semantic Scholar Graph API URL with the saved key, if any (or POST
+    the JSON `body` to it, for the batch endpoint). Returns the response (the
+    caller handles other statuses); raises SourceError if it stays rate limited
+    or the saved key is rejected.
 
     A rejected key (they're revoked after 60 days without use) is retried
     without it when keyless_fallback is set, which suits lookups that work,
     just more slowly, with no key; otherwise it raises, with a message saying
     how to get a new one."""
     key = credentials.get_key("semanticscholar")
-    response = _semanticscholar_request(url, params, key)
+    response = _semanticscholar_request(url, params, key, body, timeout)
     if key and response.status_code in (401, 403):
         if not keyless_fallback:
             raise SourceError(SEMANTIC_SCHOLAR_KEY_REJECTED)
-        response = _semanticscholar_request(url, params, None)
+        response = _semanticscholar_request(url, params, None, body, timeout)
     return response

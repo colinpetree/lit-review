@@ -88,7 +88,7 @@ export default function GradingPromptsPage() {
         // Wait for the list to load (or fail) so a new prompt can't be lost to
         // the initial fetch replacing the list.
         disabled={prompts === null && !error}
-        className="mb-6 inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        className="mb-6 inline-flex items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:border-blue-700 hover:bg-blue-700 disabled:opacity-50"
       >
         <Plus size={16} />
         New Prompt

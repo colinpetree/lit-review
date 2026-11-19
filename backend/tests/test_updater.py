@@ -547,7 +547,6 @@ class TestCheckOnce:
 
     def test_a_newer_release_replaces_a_staged_one(self, pipeline, monkeypatch):
         updater.check_once()
-        old_dir = Path(updater.load_state()["staged"]["dir"])
         monkeypatch.setattr(updater, "fetch_manifest", lambda running=None: (manifest("0.3.0"), b"raw"))
         pipeline.calls.clear()
         updater.check_once()

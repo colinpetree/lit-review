@@ -388,7 +388,9 @@ class TestMacDiskImage:
     """Guards for the Mac download people use (a disk image) and the zip the updater uses.
     The steps themselves only run on a Mac runner; these keep the workflow from losing them."""
 
-    WORKFLOW = (bundle.resource_path("..") / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    WORKFLOW = (bundle.resource_path("..") / ".github" / "workflows" / "build-test.yml").read_text(encoding="utf-8")
+    CI = (bundle.resource_path("..") / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    PUBLISH = (bundle.resource_path("..") / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
     def step(self, name):
         start = self.WORKFLOW.index(f"- name: {name}")
@@ -431,18 +433,23 @@ class TestMacDiskImage:
         assert 'test ! -e "$LIT_REVIEW_DATA_DIR/instance.lock"' in step
 
     def test_both_files_are_uploaded_and_released(self):
-        assert "path: out/*\n" in self.WORKFLOW  # the build uploads everything it made
+        assert "path: out/*\n" in self.WORKFLOW  # each leg, and the collect job, upload everything made
         assert "path: out/*.zip" not in self.WORKFLOW
-        release = self.WORKFLOW[self.WORKFLOW.index("\n  release:") :]
-        assert "sha256sum *.zip *.dmg" in release
-        assert "out/*.zip" in release and "out/*.dmg" in release
+        collect = self.WORKFLOW[self.WORKFLOW.index("\n  collect:") :]
+        assert "sha256sum *.zip *.dmg" in collect
+        # The Candidate draft (CI), a test pre-release (CI) and the release draft (Publish) all carry both.
+        draft = self.CI[self.CI.index("\n  draft:") : self.CI.index("\n  testbuild:")]
+        test = self.CI[self.CI.index("\n  testbuild:") :]
+        publish = self.PUBLISH[self.PUBLISH.index("\n  publish:") : self.PUBLISH.index("\n  sign:")]
+        for job in (draft, test, publish):
+            assert "out/*.zip out/*.dmg" in job
 
-    def test_the_release_job_stops_unless_all_five_downloads_are_there(self):
-        release = self.WORKFLOW[self.WORKFLOW.index("\n  release:") :]
-        check = release[release.index("Check the downloads are all here") : release.index("- name: Checksums")]
+    def test_the_collect_job_stops_unless_all_five_downloads_are_there(self):
+        collect = self.WORKFLOW[self.WORKFLOW.index("\n  collect:") :]
+        check = collect[collect.index("Check the downloads are all here") : collect.index("- name: Checksums")]
         assert '"${#zips[@]}" -ne 3' in check and '"${#dmgs[@]}" -ne 2' in check
         assert "exit 1" in check
-        assert release.index("Check the downloads are all here") < release.index("softprops/action-gh-release")
+        assert collect.index("Check the downloads are all here") < collect.index("actions/upload-artifact")
 
     def test_the_mac_zips_stay_for_the_updater(self):
         zip_step = self.step("Zip it")

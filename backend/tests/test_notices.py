@@ -91,7 +91,7 @@ class TestWhatShips:
         assert "raise SystemExit" in self.SPEC
 
     def test_the_zip_holds_only_the_app(self):
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "build-test.yml").read_text(encoding="utf-8")
         assert "cp LICENSE" not in workflow
         assert "staging" not in workflow
         assert "--keepParent" in workflow

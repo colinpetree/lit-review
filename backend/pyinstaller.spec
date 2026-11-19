@@ -132,11 +132,17 @@ coll = COLLECT(exe, a.binaries, a.datas, upx=False, name=APP_NAME)
 # also copies Assets.car into Contents/Resources after this build and before signing.
 ASSETS_CAR = ICON_DIR / "Assets.car"
 
+# macOS wants plain numbers in the bundle's version keys, so a CI or test build
+# (0.1.3-ci.<sha>, 0.1.3-test.<branch>.<sha>) or a source build (0.0.0-dev) puts only its
+# X.Y.Z part there; the full label stays in version.py, which the app itself reports.
+BUNDLE_VERSION = __version__.split("-")[0]
+
 if sys.platform == "darwin":
     mac_info_plist = {
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": APP_NAME,
-        "CFBundleShortVersionString": __version__,
+        "CFBundleShortVersionString": BUNDLE_VERSION,
+        "CFBundleVersion": BUNDLE_VERSION,
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
         # A normal app with a Dock icon (Cmd+Q and the Dock menu quit it). Menu-bar only
@@ -149,6 +155,6 @@ if sys.platform == "darwin":
         name=f"{APP_NAME}.app",
         icon=str(exe_icon) if exe_icon and exe_icon.is_file() else None,
         bundle_identifier=BUNDLE_ID,
-        version=__version__,
+        version=BUNDLE_VERSION,
         info_plist=mac_info_plist,
     )

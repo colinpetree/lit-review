@@ -580,9 +580,6 @@ class TestADatasetIsSavedAsOneUnit:
 class TestRetrievalIsKeptWithTheDataset:
     def test_each_source_and_query_is_recorded(self, client, monkeypatch):
         def search_all(query, **kwargs):
-            return [work(i) for i in range(3)], (50 if query == "wide" else 3)
-
-        def search_all(query, **kwargs):
             if query == "wide":
                 return [work(i) for i in range(kwargs["max_results"])], 400
             return [work(i) for i in range(3)], 3

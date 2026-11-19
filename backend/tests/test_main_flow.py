@@ -14,7 +14,7 @@ import access
 import app as app_module
 import db
 import single_instance
-from app import PortTaken, SingleOwnerServer
+from app import SingleOwnerServer
 from procutil import free_port, free_port_run
 from test_startup import TestCheckPort
 

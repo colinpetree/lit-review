@@ -186,20 +186,188 @@ class TestSignRelease:
         base64.b64decode(sign_release.sign(pem, b"pw", b"x"), validate=True)
 
 
-class TestWorkflow:
-    WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+class TestSignInCI:
+    """sign_release.py as the Publish release workflow's `sign` job runs it (--ci --publish)."""
 
-    def test_the_manifest_is_made_and_attached_to_the_draft(self):
-        assert "packaging/make_manifest.py" in self.WORKFLOW
-        assert "out/update-manifest.json" in self.WORKFLOW
+    @pytest.fixture
+    def draft(self, out, monkeypatch):
+        """A fake draft release: `gh release download` copies `out` (zips, manifest, sums) into the
+        work folder; every gh call is recorded."""
+        raw = make_manifest.build(out, VERSION)
+        (out / "update-manifest.json").write_bytes(raw)
+        sums = "".join(f"{make_manifest.sha256_of(out / name)}  {name}\n" for name in NAMES)
+        (out / "SHA256SUMS.txt").write_text(sums, encoding="utf-8")
+        pem, public = make_update_key.new_pair(b"pw")
+        monkeypatch.setattr(um, "PUBLIC_KEYS", [public])
+        calls = []
+
+        def fake_gh(*args):
+            calls.append(args)
+            if args[:2] == ("release", "download"):
+                work = Path(args[args.index("--dir") + 1])
+                for f in out.iterdir():
+                    if f.suffix in (".zip", ".json", ".txt"):
+                        (work / f.name).write_bytes(f.read_bytes())
+
+        monkeypatch.setattr(sign_release, "gh", fake_gh)
+        monkeypatch.setattr(sign_release, "VERIFY_WAIT_SECONDS", 0)
+        return out, pem, calls
+
+    def test_it_signs_publishes_and_verifies(self, draft, monkeypatch):
+        out, pem, calls = draft
+        verified = []
+        monkeypatch.setattr(sign_release, "verify_published", lambda tag: verified.append(tag))
+        sign_release.sign_release(f"v{VERSION}", pem=pem, passphrase=b"pw", publish=True)
+        upload = next(c for c in calls if c[:2] == ("release", "upload"))
+        assert upload[2] == f"v{VERSION}"
+        assert ("release", "edit", f"v{VERSION}", "--repo", sign_release.REPO, "--draft=false", "--latest") in calls
+        assert calls.index(upload) < calls.index(next(c for c in calls if c[:2] == ("release", "edit")))  # signed, then published
+        assert verified == [f"v{VERSION}"]
+
+    def test_a_zip_that_differs_from_the_builds_sums_is_never_signed(self, draft):
+        out, pem, calls = draft
+        sums = (out / "SHA256SUMS.txt").read_text(encoding="utf-8")
+        (out / "SHA256SUMS.txt").write_text(sums.replace(sums[:8], "00000000", 1), encoding="utf-8")
+        with pytest.raises(SystemExit, match="SHA256SUMS"):
+            sign_release.sign_release(f"v{VERSION}", pem=pem, passphrase=b"pw", publish=True)
+        assert not any(c[:2] in (("release", "upload"), ("release", "edit")) for c in calls)
+
+    def test_a_draft_without_sums_is_never_signed(self, draft):
+        out, pem, calls = draft
+        (out / "SHA256SUMS.txt").unlink()
+        with pytest.raises(SystemExit, match="no SHA256SUMS"):
+            sign_release.sign_release(f"v{VERSION}", pem=pem, passphrase=b"pw", publish=True)
+        assert not any(c[:2] == ("release", "upload") for c in calls)
+
+    def test_a_key_the_app_does_not_trust_is_never_uploaded_or_published(self, draft):
+        _, _, calls = draft
+        other, _ = make_update_key.new_pair(b"pw")
+        with pytest.raises(SystemExit, match="not one of the public keys"):
+            sign_release.sign_release(f"v{VERSION}", pem=other, passphrase=b"pw", publish=True)
+        assert not any(c[:2] in (("release", "upload"), ("release", "edit")) for c in calls)
+
+    def test_a_published_release_that_does_not_verify_fails_loudly(self, draft, monkeypatch):
+        _, pem, _ = draft
+
+        def broken(tag):
+            raise SystemExit("does NOT verify")
+
+        monkeypatch.setattr(sign_release, "verify_published", broken)
+        with pytest.raises(SystemExit, match="is PUBLISHED but does not verify"):
+            sign_release.sign_release(f"v{VERSION}", pem=pem, passphrase=b"pw", publish=True)
+
+    def test_empty_secrets_stop_plainly(self):
+        for env in ({}, {"UPDATE_SIGNING_KEY": "x"}, {"UPDATE_SIGNING_KEY": "  ", "UPDATE_SIGNING_PASSPHRASE": "p"}):
+            with pytest.raises(SystemExit, match="release` environment"):
+                sign_release.key_from_environment(env)
+        assert sign_release.key_from_environment({"UPDATE_SIGNING_KEY": "k", "UPDATE_SIGNING_PASSPHRASE": "p"}) == (b"k", b"p")
+
+
+def workflow(name):
+    return (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+
+
+def job(text, name):
+    """One job's text from a workflow file (up to the next top-level job)."""
+    start = text.index(f"\n  {name}:")
+    rest = text[start + 1 :]
+    following = [rest.find(f"\n  {line.split(':')[0].strip()}:") for line in rest.splitlines()[1:] if line.startswith("  ") and not line.startswith("   ") and line.strip().endswith(":")]
+    following = [i for i in following if i > 0]
+    return rest[: min(following)] if following else rest
+
+
+class TestWorkflow:
+    BUILD = workflow("build-test.yml")
+    CI = workflow("ci.yml")
+    PUBLISH = workflow("release.yml")
+
+    def test_the_manifest_is_made_and_attached_to_the_release_draft(self):
+        publish = job(self.PUBLISH, "publish")
+        assert "packaging/make_manifest.py" in publish
+        assert "out/update-manifest.json" in publish
+        assert "update-manifest" not in job(self.CI, "draft")  # a Candidate never carries one
 
     def test_the_five_download_guard_still_counts_only_zips_and_dmgs(self):
-        assert 'zips=(*.zip)' in self.WORKFLOW and 'dmgs=(*.dmg)' in self.WORKFLOW
+        assert 'zips=(*.zip)' in self.BUILD and 'dmgs=(*.dmg)' in self.BUILD
 
-    def test_a_tagged_build_without_public_keys_stops_before_the_app_is_built(self):
-        guard = self.WORKFLOW.index("update_manifest.PUBLIC_KEYS")
-        assert guard < self.WORKFLOW.index("pyinstaller backend/pyinstaller.spec")
-        assert "refs/tags/" in self.WORKFLOW[guard - 300:guard]
+    def test_a_release_build_without_public_keys_stops_before_the_app_is_built(self):
+        guard = self.BUILD.index("update_manifest.PUBLIC_KEYS")
+        assert guard < self.BUILD.index("pyinstaller backend/pyinstaller.spec")
+        assert r"^[0-9]+\.[0-9]+\.[0-9]+$" in self.BUILD[guard - 300:guard]  # every X.Y.Z build is one that may ship
+
+    def test_only_the_sign_job_can_read_the_key_and_it_waits_for_approval(self):
+        assert self.PUBLISH.count("secrets.UPDATE_SIGNING_KEY") == 1
+        sign = job(self.PUBLISH, "sign")
+        assert "environment: release" in sign and "secrets.UPDATE_SIGNING_KEY" in sign
+        assert "--require-hashes" in sign and "packaging/requirements-sign.txt" in sign
+        assert "npm" not in sign and "pip install -r backend" not in sign
+        for name in ("ci.yml", "build-test.yml", "codeql.yml", "dependency-audit.yml"):
+            assert "secrets." not in workflow(name), name
+
+    def test_the_signing_requirements_are_hash_pinned(self):
+        lines = (ROOT / "packaging" / "requirements-sign.txt").read_text(encoding="utf-8").splitlines()
+        pins = [line for line in lines if line and not line.startswith((" ", "#"))]
+        assert pins and all("==" in line for line in pins)
+        assert any(line.startswith("cryptography==") for line in pins)
+        assert sum("--hash=sha256:" in line for line in lines) >= len(pins)
+
+    def test_the_approval_job_is_outside_the_publish_queue(self):
+        # A run waiting days for Approve must not hold up the next Publish or a test build.
+        assert "concurrency" not in job(self.PUBLISH, "sign")
+        assert "group: publish" in job(self.PUBLISH, "plan") and "group: publish" in job(self.PUBLISH, "publish")
+        assert "group: publish" not in self.CI
+
+    def test_nothing_a_person_types_reaches_a_shell_directly(self):
+        # Branch names and the Publish inputs go through env:, never ${{ }} inside run: (script injection).
+        for name in ("ci.yml", "build-test.yml", "release.yml", "codeql.yml", "dependency-audit.yml"):
+            text = workflow(name)
+            for block in text.split("run: |")[1:]:
+                body = []
+                for line in block.splitlines()[1:]:
+                    if line.strip() and not line.startswith(" " * 10):
+                        break
+                    body.append(line)
+                script = "\n".join(body)
+                for risky in ("inputs.", "github.head_ref", "github.event.", "github.ref_name"):
+                    assert "${{ " + risky not in script, f"{name}: {risky} used inside a run block"
+
+    def test_main_builds_are_the_next_patch_and_rehearse_the_update(self):
+        prepare = job(self.CI, "prepare")
+        assert 'version="$major.$minor.$((patch + 1))"' in prepare
+        assert "rehearse_update: ${{ needs.prepare.outputs.release == 'true' }}" in self.CI
+        assert "packaging/update_rehearsal.py" in self.BUILD and "packaging/upgrade_test.py" in self.BUILD
+
+    def test_jobs_after_a_sometimes_skipped_build_say_when_they_run(self):
+        # For a patch `build` is skipped. GitHub's default condition skips a job when any job
+        # earlier in its chain was skipped, even if the job just before it ran (actions/runner#491),
+        # so every job downstream of `build` needs an explicit `if:` or it never runs on a patch.
+        for name in ("publish", "sign", "release-claim"):
+            body = job(self.PUBLISH, name)
+            condition = next((line for line in body.splitlines() if line.strip().startswith("if:")), "")
+            assert "always()" in condition or "!cancelled()" in condition, f"{name} has no explicit run condition"
+        sign = next(line for line in job(self.PUBLISH, "sign").splitlines() if line.strip().startswith("if:"))
+        assert "needs.publish.result == 'success'" in sign
+
+    def test_the_build_only_ever_checks_out_the_runs_own_commit(self):
+        # A commit passed in to the build (with its caches) is what CodeQL calls cache poisoning:
+        # the build takes no `ref`, and a minor/major Publish rebuilds the commit it was started on.
+        assert "inputs.ref" not in self.BUILD and "\n      ref:" not in self.BUILD
+        assert "ref:" not in job(self.PUBLISH, "build")
+        assert '[ "$sha" = "$GITHUB_SHA" ]' in job(self.PUBLISH, "plan")
+
+    def test_a_patch_publish_never_rebuilds(self):
+        assert "if: needs.plan.outputs.rebuild == 'true'" in job(self.PUBLISH, "build")
+        assert "rebuild=false" in job(self.PUBLISH, "plan")
+
+    def test_the_draft_never_waits_on_a_pull_request_only_job(self):
+        needs = next(line for line in job(self.CI, "draft").splitlines() if "needs:" in line)
+        assert "dependency-review" not in needs
+
+    def test_versions_come_from_published_releases_not_tags(self):
+        script = (ROOT / ".github" / "scripts" / "previous-release.sh").read_text(encoding="utf-8")
+        assert "--exclude-drafts --exclude-pre-releases" in script and "merge-base --is-ancestor" in script
+        assert ".github/scripts/previous-release.sh" in self.CI and ".github/scripts/previous-release.sh" in self.PUBLISH
+        assert "tags:" not in self.PUBLISH.split("\njobs:")[0]  # a pushed tag starts nothing
 
     def test_keys_are_ignored_by_git(self):
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")

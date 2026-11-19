@@ -30,6 +30,9 @@ logs/
 # Local-only tool settings and caches
 .claude/settings.local.json
 .pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 **/__pycache__/
 
 # Release signing keys belong outside the repository; this is only a safety net.

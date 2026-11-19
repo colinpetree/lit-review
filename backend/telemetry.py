@@ -107,8 +107,10 @@ def send_if_due(today=None, post=None):
     if not url:
         return []
     running = version.__version__
-    if running.endswith("-dev") and not um.testing_enabled():
-        return []  # a build made by hand is the maintainer's, not a user's
+    if um.parse_version(running) is None and not um.testing_enabled():
+        # Not a release (0.0.0-dev from source, a CI build X.Y.Z-ci.<sha>, a branch test build
+        # X.Y.Z-test.<branch>.<sha>): the maintainer's own copy, not a user's.
+        return []
     state = _load()
     if state.get("disabled"):
         return []

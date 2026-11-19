@@ -1,0 +1,56 @@
+name: CodeQL
+
+# Static security analysis of the backend (Python), the frontend and the
+# telemetry Worker (JavaScript) and the workflow files themselves (actions:
+# for example a branch name or a typed input reaching a shell command). Runs
+# on every pull request, every push to main, and weekly so new CodeQL queries
+# also check code that has not changed. Findings show under Security > Code
+# scanning, and on the pull request that adds them.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "37 6 * * 1"   # 06:37 UTC every Monday
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # upload the results
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No language here needs a build: CodeQL reads the source directly.
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+          config: |
+            paths-ignore:
+              - backend/.venv
+              - backend/static
+              - frontend/node_modules
+              - packaging/build
+              - telemetry-worker/node_modules
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}

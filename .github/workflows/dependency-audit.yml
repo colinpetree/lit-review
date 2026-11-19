@@ -1,0 +1,126 @@
+name: Dependency audit
+
+# Monthly security check of Lit Review's packages (copied from personal-website).
+# Checks:
+#   - the exact Python packages frozen into the latest release (the
+#     requirements-<platform>.txt files on that release), i.e. what people run;
+#   - a fresh resolve of backend/requirements.txt and the release tools in
+#     packaging/, i.e. what the next release would ship (the packages they pull
+#     in are not pinned, so they can move on their own);
+#   - the frontend's package-lock.json (npm audit).
+#
+# The report is on the run's summary page. If anything has a known
+# vulnerability, or an audit tool fails to run, the run fails and GitHub
+# emails you. Run it any time: Actions -> Dependency audit -> Run workflow.
+# Dependabot alerts (a repository setting) cover the time between runs.
+
+on:
+  schedule:
+    - cron: "23 14 1 * *"   # 14:23 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+
+      - name: Install pip-audit
+        run: python -m pip install --quiet --upgrade pip pip-audit
+
+      # `set +e` throughout: one failing check must not skip the others. Each
+      # records its result, and the last step fails the run if any found
+      # something or could not run.
+      - name: "Python: packages in the latest release (what people run)"
+        id: shipped
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null)"
+          if [ -z "$tag" ] || ! gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+               --pattern 'requirements-*.txt' --dir "$RUNNER_TEMP/shipped" 2>/dev/null; then
+            echo "### Python, latest release" >> "$GITHUB_STEP_SUMMARY"
+            echo "No release with package lists yet; skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "result=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          rc=0
+          for f in "$RUNNER_TEMP"/shipped/requirements-*.txt; do
+            pip-audit -r "$f" --no-deps --disable-pip > out.txt 2>&1 || rc=1
+            {
+              echo "### Python, latest release ($tag), $(basename "$f")"
+              echo '```'
+              cat out.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            cat out.txt
+          done
+          echo "result=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: "Python: fresh resolve (what the next release would ship)"
+        id: fresh
+        run: |
+          set +e
+          rc=0
+          for f in backend/requirements.txt backend/requirements-build.txt packaging/requirements-*.txt; do
+            [ -f "$f" ] || continue
+            pip-audit -r "$f" > out.txt 2>&1 || rc=1
+            {
+              echo "### Python, next release: $f"
+              echo '```'
+              cat out.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            cat out.txt
+          done
+          echo "result=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: "npm: frontend/package-lock.json"
+        id: npm
+        working-directory: frontend
+        run: |
+          set +e
+          npm audit > out.txt 2>&1
+          rc=$?
+          {
+            echo "### npm"
+            echo '```'
+            cat out.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat out.txt
+          echo "result=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Result
+        env:
+          SHIPPED: ${{ steps.shipped.outputs.result }}
+          FRESH: ${{ steps.fresh.outputs.result }}
+          NPM: ${{ steps.npm.outputs.result }}
+        run: |
+          # pip-audit and npm audit both exit non-zero when they find a
+          # vulnerability AND when they cannot run; the summary says which.
+          failed=0
+          for pair in "Python (latest release):$SHIPPED" "Python (next release):$FRESH" "npm:$NPM"; do
+            name="${pair%:*}"; rc="${pair##*:}"
+            case "$rc" in
+              0|skipped) echo "$name: OK" ;;
+              *) echo "::error::$name: vulnerabilities found or the audit could not run. See the run summary."; failed=1 ;;
+            esac
+          done
+          exit "$failed"

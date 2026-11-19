@@ -1,0 +1,88 @@
+# Opens monthly pull requests for outdated dependencies. Each one runs the
+# full CI (lint, unit tests, the three builds, browser tests) before it can be
+# merged, and nothing merges by itself. Several merged in a row ship together
+# in the next release (every build on main is the next patch version).
+#
+# cooldown: a new version is only proposed once it has been out 7 days, so a
+# freshly hijacked release is usually pulled before it reaches a PR. Security
+# updates (Settings, Advanced Security, "Dependabot security updates") are
+# not delayed by it.
+#
+# Packages that must move together, or need a hand check, get their own PR:
+#   - ai-sdks: anthropic, openai, google-genai. CI cannot make a real AI call,
+#     so make one real scoring call with your own key before releasing a bump
+#     (CLAUDE.md, Commands).
+#   - packaging: pyinstaller, pywebview, pystray, pythonnet. They change what
+#     goes into the app and how its window and tray work; the build legs' smoke
+#     test checks them, but look at the app on a real machine too.
+#   - react / react-dom.
+# Ignored on purpose:
+#   - cryptography: requirements.txt pins it twice with platform markers
+#     (48.0.1 on Intel Macs, which have no newer wheels). A bump would move both
+#     lines and break the Intel build, so it is updated by hand, in both places it
+#     is pinned: backend/requirements.txt and packaging/requirements-sign.txt (the
+#     signing job's copy, with its cffi and pycparser).
+#   - tailwindcss majors (the app uses Tailwind v3 on purpose) and
+#     react-router-dom majors (a migration, not an update).
+version: 2
+updates:
+  # Keeps the commit-SHA pins on GitHub Actions current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      ai-sdks:
+        patterns: ["anthropic", "openai", "google-genai"]
+      packaging:
+        patterns: ["pyinstaller", "pywebview", "pystray", "pythonnet", "clr-loader", "clr_loader"]
+      python-minor-and-patch:
+        update-types: [minor, patch]
+        exclude-patterns: ["anthropic", "openai", "google-genai", "pyinstaller", "pywebview", "pystray", "pythonnet", "clr-loader", "clr_loader"]
+    ignore:
+      - dependency-name: cryptography
+
+  # packaging/requirements-*.txt: tools the release workflows install
+  # (dmgbuild for the Mac disk images, cryptography for the signing job).
+  - package-ecosystem: pip
+    directory: /packaging
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      release-tools:
+        patterns: ["*"]
+    # The signing job's cryptography stays at the version backend/requirements.txt uses, and
+    # moves with it, by hand (see the note above and packaging/requirements-sign.txt).
+    ignore:
+      - dependency-name: cryptography
+      - dependency-name: cffi
+      - dependency-name: pycparser
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+        exclude-patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+    ignore:
+      - dependency-name: tailwindcss
+        update-types: ["version-update:semver-major"]
+      - dependency-name: react-router-dom
+        update-types: ["version-update:semver-major"]

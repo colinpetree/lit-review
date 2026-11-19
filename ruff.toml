@@ -1,0 +1,12 @@
+# Python lint for backend/ and packaging/ (CI's lint job runs `ruff check .` from
+# the repository root). Pyflakes and pycodestyle errors only, to start: unused or
+# undefined names, redefinitions, syntax-level problems. Line length is not checked.
+# Files that put a folder on sys.path before importing mark those imports
+# `# noqa: E402` where they are.
+extend-include = ["backend/pyinstaller.spec"]
+# Names PyInstaller defines when it runs a .spec file.
+builtins = ["SPECPATH", "Analysis", "PYZ", "EXE", "COLLECT", "BUNDLE"]
+
+[lint]
+select = ["E", "F"]
+ignore = ["E501"]

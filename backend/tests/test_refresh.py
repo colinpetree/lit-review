@@ -314,7 +314,6 @@ class TestKnownInDataset:
         asked += [work(950, title="same  title", year=2025), work(951, title="Same Title", year=2024)]
         asked += [work(901, title="", year=None), work(902, title="", year=None)]
         known = db.known_in_dataset(dataset_id, asked)
-        keys = {openalex.dedupe_key(r) for r in asked}
         expected = {openalex.dedupe_key(r) for r in asked if r["id"] in {f"W{i}" for i in range(700)} or r["id"] in ("W950", "W901")}
         assert known == expected and len(known) > 230
 

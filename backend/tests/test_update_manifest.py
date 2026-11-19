@@ -116,10 +116,14 @@ class TestLoad:
         with pytest.raises(um.ManifestError, match="not newer"):
             um.load(raw, sign(key, raw), running)
 
-    def test_a_development_build_is_never_offered_anything(self, key):
+    # From source, a pull request's CI build, or a branch's test pre-release (ci.yml): none of
+    # these is a release, so the updater never offers, downloads or stages anything for it.
+    @pytest.mark.parametrize("running", ["0.0.0-dev", "0.1.3-ci.abc1234", "0.1.3-test.ci-cd-overhaul.abc1234"])
+    def test_a_build_that_is_not_a_release_is_never_offered_anything(self, key, running):
         raw = manifest_bytes()
         with pytest.raises(um.ManifestError, match="development"):
-            um.load(raw, sign(key, raw), "0.0.0-dev")
+            um.load(raw, sign(key, raw), running)
+        assert not um.is_required(um.parse(raw), running)
 
     def test_tag_must_match_version(self, key):
         raw = manifest_bytes(tag="v0.1.9")

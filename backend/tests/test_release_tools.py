@@ -355,6 +355,15 @@ class TestWorkflow:
         assert "ref:" not in job(self.PUBLISH, "build")
         assert '[ "$sha" = "$GITHUB_SHA" ]' in job(self.PUBLISH, "plan")
 
+    def test_a_required_update_is_a_checkbox_whose_floor_is_the_version_published(self):
+        # No version to type: ticking it makes every copy older than this release take it.
+        head = self.PUBLISH.split("\njobs:")[0]
+        assert "required_update:" in head and "type: boolean" in head[head.index("required_update:"):]
+        assert "min_version:" not in head
+        publish = job(self.PUBLISH, "publish")
+        assert "REQUIRED: ${{ inputs.required_update }}" in publish
+        assert 'if [ "$REQUIRED" = "true" ]; then\n            args+=(--min-version "$VERSION")' in publish
+
     def test_a_patch_publish_never_rebuilds(self):
         assert "if: needs.plan.outputs.rebuild == 'true'" in job(self.PUBLISH, "build")
         assert "rebuild=false" in job(self.PUBLISH, "plan")

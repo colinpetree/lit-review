@@ -99,9 +99,9 @@ Packaged copies send anonymous counts (`backend/telemetry.py`) to the Worker in 
 
 ## A release that old versions can no longer survive
 
-If a retired AI model, or something like it, means old versions stop working, raise the floor: run Publish release with **min_version** set (for example `0.1.2`) and a short **notice** ("The AI model Lit Review used was retired."). From a terminal: `gh workflow run release.yml -f bump=patch -f min_version=0.1.2 -f notice="..."`. (By hand: `sign_release.py ... --min-version 0.1.2 --notice "..."`.)
+If a retired AI model, or something like it, means old versions stop working, make the release a required one: run Publish release with **required_update** ticked and a short **notice** saying why ("The AI model Lit Review used was retired."). From a terminal: `gh workflow run release.yml -f bump=patch -f required_update=true -f notice="..."`. The floor (`min_version` in the signed manifest) is then the version being published, so every older copy must take it. (By hand, which can also set an older floor: `sign_release.py ... --min-version 0.1.2 --notice "..."`.)
 
-Every copy older than `min_version` then treats the update as required: it downloads in the background, installs at the next start whatever the "install automatically" setting says, and shows the ordinary Update ready window when it finishes ("There is an update that is ready to install. This update will be applied automatically on the next start."). Nothing in the app calls it required, and it never blocks the app, so people can still reach their data. **Rehearse the update path first** (CI's update rehearsal does this from the previous release; try older ones by hand): a floor raised on a release whose install fails leaves everyone on the old version, with a banner explaining that the update could not be installed and a link to download it.
+Every copy older than the floor then treats the update as required: it downloads in the background, installs at the next start whatever the "install automatically" setting says, and shows the ordinary Update ready window when it finishes ("There is an update that is ready to install. This update will be applied automatically on the next start."). Nothing in the app calls it required, and it never blocks the app, so people can still reach their data. **Rehearse the update path first** (CI's update rehearsal does this from the previous release; try older ones by hand): a floor raised on a release whose install fails leaves everyone on the old version, with a banner explaining that the update could not be installed and a link to download it.
 
 ## What the updater needs from a release
 
@@ -123,7 +123,7 @@ Every copy older than `min_version` then treats the update as required: it downl
 
 - Windows: that a downloaded-by-the-app update raises no SmartScreen prompt, and whether **Smart App Control** (Windows Security, App and browser control) blocks the unsigned build. If it is on for a user, signing the Windows build is required regardless of the updater (for example Azure Trusted Signing).
 - Both: the browser-based install at launch (automatic installing on): the app opens as usual, the page shows "Installing the update", a new window opens with "Welcome to Lit Review X", and nothing at all appears if no browser opens (the install still happens after about 20 s). The old tab should turn into "Lit Review was updated" with an OK button within a few seconds (same port), or become closable after a minute (different port).
-- Both: a forced `min_version` run and a deliberately broken update to see the rollback message.
+- Both: a required update (Publish release with required_update ticked) and a deliberately broken update to see the rollback message.
 - The app window (`backend/desktop_window.py`), on the packaged build. **Windows** (already checked from source on
   Windows 10: the window opens signed in, X hides it and the process keeps running, the first-hide notice is saved
   once, a second launch and `/api/window/show` bring it back in front, a minimized window is restored, a sign-out

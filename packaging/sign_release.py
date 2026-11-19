@@ -21,7 +21,8 @@ then publishes the draft and checks it the way the app will (as --verify does).
 `--min-version` and `--notice` change the manifest (it is rewritten, then signed): a version
 older than `--min-version` is treated as one that must update. Use it only for a version that
 really can no longer work, and only after trying the update path on a real machine. (Publish
-release takes the same two as inputs and writes them into the manifest it makes.)
+release has a `required_update` checkbox, which sets the floor to the version it publishes, and
+a `notice` input; it writes both into the manifest it makes.)
 
 `--verify TAG` downloads a PUBLISHED release's manifest and signature the way the app does and
 checks them against the embedded keys.

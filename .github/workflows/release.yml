@@ -174,10 +174,10 @@ jobs:
             [ "$tested_against" = "${previous:-none}" ] || fail "The Candidate was tested against $tested_against, but the newest release is ${previous:-none}. Re-run the latest CI run on main."
           else
             rebuild=true
-            # The build steps come from main's newest commit (this run's workflow files) while
-            # the code is the Candidate's: they only match if the Candidate is main's newest.
-            head="$(git rev-parse origin/main)"
-            [ "$sha" = "$head" ] || fail "main has commits after the Candidate (${sha::7}); a $BUMP release rebuilds, so wait for CI on main to finish (it makes a newer Candidate), then publish."
+            # The rebuild (build-test.yml) checks out this run's own commit, the newest on main
+            # when Publish release was started, never a commit passed in: so the Candidate must
+            # be that very commit (and the workflow files then match the code they build).
+            [ "$sha" = "$GITHUB_SHA" ] || fail "main has commits after the Candidate (${sha::7}, main is at ${GITHUB_SHA::7}); a $BUMP release rebuilds, so wait for CI on main to finish (it makes a newer Candidate), then run Publish release again."
           fi
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
             fail "Tag v$version already exists. If it is left over from something else, delete it (git push --delete origin v$version) and run this again."
@@ -232,7 +232,7 @@ jobs:
       cancel-in-progress: false
     uses: ./.github/workflows/build-test.yml
     with:
-      ref: ${{ needs.plan.outputs.sha }}
+      # No `ref`: it builds this run's commit, which plan checked is the Candidate's.
       version: ${{ needs.plan.outputs.version }}
       previous: ${{ needs.plan.outputs.previous }}
       artifact_name: publish-${{ needs.plan.outputs.version }}

@@ -35,10 +35,6 @@ on:
         description: "Newest published release tag (e.g. v0.1.3), for the upgrade test, the rehearsal and the dependency report. Empty if none."
         type: string
         default: ""
-      ref:
-        description: "Commit to build (default: the commit the run is for)"
-        type: string
-        default: ""
       artifact_name:
         description: "Name of the workflow artifact that will hold all the release files"
         type: string
@@ -66,8 +62,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
 
       - name: Compile the layered icon
         shell: bash
@@ -122,8 +116,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -366,7 +358,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
           fetch-depth: 0 # the previous release's package-lock.json, by tag
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

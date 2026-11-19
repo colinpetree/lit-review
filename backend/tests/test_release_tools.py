@@ -348,6 +348,13 @@ class TestWorkflow:
         sign = next(line for line in job(self.PUBLISH, "sign").splitlines() if line.strip().startswith("if:"))
         assert "needs.publish.result == 'success'" in sign
 
+    def test_the_build_only_ever_checks_out_the_runs_own_commit(self):
+        # A commit passed in to the build (with its caches) is what CodeQL calls cache poisoning:
+        # the build takes no `ref`, and a minor/major Publish rebuilds the commit it was started on.
+        assert "inputs.ref" not in self.BUILD and "\n      ref:" not in self.BUILD
+        assert "ref:" not in job(self.PUBLISH, "build")
+        assert '[ "$sha" = "$GITHUB_SHA" ]' in job(self.PUBLISH, "plan")
+
     def test_a_patch_publish_never_rebuilds(self):
         assert "if: needs.plan.outputs.rebuild == 'true'" in job(self.PUBLISH, "build")
         assert "rebuild=false" in job(self.PUBLISH, "plan")

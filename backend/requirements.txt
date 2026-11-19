@@ -13,7 +13,7 @@ filelock==4.0.1
 openai==3.22.1
 google-genai==2.26.0
 pystray==0.19.5
-pillow==12.3.0
+pillow==13.0.0
 # The app window (desktop_window.py). On Windows it drives WebView2 through .NET (pythonnet); on
 # macOS it uses WKWebView through pyobjc, which pystray already brings in.
 pywebview==6.2.1

@@ -176,7 +176,9 @@ jobs:
   backend-tests:
     name: backend-tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # The Windows leg with coverage took 16 to 20+ minutes on GitHub's runners (about 7 on a
+    # desktop), and a run cut off at 20 had no failing test. Generous, so only a real hang stops it.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

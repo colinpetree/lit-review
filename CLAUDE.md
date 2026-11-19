@@ -19,10 +19,11 @@ the user picks one per run), checking a dataset for new papers, retraction handl
 (CSV, RIS, BibTeX), a cost estimate with a spending threshold and per-run limit, backup and
 restore, and Deleted Items (datasets, prompts and runs are soft-deleted and can always be
 restored; nothing in the app removes them for good, which is left to future database editor
-tools). Packaging is built (see "Packaging and release" below):
-a tag push builds a Windows zip and, for each Mac (Apple Silicon, Intel), a `.dmg` for people to install
-from (drag onto Applications) plus a `.zip` that the in-app updater uses, on GitHub Actions, and the
-app checks GitHub for signed newer releases and can install them. The update loop (manual and automatic) is verified on Windows, Intel Macs and Apple Silicon Macs; what is still unproven is listed in the `packaging-release` skill and RELEASING.md "Still to prove".
+tools). Packaging is built (see "Packaging and release" below): GitHub Actions builds and tests every
+pull request and every merge to `main`; each passing merge to `main` is built as the next patch version (a
+Windows zip and, for each Mac (Apple Silicon, Intel), a `.dmg` for people to install from plus a `.zip` that
+the in-app updater uses) and left as a Candidate draft, which "Publish release" turns into a signed release
+(RELEASING.md). The app checks GitHub for signed newer releases and can install them. The update loop (manual and automatic) is verified on Windows, Intel Macs and Apple Silicon Macs; what is still unproven is listed in the `packaging-release` skill and RELEASING.md "Still to prove".
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
 command line, so end-user distribution must be a double-click executable (no
@@ -53,14 +54,32 @@ npm run build     # outputs to backend/static, which Flask serves
 npm run lint      # oxlint
 ```
 
-**Tests** (pytest for the backend, Vitest for the frontend `src/lib` modules; components are checked by hand):
+**Tests** (pytest for the backend; Vitest for the frontend `src/lib` modules and, under jsdom with React
+Testing Library, components; Playwright for the browser checks). CI (`.github/workflows/ci.yml`) runs all
+of these on every pull request; RELEASING.md lists what each job does.
 ```
 cd backend; .venv\Scripts\python -m pip install -r requirements-dev.txt
 .venv\Scripts\python -m pytest -q                          # all backend tests
 .venv\Scripts\python -m pytest tests/test_dates.py -k month  # one file / one test
+.venv\Scripts\ruff check ..                                # Python lint (ruff.toml at the repo root)
 cd frontend; npm test                                      # all frontend tests (fnm preamble below)
 npx vitest run src/lib/paperFilter.test.js                 # one frontend file
+npm run lint                                               # oxlint
+# From the repo root, with the frontend built (npm run build) and `npx playwright install chromium` once:
+backend\.venv\Scripts\python packaging\browser_test.py --source   # walk the pages on sample data
+backend\.venv\Scripts\python packaging\browser_test.py --jobs     # the job flow, AI and sources faked
 ```
+Rules the tests enforce, so follow them when adding things:
+- **A new `/api` route** must be added to `KNOWN_ROUTES` in `tests/test_route_inventory.py` (which then
+  checks it needs the secret, refuses another Host or Origin, and never 500s on a junk body), and must be
+  called by the page or listed in `BACKEND_ONLY` in `tests/test_api_contract.py` with the reason.
+- **A new component with logic** gets a component test beside it (`Component.test.jsx`, starting with
+  `// @vitest-environment jsdom`, as `Modal.test.jsx` does), with `apiFetch` mocked.
+- **The backend coverage floor** (`--cov-fail-under` in ci.yml) is raised as tests grow, never lowered.
+- **The browser walks** (`frontend/scripts/verify-app.mjs`, `verify-jobs.mjs`) find things by their visible
+  names; renaming a button or menu entry they use means updating them. The walk must stay offline: never
+  save a lookup key there (that queues real abstract lookups).
+- `backend/ci_fixture.py` fills a throwaway data folder with sample data; it refuses an existing database.
 `backend/tests/conftest.py` has two autouse fixtures that every test gets: the database and
 credential store are redirected to a temp dir, and any attempt to reach a non-loopback host
 (connect, UDP send or DNS lookup, so it covers the AI provider SDKs and `requests`) raises
@@ -92,8 +111,8 @@ installed versions in `%APPDATA%\fnm\node-versions` and use one of those.
 
 ### Packaging and release
 
-The primary user gets a double-click app (PyInstaller onedir; CI builds Windows and both Macs on a
-tag push). It opens in its own window (`desktop_window.py`: pywebview with the system's web view) and
+The primary user gets a double-click app (PyInstaller onedir; CI builds Windows and both Macs on every
+pull request and merge, and Publish release ships a tested build; RELEASING.md). It opens in its own window (`desktop_window.py`: pywebview with the system's web view) and
 keeps running in the tray when the window is closed, falling back to the browser where the window
 cannot be used. The build, updater, macOS, workflow and license-notice details are in the
 **`packaging-release` skill** (`.claude/skills/packaging-release/SKILL.md`): load it before touching

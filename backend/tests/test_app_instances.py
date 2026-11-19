@@ -16,7 +16,7 @@ import pytest
 
 import app as app_module
 from app import SingleOwnerServer
-from procutil import Copy, free_port, free_port_run
+from procutil import Copy, free_port_run
 
 START_TIMEOUT = 30
 HAND_OVER_TIMEOUT = 20
@@ -57,7 +57,7 @@ def http_get(port, path, token=None, headers=None):
 def would_open(copy):
     """The address a copy said it would open in the browser, as (port, token): the
     private link, with the secret in the fragment (so no server is ever sent it)."""
-    line = next(l for l in copy.output.splitlines() if l.startswith("Would open "))
+    line = next(ln for ln in copy.output.splitlines() if ln.startswith("Would open "))
     parsed = urlparse(line[len("Would open "):].strip())
     assert parsed.path == "/" and parsed.query == ""
     assert parsed.fragment.startswith("token=")
@@ -324,9 +324,9 @@ class TestTheSecretOnTheWire:
         http_get(copy.port, "/", token=copy.token)
         http_get(copy.port, "/api/datasets", token=copy.token)
         time.sleep(0.3)
-        log_lines = [l for l in copy.output.splitlines() if '"GET ' in l or '"POST ' in l]
+        log_lines = [ln for ln in copy.output.splitlines() if '"GET ' in ln or '"POST ' in ln]
         assert log_lines  # requests were logged...
-        assert not any(copy.token in l for l in log_lines)  # ...and none holds the secret
+        assert not any(copy.token in ln for ln in log_lines)  # ...and none holds the secret
 
 
 class TestAnOlderCopyStillRunning:

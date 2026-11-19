@@ -80,9 +80,13 @@ gitignored.
   the backend folder otherwise. Never use `__file__` for a shipped file. The data and key folders still
   come from platformdirs with app name `lit-review` (`credentials.APP_NAME`), so a packaged copy sees
   the same database and keys as a source run: do not change that name (a test pins it).
-- **Version:** `version.py` says `0.0.0-dev`; the workflow rewrites it from the tag, so the tag is the
-  one place a version is decided. `GET /api/about` returns the version and the data and log folders
-  (Settings, "Software and Updates"). A dev version never updates.
+- **Version:** `version.py` says `0.0.0-dev`; the build workflow (`build-test.yml`) writes in the version
+  its caller decided, so no person ever types one: CI builds `main` as the next patch after the newest
+  published release (`.github/scripts/previous-release.sh`), pull requests as `<prev>-ci.<sha>`, branch test
+  builds as `<prev>-test.<branch>.<sha>`, and Publish release a minor/major rebuild as the new version. Any
+  version `updates.parse_version` rejects (dev, `-ci.`, `-test.`) never updates and never sends usage counts.
+  The Mac bundle's version keys get only the numeric part (`BUNDLE_VERSION` in `pyinstaller.spec`).
+  `GET /api/about` returns the version and the data and log folders (Settings, "Software and Updates").
 - **`--self-check`** (`selfcheck.py`): imports every provider module (from `llm.PROVIDERS`), builds each
   SDK client with a dummy key, loads the certificate stores, checks `static/index.html`, and writes JSON
   to `LIT_REVIEW_SELFCHECK_FILE`, exit code 0/1 (a windowed exe has no stdout). It cannot see
@@ -124,9 +128,10 @@ gitignored.
   finishes and at every start that finds one staged, only when `auto_apply` is off; Install update, or Not now / X /
   Escape / click away, remembered per run and version in sessionStorage), `UpdateBanner` (failed only; the restart is the Installing dialog, not a banner; a waiting update is deliberately not a banner), and Settings "New versions" (`UpdatesCard`: the
   toggle, **Check now**, and the same **Install update** button whenever one is staged, for auto users too).
-  `lib/updateCheck.js` holds the pure logic (tested). Release side: CI writes the unsigned manifest
-  (`make_manifest.py`, zips only, never the `.dmg`); the maintainer signs the draft (`sign_release.py`) and publishes; see
-  `RELEASING.md`. Needs the repo to be **public**. Verified on real Windows, Intel Mac and Apple Silicon Mac machines, manual and automatic (before the browser-based launch install, the OS "Updating Lit Review" window vanished too fast to read; the browser flow itself is not yet run on a real machine); what remains unproven is in RELEASING.md "Still to prove".
+  `lib/updateCheck.js` holds the pure logic (tested). Release side: Publish release writes the unsigned manifest
+  (`make_manifest.py`, zips only, never the `.dmg`); its `sign` job, after the maintainer's Approve (GitHub environment
+  `release`, which holds the active key), runs `sign_release.py --ci --publish`; by hand, `sign_release.py --key` is the
+  fallback and the way to sign with the offline spare; see `RELEASING.md`. Needs the repo to be **public**. Verified on real Windows, Intel Mac and Apple Silicon Mac machines, manual and automatic (before the browser-based launch install, the OS "Updating Lit Review" window vanished too fast to read; the browser flow itself is not yet run on a real machine); what remains unproven is in RELEASING.md "Still to prove".
 - **Usage counts** (`telemetry.py`, `telemetry-worker/`): its own thread (`telemetry.start_background`, started by
   `app._start_checking` next to the update check and only where `updater.enabled()`), which wakes hourly and
   sends only when a new UTC day began or a send is owed (after a failed send it waits 1, 3, 6, then 12 hours), and under `LIT_REVIEW_TESTING=1` it can only ever reach a loopback `LIT_REVIEW_CENSUS_URL`, never the real service, so a slow service can never delay an update and a copy
@@ -162,25 +167,44 @@ gitignored.
   (`pyinstaller.spec` sets it only when the compiled file exists, so a local build without it keeps the classic icon; the release workflow requires it and fails if the `.icon` is missing or does not compile).
   Bundle id `io.github.colinpetree.lit-review` (changing it makes macOS treat a release as a new app).
   Builds are signed ad hoc only; the first-launch "Open Anyway" step is in INSTALL.md.
-- **Workflow** (`.github/workflows/release.yml`): `prepare` checks the tag is `vN.N.N` and on `main`;
-  `build` (Windows, macOS arm64, `macos-15-intel`) installs the pinned requirements first, runs the frontend
-  and backend tests, builds, ad-hoc signs the Mac app, runs `smoke_test.py` on the built app, and zips
-  (`ditto` on Mac: `upload-artifact` would break an `.app`). Each Mac leg then makes a **disk image**
-  (`hdiutil create` from a `dmg/` folder holding the same signed app and an `Applications` link; the step
-  mounts it read-only, requires exactly those two items, runs `codesign --verify` and `--self-check` on the
-  mounted app, proves the start-up check below on the runner (`/Applications` must read writable, the image
-  read-only, and the app launched from the image must exit 1 and leave no `instance.lock`), and always
-  detaches). The `.dmg` is what people download; the `.zip` stays for the updater
-  (Plan 3), whose signed manifest must list the zips only. `release` (tag pushes only, the only job with
-  write permission) first requires exactly 3 zips and 2 disk images, then makes a **draft** release with
-  `SHA256SUMS.txt` for the maintainer to test and publish.
+- **Workflows** (`.github/workflows/`; the maintainer's guide is RELEASING.md). Modelled on personal-website's:
+  "build once on `main`, then promote".
+  - `ci.yml`, every pull request and push to `main`: `prepare` (the version, from published releases), `lint`
+    (ruff, oxlint, actionlint), `backend-tests` (Windows with a coverage floor, macOS), `frontend-tests`, `e2e`
+    (the job flow in Chromium from source with fakes: `backend/tests/e2e_server.py`, `frontend/scripts/verify-jobs.mjs`),
+    `build` (below), `dependency-review` (PRs), then on `main` the `draft` job keeps one **Candidate** draft
+    ("Candidate X.Y.Z (<sha7>), tested against v<prev>"; titles "Uploading"/"Candidate"/"Publishing" are a
+    protocol release.yml reads, copied from personal-website), and `mode: test` publishes a pre-release.
+  - `build-test.yml` (reusable): the `icon` job and the three legs (Windows, macOS arm64, `macos-15-intel`). Each
+    installs `requirements-build.txt` only and freezes it (`requirements-<asset>.txt`) before PyInstaller, so nothing
+    else can be bundled; writes the version; builds the helper and the app; ad-hoc signs the Mac app; runs
+    `smoke_test.py`; zips (`ditto` on Mac: `upload-artifact` would break an `.app`). Each Mac leg then makes a **disk
+    image** with dmgbuild (`packaging/requirements-dmg.txt`, installed after PyInstaller), mounts it read-only,
+    requires exactly the app and an `Applications` link, runs `codesign --verify` and `--self-check` on the mounted
+    app, proves the start-up check below on the runner (`/Applications` must read writable, the image read-only, and
+    the app launched from the image must exit 1 and leave no `instance.lock`), and always detaches. Then: the
+    browser walk of the frozen app (Windows: `packaging/browser_test.py`, `backend/ci_fixture.py`,
+    `frontend/scripts/verify-app.mjs`), `packaging/upgrade_test.py` (the previous release's database), and for a
+    release version `packaging/update_rehearsal.py` (the previous release updates itself to this build through
+    `LIT_REVIEW_UPDATE_BASE`/`LIT_REVIEW_UPDATE_PUBKEY` and a throwaway key). These share `packaging/app_runner.py`
+    (throwaway folders, no browser/tray/dialog, testing switch with the update thread off). A final `collect` job
+    requires exactly 3 zips and 2 disk images, writes `SHA256SUMS.txt` and `dependency-changes.md`
+    (`.github/scripts/dependency_diff.py`). The `.dmg` is what people download; the `.zip` stays for the updater,
+    whose signed manifest must list the zips only.
+  - `release.yml`, **Publish release** (by hand, patch/minor/major): claims the Candidate; patch ships its files,
+    minor/major rebuilds that commit with the new version (only if it is `main`'s newest); makes the draft `Lit Review
+    X.Y.Z` (tag set, created only on publish) with the unsigned manifest; the `sign` job (environment `release`,
+    waits for Approve, hash-pinned cryptography only) signs, publishes and verifies.
+  - `codeql.yml`, `dependency-audit.yml` (monthly), `.github/dependabot.yml`.
   **Read-only start-up check:** a packaged Mac app that finds its own volume read-only (the mounted disk
   image, a Gatekeeper-translocated copy, read-only media; `mac_app.running_from_read_only_volume`, via
   `statvfs`) shows `RUN_FROM_INSTALLER_MESSAGE` and exits 1 in `main()`, after the `--self-check` branch and
   before the instance lock, so everyone installs by dragging the app onto Applications. Any `statvfs` error
   means "not read-only" (the app starts as before).
-  Actions are pinned by commit SHA. `workflow_dispatch` builds without releasing. The Intel runner label
-  and the Mac legs skipping `test_app_instances.py` are the first things to check if CI misbehaves.
+  Actions are pinned by commit SHA. Nothing a person types (branch names, Publish inputs) goes inside `${{ }}` in a
+  `run:` block (a test checks). The Intel runner label and the macOS backend tests skipping `test_app_instances.py`
+  are the first things to check if CI misbehaves. `tests/test_release_tools.py` and `tests/test_packaging.py` guard
+  the workflows' key properties (only `sign` reads the key, the draft never needs a PR-only job, and so on).
 - **Docs for users:** `README.md`, `INSTALL.md` (plain language: no terminal, first-launch steps per OS,
   where data lives), `packaging/release-notes.md` (the release body). License: FSL-1.1-MIT (source-available: free for any use except a competing commercial product, each version turns MIT after 2 years; the author's choice, so do not swap it for a permissive license without asking); the bundled software's
   licenses ship as `THIRD_PARTY_NOTICES.txt` (made by `packaging/make_notices.py`: Python packages, npm

@@ -8,7 +8,7 @@ from contextlib import closing
 import pytest
 
 import abstracts
-import app as app_module
+import app as app_module  # noqa: F401  (registers the job kinds with jobs.py)
 import db
 import jobs
 import llm

@@ -92,10 +92,13 @@ def test_nothing_sent_without_an_endpoint(monkeypatch):
     assert send.calls == []
 
 
-def test_dev_version_never_sends(monkeypatch):
-    monkeypatch.setattr(version, "__version__", "0.0.0-dev")
+@pytest.mark.parametrize("label", ["0.0.0-dev", "0.1.3-ci.abc1234", "0.1.3-test.ci-cd-overhaul.abc1234"])
+def test_a_version_that_is_not_a_release_never_sends(monkeypatch, label):
+    # From source, a pull request's CI build, or a branch's test pre-release: the maintainer's copies.
+    monkeypatch.setattr(version, "__version__", label)
     send = Sender()
-    assert telemetry.send_if_due(post=send) == []
+    telemetry.note_launch()
+    assert telemetry.send_if_due(today="2026-10-06", post=send) == []
     assert send.calls == []
 
 

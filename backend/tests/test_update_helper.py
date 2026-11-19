@@ -375,7 +375,7 @@ class TestWhatShips:
     """Guards for how the helper reaches the user, in the style of the other packaging tests."""
 
     SPEC = (ROOT / "backend" / "pyinstaller.spec").read_text(encoding="utf-8")
-    WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    WORKFLOW = (ROOT / ".github" / "workflows" / "build-test.yml").read_text(encoding="utf-8")
 
     def test_the_helper_is_built_before_the_app_and_goes_inside_it(self):
         build_helper = self.WORKFLOW.index("pyinstaller packaging/update_helper.py")
@@ -398,8 +398,15 @@ class TestWhatShips:
         assert '"update signing": _check_update_signing' in source
 
     def test_the_smoke_test_never_lets_the_packaged_app_reach_github(self):
-        source = (ROOT / "packaging" / "smoke_test.py").read_text(encoding="utf-8")
-        assert 'LIT_REVIEW_NO_UPDATE_THREAD="1"' in source and 'LIT_REVIEW_TESTING="1"' in source
+        # Every release check starts its copies through app_runner.app_env.
+        assert "app_env(" in (ROOT / "packaging" / "app_runner.py").read_text(encoding="utf-8")
+        assert "RunningApp(" in (ROOT / "packaging" / "smoke_test.py").read_text(encoding="utf-8")
+        sys.path.insert(0, str(ROOT / "packaging"))
+        import app_runner
+
+        env = app_runner.app_env("w", 1234)
+        assert env["LIT_REVIEW_NO_UPDATE_THREAD"] == "1" and env["LIT_REVIEW_TESTING"] == "1"
+        assert env["LIT_REVIEW_DATA_DIR"].startswith("w") and env["LIT_REVIEW_CONFIG_DIR"].startswith("w")
 
     def test_the_helper_is_stdlib_only(self):
         source = (ROOT / "packaging" / "update_helper.py").read_text(encoding="utf-8")

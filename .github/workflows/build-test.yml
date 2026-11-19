@@ -1,0 +1,428 @@
+name: Build and test
+
+# Reusable: builds Lit Review for Windows and macOS (Apple Silicon and Intel), tests the
+# built app, and uploads the files as a workflow artifact. It publishes nothing. Called by:
+#   - ci.yml       every pull request, every push to main, and by hand (trial / test builds)
+#   - release.yml  Publish release, for a minor or major version (a patch ships the files
+#                  CI already built and tested on main)
+#
+# PyInstaller cannot cross-compile, so each operating system builds its own.
+#
+# The version is compiled into the app (backend/version.py, the Mac Info.plist, the file
+# names, and the Mac signature covers all of it), so every build is made with its final
+# version: on main that is the next patch release, so the files that pass here are the
+# files Publish release ships.
+#
+# What each leg checks, after building:
+#   smoke_test.py        the app's own --self-check, a real launch, the hand-over to a running copy
+#   (Mac) disk image     mounted read-only: only the app and the Applications link, still
+#                        signed, runs --self-check, refuses to start from the image
+#   browser_test.py      (Windows) a walk through the real pages in Chromium, on sample data
+#   upgrade_test.py      the previous release makes a database; this build migrates and shows it
+#   update_rehearsal.py  (rehearse_update) the previous release updates itself to this build
+#                        through the in-app updater, with a throwaway signing key
+# Then one job gathers the downloads, checks all five are there, and writes
+# SHA256SUMS.txt and the dependency changes since the previous release.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version built into the app: X.Y.Z, or X.Y.Z-ci.<sha> / X.Y.Z-test.<branch>.<sha>"
+        type: string
+        required: true
+      previous:
+        description: "Newest published release tag (e.g. v0.1.3), for the upgrade test, the rehearsal and the dependency report. Empty if none."
+        type: string
+        default: ""
+      ref:
+        description: "Commit to build (default: the commit the run is for)"
+        type: string
+        default: ""
+      artifact_name:
+        description: "Name of the workflow artifact that will hold all the release files"
+        type: string
+        required: true
+      rehearse_update:
+        description: "Rehearse the in-app update from the previous release (needs a plain X.Y.Z version)"
+        type: boolean
+        default: false
+      retention_days:
+        description: "How long to keep the artifacts (Publish keeps them long enough for a late Approve)"
+        type: number
+        default: 7
+
+permissions:
+  contents: read
+
+jobs:
+  # macOS 26 ("Liquid Glass") draws an app icon from a layered Icon Composer package compiled
+  # into Assets.car. Xcode 26 (which has `actool`) is on macos-latest but may not be on the
+  # Intel runner, so it is compiled once here and both Mac builds use the result. The icon is
+  # part of every release: if it cannot be compiled, or packaging/macos/AppIcon.icon is gone,
+  # this job fails and so does the build, rather than shipping the classic icon unnoticed.
+  icon:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Compile the layered icon
+        shell: bash
+        run: |
+          test -d packaging/macos/AppIcon.icon || { echo "::error::packaging/macos/AppIcon.icon is missing"; exit 1; }
+          xcodebuild -version
+          mkdir icon-out
+          xcrun actool packaging/macos/AppIcon.icon --compile icon-out --app-icon AppIcon \
+            --include-all-app-icons --enable-on-demand-resources NO --development-region en \
+            --target-device mac --minimum-deployment-target 26.0 --platform macosx \
+            --output-partial-info-plist icon-out/partial.plist --output-format human-readable-text
+          echo "--- what actool wrote"
+          ls -l icon-out
+          cat icon-out/partial.plist
+          test -f icon-out/Assets.car || { echo "::error::actool did not make Assets.car"; exit 1; }
+          echo "--- what is in Assets.car"
+          xcrun assetutil --info icon-out/Assets.car | sed -n '1,60p'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_name }}-app-icon
+          path: icon-out/Assets.car
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: icon
+    name: Build (${{ matrix.asset }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: Windows
+            exe: dist/Lit Review/Lit Review.exe
+          - os: macos-latest # Apple Silicon
+            asset: macOS-Apple-Silicon
+            exe: dist/Lit Review.app/Contents/MacOS/Lit Review
+          - os: macos-15-intel # Intel
+            asset: macOS-Intel
+            exe: dist/Lit Review.app/Contents/MacOS/Lit Review
+    env:
+      VERSION: ${{ inputs.version }}
+      PREVIOUS: ${{ inputs.previous }}
+      ASSET: ${{ matrix.asset }}
+      EXE: ${{ matrix.exe }}
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-build.txt
+            packaging/requirements-*.txt
+
+      # First, on its own: the exact pinned versions must have wheels for this operating
+      # system and chip, and a missing one should fail here, plainly. Only what goes into the
+      # app is installed before PyInstaller runs, so nothing else can be swept into it, and
+      # the freeze is the exact package set in this build (the release notes compare it with
+      # the previous release, and the monthly audit checks it).
+      - name: Install Python packages
+        run: |
+          python -m pip install -r backend/requirements-build.txt
+          mkdir -p out
+          python -m pip freeze --exclude pyinstaller --exclude pyinstaller-hooks-contrib --exclude altgraph > "out/requirements-$ASSET.txt"
+          cat "out/requirements-$ASSET.txt"
+
+      - name: Frontend (build into backend/static)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # The version is decided by the caller (ci.yml or release.yml), never typed by hand.
+      - name: Put the version in the code
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(ci|test)\.[a-z0-9.-]+)?$ ]] || { echo "::error::'$VERSION' is not a version this workflow builds"; exit 1; }
+          sed -i.bak "s/^__version__ = .*/__version__ = \"$VERSION\"/" backend/version.py
+          rm backend/version.py.bak
+          grep -x "__version__ = \"$VERSION\"" backend/version.py
+
+      - name: Make the icons
+        run: python packaging/make_icons.py
+
+      - name: Make the macOS icon file (iconutil exists only on a Mac)
+        if: runner.os == 'macOS'
+        run: iconutil -c icns packaging/build/LitReview.iconset -o packaging/build/LitReview.icns
+
+      # The compiled Liquid Glass icon. It goes in packaging/build so the
+      # spec (which then names it in Info.plist) and the copy below can find it.
+      - name: Get the compiled macOS 26 icon
+        if: runner.os == 'macOS'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact_name }}-app-icon
+          path: packaging/build
+
+      - name: List third-party licenses
+        run: python packaging/make_notices.py
+
+      # A release built without the public signing keys could never accept an update, and the
+      # version people install first must be able to (see RELEASING.md, One-time setup). Every
+      # build with a release version (X.Y.Z: every build on main) is one that may ship.
+      - name: Check the update signing keys are in the app
+        run: |
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            python -c "import sys; sys.path.insert(0, 'backend'); import update_manifest; sys.exit(0 if update_manifest.PUBLIC_KEYS else 1)" \
+              || { echo "::error::backend/update_manifest.py has no PUBLIC_KEYS: run packaging/make_update_key.py first"; exit 1; }
+          else
+            echo "$VERSION is not a release version; skipped."
+          fi
+
+      # The program that swaps a downloaded update in (packaging/update_helper.py), built on its own
+      # because it must run while the app's own folder is being replaced. It goes inside the app
+      # (pyinstaller.spec), so the Mac signature below covers it. No console window on Windows.
+      - name: Build the update helper
+        run: |
+          flags=--onefile
+          if [ "$RUNNER_OS" = "Windows" ]; then flags="$flags --noconsole"; fi
+          pyinstaller packaging/update_helper.py $flags --name update-helper --distpath packaging/build \
+            --workpath "$RUNNER_TEMP/helper-build" --specpath "$RUNNER_TEMP/helper-build" --noconfirm
+          ls -l packaging/build | sed -n '1,20p'
+
+      - name: Build the app
+        run: pyinstaller backend/pyinstaller.spec --noconfirm
+
+      # Assets.car must be a real file in Contents/Resources, and it must be there before the
+      # signature is made, or the signature would not cover it.
+      - name: Put the macOS 26 icon in the app
+        if: runner.os == 'macOS'
+        run: |
+          cp packaging/build/Assets.car "dist/Lit Review.app/Contents/Resources/Assets.car"
+          plutil -p "dist/Lit Review.app/Contents/Info.plist" | grep "CFBundleIconName"
+          ls -l "dist/Lit Review.app/Contents/Resources" | sed -n '1,20p'
+
+      # An unsigned download can be reported as "damaged" if its signature is broken, so the
+      # build is signed ad hoc (free; the first-launch prompt still appears and the guide covers it).
+      - name: Sign the macOS app ad hoc
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep --sign - "dist/Lit Review.app"
+          codesign --verify --deep --strict --verbose=2 "dist/Lit Review.app"
+
+      - name: Run the built app (self-check, then a real launch)
+        run: python packaging/smoke_test.py "$EXE"
+
+      # The license and the third-party notices are inside the app (pyinstaller.spec puts them in
+      # its `licenses` folder, before the signature), so the zip holds only the app. The listings
+      # show where they landed and what the zip's top level is (for the Mac, only the .app).
+      - name: Zip it
+        run: |
+          mkdir -p out
+          name="Lit-Review-$VERSION-$ASSET"
+          echo "--- where the license files are inside the app"
+          python -c "import pathlib; hits = list(pathlib.Path('dist').rglob('licenses/THIRD_PARTY_NOTICES.txt')); print(*hits, sep='\n'); raise SystemExit(0 if hits else '::error::the notices file is not in the app')"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python -c "import shutil; shutil.make_archive('out/$name', 'zip', root_dir='dist', base_dir='Lit Review')"
+            python -m zipfile -l "out/$name.zip" | grep -E "Lit Review/(Lit Review.exe|_internal/licenses)" || true
+          else
+            ditto -c -k --sequesterRsrc --keepParent "dist/Lit Review.app" "out/$name.zip"
+            echo "--- the zip's top level (it must be only Lit Review.app)"
+            unzip -Z1 "out/$name.zip" | cut -d/ -f1 | sort -u
+          fi
+          ls -l out
+
+      # The Mac download people use: open the disk image, drag Lit Review onto Applications.
+      # It holds the same signed, smoke-tested app as the zip (which the in-app updater uses), so
+      # it is made last. It is then mounted and checked: it must hold only the app and the
+      # Applications link, the app must still verify as signed, run from the read-only volume
+      # (--self-check), and refuse to start from it. The trap detaches it on every exit path.
+      - name: Make the Mac disk image
+        if: runner.os == 'macOS'
+        run: |
+          name="Lit-Review-$VERSION-$ASSET"
+          # dmgbuild writes the window layout (app on the left, Applications on the right)
+          # without driving Finder, so it works on a headless runner. Installed only now, after
+          # PyInstaller, so it can never end up inside the app.
+          python -m pip install -r packaging/requirements-dmg.txt
+          dmgbuild -s packaging/macos/dmg-settings.py -D app="dist/Lit Review.app" "Lit Review" "out/$name.dmg"
+          hdiutil verify "out/$name.dmg"
+          mnt="$(mktemp -d)"
+          cleanup() { hdiutil detach "$mnt" -quiet || hdiutil detach "$mnt" -force -quiet || true; }
+          trap cleanup EXIT
+          hdiutil attach "out/$name.dmg" -readonly -nobrowse -mountpoint "$mnt"
+          echo "--- what is in the disk image"
+          ls -l "$mnt"
+          test "$(ls "$mnt")" = "$(printf 'Applications\nLit Review.app')" || { echo "::error::the disk image holds something unexpected"; exit 1; }
+          test "$(readlink "$mnt/Applications")" = "/Applications" || { echo "::error::the Applications link is wrong"; exit 1; }
+          codesign --verify --deep --strict "$mnt/Lit Review.app"
+          # The app's start-up check refuses to run from a read-only volume (mac_app.py). Prove it
+          # sees Applications as writable (else it would block every install) and the image as
+          # read-only, and that the app launched from the image really does refuse (exit 1).
+          readonly_flag() { python -c "import os, sys; print(os.statvfs(sys.argv[1]).f_flag & 1)" "$1"; }
+          test "$(readonly_flag /Applications)" = 0 || { echo "::error::Applications reads as read-only"; exit 1; }
+          test "$(readonly_flag "$mnt")" = 1 || { echo "::error::the disk image reads as writable"; exit 1; }
+          export LIT_REVIEW_DATA_DIR="$RUNNER_TEMP/dmg-data" LIT_REVIEW_CONFIG_DIR="$RUNNER_TEMP/dmg-config"
+          export LIT_REVIEW_NO_DIALOG=1 LIT_REVIEW_NO_BROWSER=1 LIT_REVIEW_NO_TRAY=1
+          app="$mnt/Lit Review.app/Contents/MacOS/Lit Review"
+          LIT_REVIEW_SELFCHECK_FILE="$RUNNER_TEMP/dmg-selfcheck.json" "$app" --self-check
+          python - "$app" <<'PY'
+          import subprocess, sys
+          try:
+              code = subprocess.run([sys.argv[1]], timeout=60).returncode
+          except subprocess.TimeoutExpired:
+              sys.exit("::error::the app started from the disk image instead of refusing")
+          sys.exit(0 if code == 1 else f"::error::expected exit code 1 from the disk image, got {code}")
+          PY
+          # Exit code 1 is also what other start-up failures return. The check runs before the
+          # instance lock is taken, so a lock file means the app got past it and failed later.
+          test ! -e "$LIT_REVIEW_DATA_DIR/instance.lock" || { echo "::error::the app got past the start-up check"; exit 1; }
+          ls -l out
+
+      # A walk through the real pages in Chromium (frontend/scripts/verify-app.mjs) on sample
+      # data (backend/ci_fixture.py). On Windows only: what differs on a Mac is packaging, which
+      # the smoke test and the disk-image checks above cover.
+      - name: "Browser test: the pages, in a real browser"
+        if: runner.os == 'Windows'
+        run: |
+          (cd frontend && npx playwright install chromium)
+          python packaging/browser_test.py "$EXE" --artifacts "$RUNNER_TEMP/browser-failures"
+
+      - name: Download the previous release
+        id: previous
+        if: inputs.previous != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --pattern "Lit-Review-*-$ASSET.zip" --dir "$RUNNER_TEMP/previous"; then
+            echo "zip=$(ls "$RUNNER_TEMP"/previous/*.zip)" >> "$GITHUB_OUTPUT"
+          else
+            echo "$PREVIOUS has no $ASSET zip, so there is nothing to upgrade from yet."
+            echo "- $ASSET: no $ASSET zip on $PREVIOUS; upgrade test and rehearsal skipped" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: "Upgrade test: the previous release's database"
+        if: steps.previous.outputs.zip != ''
+        env:
+          PREVIOUS_ZIP: ${{ steps.previous.outputs.zip }}
+        run: |
+          python packaging/upgrade_test.py --previous-zip "$PREVIOUS_ZIP" --exe "$EXE"
+          echo "- $ASSET: upgrade test from $PREVIOUS passed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Update rehearsal: the previous release updates itself to this build"
+        if: inputs.rehearse_update && steps.previous.outputs.zip != ''
+        env:
+          PREVIOUS_ZIP: ${{ steps.previous.outputs.zip }}
+        run: |
+          python packaging/update_rehearsal.py --previous-zip "$PREVIOUS_ZIP" --new-zip "out/Lit-Review-$VERSION-$ASSET.zip" --version "$VERSION"
+          echo "- $ASSET: update rehearsal $PREVIOUS -> $VERSION passed" >> "$GITHUB_STEP_SUMMARY"
+
+      # Screenshot and Playwright trace from a failed browser test (open the trace at
+      # https://trace.playwright.dev).
+      - name: Upload browser test evidence (on failure)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_name }}-failure-${{ matrix.asset }}
+          path: ${{ runner.temp }}/browser-failures
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_name }}-${{ matrix.asset }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  collect:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ inputs.version }}
+      PREVIOUS: ${{ inputs.previous }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # the previous release's package-lock.json, by tag
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ inputs.artifact_name }}-*
+          path: out
+          merge-multiple: true
+
+      # Five downloads: the Windows zip, and for each Mac a disk image (for people) and a zip
+      # (for the in-app updater). A missing one must stop here, not ship without it.
+      - name: Check the downloads are all here
+        run: |
+          cd out || exit 1
+          rm -f Assets.car
+          ls -l
+          shopt -s nullglob
+          zips=(*.zip)
+          dmgs=(*.dmg)
+          if [ "${#zips[@]}" -ne 3 ] || [ "${#dmgs[@]}" -ne 2 ]; then
+            echo "::error::expected 3 zips and 2 disk images, found ${#zips[@]} and ${#dmgs[@]}: ${zips[*]} ${dmgs[*]}"
+            exit 1
+          fi
+          for f in "${zips[@]}" "${dmgs[@]}"; do
+            case "$f" in
+              "Lit-Review-$VERSION-"*) ;;
+              *) echo "::error::$f is not named for version $VERSION"; exit 1 ;;
+            esac
+          done
+
+      - name: Checksums
+        run: |
+          cd out || exit 1
+          sha256sum *.zip *.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Dependency changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev="$RUNNER_TEMP/prevdeps"
+          mkdir -p "$prev"
+          if [ -n "$PREVIOUS" ]; then
+            gh release download "$PREVIOUS" --repo "$GITHUB_REPOSITORY" --pattern 'requirements-*.txt' --dir "$prev" 2>/dev/null || true
+            git show "$PREVIOUS:frontend/package-lock.json" > "$prev/package-lock.json" 2>/dev/null || rm -f "$prev/package-lock.json"
+          fi
+          args=()
+          for asset in Windows macOS-Apple-Silicon macOS-Intel; do
+            args+=(--pip "$asset" "$prev/requirements-$asset.txt" "out/requirements-$asset.txt")
+          done
+          python3 .github/scripts/dependency_diff.py "${args[@]}" \
+            --npm-old "$prev/package-lock.json" --npm-new frontend/package-lock.json > out/dependency-changes.md
+          cat out/dependency-changes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

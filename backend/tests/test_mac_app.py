@@ -215,10 +215,16 @@ class TestTrayOnMac:
 
 class TestMacBuildPieces:
     SPEC = bundle.resource_path("pyinstaller.spec").read_text(encoding="utf-8")
-    WORKFLOW = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    WORKFLOW = (REPO / ".github" / "workflows" / "build-test.yml").read_text(encoding="utf-8")
 
     def test_the_spec_ships_the_menu_bar_picture(self):
         assert '"trayTemplate.png"' in self.SPEC
+
+    def test_the_bundle_version_keys_get_only_the_numeric_version(self):
+        # CI builds are labelled 0.1.3-ci.<sha>; macOS wants plain numbers in these keys.
+        assert 'BUNDLE_VERSION = __version__.split("-")[0]' in self.SPEC
+        assert '"CFBundleShortVersionString": BUNDLE_VERSION' in self.SPEC and '"CFBundleVersion": BUNDLE_VERSION' in self.SPEC
+        assert "version=BUNDLE_VERSION" in self.SPEC and "version=__version__" not in self.SPEC
 
     def test_the_icon_key_is_only_named_when_the_compiled_icon_exists(self):
         assert "if ASSETS_CAR.is_file():" in self.SPEC and '"CFBundleIconName"' in self.SPEC

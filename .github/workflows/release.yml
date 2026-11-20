@@ -47,12 +47,12 @@ on:
         type: choice
         options: [patch, minor, major]
         default: patch
-      min_version:
-        description: "Optional, rare: copies older than this X.Y.Z must update (see RELEASING.md before using)"
-        type: string
-        default: ""
+      required_update:
+        description: "Rare: a required update. Every older copy installs it at its next start, whatever its own setting (see RELEASING.md first)"
+        type: boolean
+        default: false
       notice:
-        description: "Optional: a short notice shown with the update"
+        description: "Optional: a short notice shown with the update (say why, if it is required)"
         type: string
         default: ""
 
@@ -78,7 +78,6 @@ jobs:
       rebuild: ${{ steps.plan.outputs.rebuild }}
     env:
       BUMP: ${{ inputs.bump }}
-      MIN_VERSION: ${{ inputs.min_version }}
       GH_TOKEN: ${{ github.token }}
     defaults:
       run:
@@ -94,10 +93,6 @@ jobs:
           set -euo pipefail
           if [ "$GITHUB_REF_NAME" != "main" ]; then
             echo "::error::Publish release must run on main (this run is on '$GITHUB_REF_NAME'). To try a branch, use Actions -> CI -> Run workflow with mode test."
-            exit 1
-          fi
-          if [ -n "$MIN_VERSION" ] && ! [[ "$MIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::min_version must look like 1.2.3 (got '$MIN_VERSION')"
             exit 1
           fi
 
@@ -255,7 +250,7 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       PREVIOUS: ${{ needs.plan.outputs.previous }}
       REBUILD: ${{ needs.plan.outputs.rebuild }}
-      MIN_VERSION: ${{ inputs.min_version }}
+      REQUIRED: ${{ inputs.required_update }}
       NOTICE: ${{ inputs.notice }}
       GH_TOKEN: ${{ github.token }}
     defaults:
@@ -309,8 +304,12 @@ jobs:
       - name: Make the update manifest (unsigned; the sign job signs it)
         run: |
           args=(--version "$VERSION" --dir out)
-          [ -n "$NOTICE" ] && args+=(--notice "$NOTICE")
-          [ -n "$MIN_VERSION" ] && args+=(--min-version "$MIN_VERSION")
+          if [ -n "$NOTICE" ]; then args+=(--notice "$NOTICE"); fi
+          # A required update: the floor is this release itself, so every older copy must take it.
+          if [ "$REQUIRED" = "true" ]; then
+            args+=(--min-version "$VERSION")
+            echo "**Required update:** every copy older than $VERSION installs it at its next start." >> "$GITHUB_STEP_SUMMARY"
+          fi
           python packaging/make_manifest.py "${args[@]}"
 
       - name: Write the release notes

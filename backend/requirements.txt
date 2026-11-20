@@ -1,6 +1,6 @@
 flask==3.1.3
 requests==2.34.2
-anthropic==1.7.0
+anthropic==2.8.0
 # cryptography stopped publishing Intel Mac wheels after 48.0.1 (49.0.0 and later have macOS
 # wheels for Apple Silicon only). On an Intel Mac pip would build 50.x from source against
 # Homebrew's OpenSSL, and PyInstaller then bundles a mismatched libssl that the app cannot load.
@@ -10,8 +10,8 @@ cryptography==48.0.1; sys_platform == "darwin" and platform_machine == "x86_64"
 cryptography==50.0.0; sys_platform != "darwin" or platform_machine != "x86_64"
 platformdirs==4.14.5
 filelock==4.2.10
-openai==3.22.1
-google-genai==2.26.0
+openai==3.50.0
+google-genai==3.3.0
 pystray==0.19.5
 pillow==12.3.0
 # The app window (desktop_window.py). On Windows it drives WebView2 through .NET (pythonnet); on

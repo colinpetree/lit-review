@@ -23,7 +23,12 @@ tools). Packaging is built (see "Packaging and release" below): GitHub Actions b
 pull request and every merge to `main`; each passing merge to `main` is built as the next patch version (a
 Windows zip and, for each Mac (Apple Silicon, Intel), a `.dmg` for people to install from plus a `.zip` that
 the in-app updater uses) and left as a Candidate draft, which "Publish release" turns into a signed release
-(RELEASING.md). The app checks GitHub for signed newer releases and can install them. The update loop (manual and automatic) is verified on Windows, Intel Macs and Apple Silicon Macs; what is still unproven is listed in the `packaging-release` skill and RELEASING.md "Still to prove".
+(RELEASING.md). GitHub signs the update manifest after the maintainer approves; v0.1.4 (November 2026) was the
+first release made this way. The app checks GitHub for signed newer releases and can install them. The update loop (manual and automatic) is verified on Windows, Intel Macs and Apple Silicon Macs; what is still unproven is listed in the `packaging-release` skill and RELEASING.md "Still to prove".
+
+Every change reaches `main` through a pull request whose CI checks must pass (a ruleset enforces it; a CI run
+takes 15 to 20 minutes). Start each branch from an up-to-date `main`: pull requests are squash-merged. As always,
+the user does all git writes; Claude edits files and suggests the commands.
 
 Two audiences matter for UX/packaging decisions: the primary user has never used a
 command line, so end-user distribution must be a double-click executable (no

@@ -5,7 +5,7 @@ Releases are built, tested, signed and published by GitHub Actions. There is no 
 - **Every pull request and every merge to `main`** runs CI (`.github/workflows/ci.yml`, building with `build-test.yml`).
 - **Every merge to `main` that passes** is built as the **next patch version** and left as a draft release, the **Candidate**, holding the exact files that were tested.
 - **To release:** Actions, **Publish release** (`.github/workflows/release.yml`), pick patch, minor or major, then **Approve**. GitHub signs the update manifest with the active key (kept in the `release` environment) and publishes.
-- **Versions** come from published releases (`vX.Y.Z`). `backend/version.py` always says `0.0.0-dev` in the repository; the workflows write the version in when they build. Never push a `v*` tag by hand: nothing reacts to it, and the version base is read from published releases, not tags.
+- **Versions** are counted on from the highest `vX.Y.Z` any release or tag has used, so a number is never used twice (see "Pulling a bad release"); builds are tested against the newest published release. `backend/version.py` always says `0.0.0-dev` in the repository; the workflows write the version in when they build. Never push a `v*` tag by hand: nothing reacts to it, it cannot be deleted afterwards, and it only makes the numbering skip past it.
 
 ## What you do by hand (once)
 
@@ -14,16 +14,30 @@ Releases are built, tested, signed and published by GitHub Actions. There is no 
    - Required reviewers: you. Leave **Prevent self-review off** (you start the run and approve it; with it on, nobody could).
    - Deployment branches: `main` only. Turn off **Allow administrators to bypass**.
    - Environment secrets: `UPDATE_SIGNING_KEY` (the whole text of the **active** `.pem` file) and `UPDATE_SIGNING_PASSPHRASE`. Only the Publish release `sign` job can read them, and never on a pull request.
-3. **Settings, Rules:** a ruleset on `main` that requires a pull request (no approvals needed) and the CI checks (lint, backend-tests, frontend-tests, e2e and the `build / Build (...)` jobs). Add it after the first CI run, so the check names exist. Without it CI only reports; with it a broken change cannot reach `main`. Never skip CI for some files with `paths-ignore` on the trigger: the required checks would then never report and the pull request could not merge.
+3. **Settings, Rules, Rulesets** (both are set up):
+   - **Protect main** (the default branch, no bypass): blocks deletion and force pushes, requires a pull request (no approvals needed) and these checks: `lint`, `backend-tests (windows-latest)`, `backend-tests (macos-latest)`, `frontend-tests`, `e2e`, `dependency-review`, `build / Build (Windows)`, `build / Build (macOS-Apple-Silicon)`, `build / Build (macOS-Intel)`, `build / collect` and the three CodeQL `analyze (...)`. "Require branches to be up to date" is off (the build on `main` tests the merged result anyway). A renamed CI job must be renamed here too, or no pull request can merge. Never skip CI for some files with `paths-ignore` on the trigger: the required checks would then never report.
+   - **Protect version tags** (`refs/tags/v*`, excluding `refs/tags/v*-test.*`): release tags cannot be deleted or moved; Publish release can still create them, and test-build tags can be cleaned up.
 4. Keep the **spare** key offline, away from GitHub (see "Signing keys" below).
+
+Since every change reaches `main` through a pull request, start each branch from an up-to-date `main` (`git switch main`, `git pull`, `git switch -c <name>`): pull requests are squash-merged, so a branch made from an older branch's commits conflicts with `main`.
 
 The signing keys were made once with `packaging/make_update_key.py`, and their public halves are in `backend/update_manifest.py` (`PUBLIC_KEYS`). Every installed copy trusts those two keys.
 
 ## Every merge: CI
 
-Each pull request and each merge to `main` runs CI (about 25 minutes, mostly the three builds):
+Each pull request and each merge to `main` runs CI. It takes about **15 to 20 minutes**, and the slowest job sets the pace: the Windows backend tests with coverage (16 to 18 minutes; 45 allowed). Measured in November 2026, the others take:
 
-- **lint** (about a minute): ruff (`ruff.toml`), oxlint, actionlint (which also shellchecks every workflow step).
+| Job | Time |
+|---|---|
+| lint, frontend-tests, dependency-review, prepare | under a minute each |
+| e2e | about 2 minutes |
+| backend-tests on macOS | about 4 to 5 minutes |
+| build: Windows / Apple Silicon / Intel Mac | about 4 / 4 to 6 / 8 to 9 minutes (each includes its smoke, browser, upgrade and, on `main`, rehearsal checks) |
+| CodeQL (its own workflow) | about a minute |
+
+What each job does:
+
+- **lint**: ruff (`ruff.toml`), oxlint, actionlint (which also shellchecks every workflow step).
 - **backend-tests**: pytest on Windows (with a coverage floor) and macOS. `tests/conftest.py` refuses the network, so no test reaches a real service or spends money. `test_route_inventory.py` checks every `/api` route against the access secret, the Host and Origin guards and junk bodies; `test_api_contract.py` checks the page and the server agree on every route.
 - **frontend-tests**: Vitest (library and component tests), then a production build.
 - **e2e** (Windows): the background-job flow in a real browser (`frontend/scripts/verify-jobs.mjs`), from source, with the AI and the paper sources faked: a dataset is searched, an evaluation is estimated, confirmed, graded, stopped, resumed and exported.
@@ -45,8 +59,8 @@ Then:
 
 1. Check the newest CI run on `main` passed (a `Candidate` draft exists for it).
 2. GitHub, **Actions**, **Publish release**, **Run workflow**. Leave "Use workflow from" on `main` and pick:
-   - **patch** (usual): ships the Candidate's tested files as they are. Nothing is built; the draft is ready in a few minutes.
-   - **minor** or **major**: the version is compiled into the app, so this rebuilds the Candidate's commit with the new version and runs every check again, including the update rehearsal (about 30 to 40 minutes). It needs the Candidate to be `main`'s newest commit; if a merge is still in CI, wait for it.
+   - **patch** (usual): ships the Candidate's tested files as they are. Nothing is built: the draft is ready in under a minute, and signing and publishing after your Approve take about another.
+   - **minor** or **major**: the version is compiled into the app, so this rebuilds the Candidate's commit with the new version and runs the build checks again, including the update rehearsal (about 10 to 15 minutes before the Approve prompt). It needs the Candidate to be the newest commit on `main` when you start it; if a merge is still in CI, wait for it.
 
    From a terminal: `gh workflow run release.yml -f bump=patch`.
 3. The run leaves a draft **Lit Review X.Y.Z** with the downloads and the (unsigned) update manifest, and waits. GitHub emails you. Try the downloads from the draft if you like.
@@ -63,6 +77,16 @@ Installed copies find the release on their next daily check. The run summary lis
 - **Anything else partway** (a GitHub error): run it again with the same bump; it carries on from the draft it claimed ("Publishing ..."). To give up on that instead, delete the "Publishing" draft.
 - **"wait for CI on main to finish":** a minor/major release was started while a newer merge was still in CI. Wait for it to pass, then publish.
 - **The sign job says the release is PUBLISHED but does not verify:** until fixed the app offers it to nobody. Delete the release on GitHub, or sign it again by hand (below), then check with `python packaging/sign_release.py --verify vX.Y.Z`.
+
+### Pulling a bad release
+
+Delete the release on GitHub (Releases, the release, Delete). What each copy then does:
+
+- **Not downloaded it yet:** it is never offered. The app only looks at the latest published release, which is now the one before (copies older than that one are offered that one, as usual).
+- **Downloaded it but not installed** (an "Update ready" waiting, or an automatic install due at the next start): the copy is withdrawn. Every check, and every install just before it starts, looks at the newest signed release; when that names a lower version than the downloaded copy, the copy's release must have been pulled (version numbers are never reused), so it is deleted instead of installed (`updater.withdraw_if_pulled`, logged as "was withdrawn after it was downloaded"). Only a correctly signed manifest can withdraw anything. A computer that is offline at that moment cannot know, and installs it as before.
+- **Already installed it:** it keeps running the bad version until the fix arrives.
+
+Its tag stays, on purpose: the **Protect version tags** ruleset stops version tags being deleted or moved, and that version number is used up for good (people may be running it). Numbering takes care of this by itself: versions are counted from the highest version any release **or tag** has used (`.github/scripts/version-base.sh`), while builds are still tested against the newest published release (`previous-release.sh`). So after pulling 0.1.5, the next merge to `main` builds as **0.1.6**, tested against v0.1.4, and a normal **patch** Publish ships the fix, which copies on the bad 0.1.5 are offered like everyone else. If the bad version cannot update itself, see "A release that old versions can no longer survive" below.
 
 ## Checking a branch
 
@@ -141,10 +165,10 @@ Every copy older than the floor then treats the update as required: it downloads
 - Both: a computer without WebView2 (Windows) falls back to the browser with the tray working as before, and
   `/api/about` says `"shell": "browser"`.
 - Windows: an automatic install of an app run from a folder inside Downloads, with Explorer open on it. A launch-time install from such a folder failed once (the cause was never recorded; a security tool or Explorer holding the folder, or a second launch during the swap, is the likely one) and left the release marked as given up for good; it is now a wait of a day (a week after later give-ups) that "Check now" ends at once, and the helper's reason (the operating system's own error text) is written to the log. Opening the app again while the helper is swapping folders can still make the swap fail (no guard against it yet). Only copies of the app that include this change protect the install that follows; one without it still needs `updates\state.json` deleted by hand.
-- The first CI-signed release: that the `sign` job's signature verifies in installed copies (the update rehearsal proves the updater path with a throwaway key; the real key is first used by the first Publish release).
 
 ## Proven on real machines
 
 - The full update loop with real releases on Windows and on an Intel Mac, with automatic installing off (Install and restart) and on (applied at next launch).
 - The same loop on an Apple Silicon Mac: the manual check, the automatic check, the update dialog's button and the Settings button all worked. The old OS-level "Updating Lit Review" window appeared when an update applied at startup but disappeared too fast to read (about 2 seconds on an Intel Mac, and it appeared a few seconds late), which is why launch installs now show the same "Installing the update" dialog in the browser instead. It ran from the `/Applications` folder, so the swap and relaunch work from there. The updated app was not distrusted by macOS (no Gatekeeper block or "damaged" warning) and ran straight away, so the ad hoc signature survives `ditto` extraction on Apple Silicon. No App Management permission prompt appeared during the update; it just worked. The first install (from the `.dmg`) did show macOS's "app is not trusted" warning, as expected for an unnotarized build, but the in-app update did not, because the updater downloads and extracts the app itself.
 - The update rehearsal (`packaging/update_rehearsal.py`) on Windows, from the real v0.1.3 release to a local 0.1.4 build: Check now, staged, Install, the new version answering and the old folder removed.
+- The whole CI/CD pipeline with v0.1.4 (November 2026): CI built and tested it on `main` (including the update rehearsal from v0.1.3 on all three platforms), Publish release with patch shipped those files, and the `sign` job (after Approve) signed it with the key from the `release` environment, published and verified it. `sign_release.py --verify v0.1.4` agreed, and installed v0.1.3 copies updated themselves to it through the app on Windows and on an Intel Mac. Not yet tried by hand: the same on an Apple Silicon Mac (CI's rehearsal passes there).

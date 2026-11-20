@@ -151,8 +151,10 @@ jobs:
           git cat-file -e "$sha^{commit}" 2>/dev/null || fail "The draft '$title' points at $sha, which is not in this repository."
           git merge-base --is-ancestor "$sha" origin/main || fail "The draft '$title' was built from $sha, which is not on main (was main force-pushed?). Merge to main again to get a new Candidate."
 
+          # Tested against: the newest published release. Numbered from: the highest version any
+          # release or tag has used (a pulled release's tag stays), as ci.yml does.
           previous="$(bash .github/scripts/previous-release.sh)"
-          base="${previous#v}"
+          base="$(bash .github/scripts/version-base.sh)"
           base="${base:-0.0.0}"
           IFS=. read -r major minor patch <<< "$base"
           case "$BUMP" in
@@ -165,7 +167,7 @@ jobs:
 
           if [ "$BUMP" = "patch" ]; then
             rebuild=false
-            [ "$built" = "$version" ] || fail "The Candidate was built as $built, but the next patch after ${previous:-nothing} is $version. Re-run the latest CI run on main to get a new Candidate."
+            [ "$built" = "$version" ] || fail "The Candidate was built as $built, but the next patch after $base (the highest version used so far) is $version. Re-run the latest CI run on main to get a new Candidate."
             [ "$tested_against" = "${previous:-none}" ] || fail "The Candidate was tested against $tested_against, but the newest release is ${previous:-none}. Re-run the latest CI run on main."
           else
             rebuild=true
@@ -175,7 +177,9 @@ jobs:
             [ "$sha" = "$GITHUB_SHA" ] || fail "main has commits after the Candidate (${sha::7}, main is at ${GITHUB_SHA::7}); a $BUMP release rebuilds, so wait for CI on main to finish (it makes a newer Candidate), then run Publish release again."
           fi
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
-            fail "Tag v$version already exists. If it is left over from something else, delete it (git push --delete origin v$version) and run this again."
+            # Cannot normally happen (the base counts every vX.Y.Z tag); a tag pushed since then.
+            # Version tags cannot be deleted (ruleset), so the way past it is a higher version.
+            fail "Tag v$version appeared while this ran (the version base counts every vX.Y.Z tag). Run CI on main again (it numbers the Candidate past that tag), then publish."
           fi
 
           # Claim the draft, so CI's draft job won't delete it if a merge lands while this

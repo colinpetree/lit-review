@@ -1,0 +1,3 @@
+# Shell scripts keep Unix line endings in every checkout, including Windows ones (core.autocrlf
+# would otherwise give them CRLF, which bash and shellcheck reject). CI runs them on Linux.
+*.sh text eol=lf

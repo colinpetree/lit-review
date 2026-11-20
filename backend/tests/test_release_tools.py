@@ -372,11 +372,23 @@ class TestWorkflow:
         needs = next(line for line in job(self.CI, "draft").splitlines() if "needs:" in line)
         assert "dependency-review" not in needs
 
-    def test_versions_come_from_published_releases_not_tags(self):
+    def test_builds_are_tested_against_the_newest_published_release(self):
+        # The upgrade test, the rehearsal and the dependency notes need a release's downloads.
         script = (ROOT / ".github" / "scripts" / "previous-release.sh").read_text(encoding="utf-8")
         assert "--exclude-drafts --exclude-pre-releases" in script and "merge-base --is-ancestor" in script
         assert ".github/scripts/previous-release.sh" in self.CI and ".github/scripts/previous-release.sh" in self.PUBLISH
         assert "tags:" not in self.PUBLISH.split("\njobs:")[0]  # a pushed tag starts nothing
+
+    def test_a_version_number_is_never_reused(self):
+        # A pulled release's tag stays (the tag ruleset forbids deleting it) and copies that installed
+        # it run that version, so numbering counts every vX.Y.Z tag as well as published releases.
+        script = (ROOT / ".github" / "scripts" / "version-base.sh").read_text(encoding="utf-8")
+        assert "previous-release.sh" in script and "git tag --list 'v*'" in script
+        assert r"^v[0-9]+\.[0-9]+\.[0-9]+$" in script  # test-build tags (vX.Y.Z-test....) do not count
+        for text in (job(self.CI, "prepare"), job(self.PUBLISH, "plan")):
+            assert 'base="$(bash .github/scripts/version-base.sh)"' in text
+            assert 'base="${previous#v}"' not in text
+        assert "git push --delete origin" not in self.PUBLISH  # version tags cannot be deleted
 
     def test_keys_are_ignored_by_git(self):
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")

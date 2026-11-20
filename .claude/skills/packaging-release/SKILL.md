@@ -81,9 +81,11 @@ gitignored.
   come from platformdirs with app name `lit-review` (`credentials.APP_NAME`), so a packaged copy sees
   the same database and keys as a source run: do not change that name (a test pins it).
 - **Version:** `version.py` says `0.0.0-dev`; the build workflow (`build-test.yml`) writes in the version
-  its caller decided, so no person ever types one: CI builds `main` as the next patch after the newest
-  published release (`.github/scripts/previous-release.sh`), pull requests as `<prev>-ci.<sha>`, branch test
-  builds as `<prev>-test.<branch>.<sha>`, and Publish release a minor/major rebuild as the new version. Any
+  its caller decided, so no person ever types one. Numbering counts on from the highest X.Y.Z any published
+  release or any `vX.Y.Z` tag has used (`.github/scripts/version-base.sh`: a pulled release's tag is protected and
+  stays, and its number must never be reused); builds are tested against the newest published release
+  (`.github/scripts/previous-release.sh`). CI builds `main` as the next patch, pull requests as `<base>-ci.<sha>`,
+  branch test builds as `<base>-test.<branch>.<sha>`, and Publish release a minor/major rebuild as the new version. Any
   version `updates.parse_version` rejects (dev, `-ci.`, `-test.`) never updates and never sends usage counts.
   The Mac bundle's version keys get only the numeric part (`BUNDLE_VERSION` in `pyinstaller.spec`).
   `GET /api/about` returns the version and the data and log folders (Settings, "Software and Updates").
@@ -115,7 +117,10 @@ gitignored.
   automatic installing on), worded "There is an update that is ready to install. This update will be applied automatically on the next start.", with no special banner and no "required" wording (it never locks anyone out of their data;
   only a failed install shows a banner, with the manual link). There is deliberately **no
   quit-time swap** (it races a relaunch, can be killed at logoff, and would raise the macOS App Management prompt while
-  exiting). `state.json` in `<data>/updates/` counts attempts: a version that fails twice is marked `failed` (with `failed_at`, and `failures` counting how often) and left alone, but only for a wait (`FAILED_RETRY_SECONDS` 24 h, then `FAILED_RETRY_LATER_SECONDS` 7 days), after which it is tried afresh; "Check now" (`let_failed_install_retry`, which also clears `install_failed`, else the pass stops at the failure message) ends the wait at once, and the staged copy is kept so no new download is needed. Whatever reads or changes that file holds `_state_lock`. A different running version than last time (`state["running"]`) clears the counts. `take_result` logs the helper's reason, which now ends in the operating system's own error text (`swap` returns `(outcome, detail)`). The helper that runs an update is the **old** install's, so changes to it (and to `take_result`, which runs in the old app after a rollback) only protect updates made from a version that has them. The helper (`packaging/update_helper.py`, stdlib only, built by the workflow into `update-helper[.exe]` and
+  exiting). **A pulled release is withdrawn:** `fetch_manifest` (every check) and `start_apply` (every install,
+  button or launch, best effort and skipped when offline) call `withdraw_if_pulled`, which deletes a staged copy
+  whose version is higher than the newest correctly signed release (only possible if its release was deleted on
+  GitHub, since numbers are never reused). `state.json` in `<data>/updates/` counts attempts: a version that fails twice is marked `failed` (with `failed_at`, and `failures` counting how often) and left alone, but only for a wait (`FAILED_RETRY_SECONDS` 24 h, then `FAILED_RETRY_LATER_SECONDS` 7 days), after which it is tried afresh; "Check now" (`let_failed_install_retry`, which also clears `install_failed`, else the pass stops at the failure message) ends the wait at once, and the staged copy is kept so no new download is needed. Whatever reads or changes that file holds `_state_lock`. A different running version than last time (`state["running"]`) clears the counts. `take_result` logs the helper's reason, which now ends in the operating system's own error text (`swap` returns `(outcome, detail)`). The helper that runs an update is the **old** install's, so changes to it (and to `take_result`, which runs in the old app after a rollback) only protect updates made from a version that has them. The helper (`packaging/update_helper.py`, stdlib only, built by the workflow into `update-helper[.exe]` and
   shipped inside the app) is copied out of the install folder and run with an argument list: wait for the old process,
   rename install to `.old`, new to install (retried), start the new copy with `--after-update` (it waits up to 30 s for
   the instance lock instead of handing over), wait for `started.json` naming the new version (written by `main()` once
@@ -186,16 +191,27 @@ gitignored.
     browser walk of the frozen app (Windows: `packaging/browser_test.py`, `backend/ci_fixture.py`,
     `frontend/scripts/verify-app.mjs`), `packaging/upgrade_test.py` (the previous release's database), and for a
     release version `packaging/update_rehearsal.py` (the previous release updates itself to this build through
-    `LIT_REVIEW_UPDATE_BASE`/`LIT_REVIEW_UPDATE_PUBKEY` and a throwaway key). These share `packaging/app_runner.py`
-    (throwaway folders, no browser/tray/dialog, testing switch with the update thread off). A final `collect` job
+    `LIT_REVIEW_UPDATE_BASE`/`LIT_REVIEW_UPDATE_PUBKEY` and a throwaway key; it waits on the old copy after Install,
+    because on macOS an exited child stays a zombie until collected and the helper's `os.kill(pid, 0)` would count it
+    as still running). These share `packaging/app_runner.py`
+    (throwaway folders, no browser/tray/dialog, testing switch with the update thread off). The build takes no `ref`:
+    it always builds the run's own commit (CodeQL flags a passed-in commit as cache poisoning). A final `collect` job
     requires exactly 3 zips and 2 disk images, writes `SHA256SUMS.txt` and `dependency-changes.md`
     (`.github/scripts/dependency_diff.py`). The `.dmg` is what people download; the `.zip` stays for the updater,
     whose signed manifest must list the zips only.
-  - `release.yml`, **Publish release** (by hand, patch/minor/major): claims the Candidate; patch ships its files,
-    minor/major rebuilds that commit with the new version (only if it is `main`'s newest); makes the draft `Lit Review
-    X.Y.Z` (tag set, created only on publish) with the unsigned manifest; the `sign` job (environment `release`,
-    waits for Approve, hash-pinned cryptography only) signs, publishes and verifies.
+  - `release.yml`, **Publish release** (by hand, patch/minor/major, a `required_update` checkbox that sets the
+    manifest's `min_version` to the version published, and a `notice`): claims the Candidate; patch ships its files,
+    minor/major rebuilds with the new version (only if the Candidate is the run's own commit, i.e. `main`'s newest when
+    started); makes the draft `Lit Review X.Y.Z` (tag set, created only on publish) with the unsigned manifest; the
+    `sign` job (environment `release`, waits for Approve, hash-pinned cryptography only, explicit `if:` because a
+    skipped `build` would otherwise skip it) signs, publishes and verifies. First used for v0.1.4 (November 2026),
+    which then updated real installs on Windows and an Intel Mac.
   - `codeql.yml`, `dependency-audit.yml` (monthly), `.github/dependabot.yml`.
+  - Typical times (November 2026): a CI run 15 to 20 minutes, set by the Windows backend tests with coverage (16 to
+    18; the job allows 45); the builds 4 (Windows), 4 to 6 (Apple Silicon) and 8 to 9 (Intel) minutes; e2e about 2;
+    a patch Publish about a minute each side of the Approve.
+  - `main` has two rulesets (see RELEASING.md): a pull request and the CI checks are required, and `v*` tags (except
+    test builds' `v*-test.*`) cannot be deleted or moved. Renaming a CI job means renaming its required check too.
   **Read-only start-up check:** a packaged Mac app that finds its own volume read-only (the mounted disk
   image, a Gatekeeper-translocated copy, read-only media; `mac_app.running_from_read_only_volume`, via
   `statvfs`) shows `RUN_FROM_INSTALLER_MESSAGE` and exits 1 in `main()`, after the `--self-check` branch and

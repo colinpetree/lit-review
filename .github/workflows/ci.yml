@@ -81,8 +81,11 @@ jobs:
           elif [ "$EVENT" = "push" ] && [ "$REF" = "refs/heads/main" ]; then mode=main;
           else mode=ci; fi
 
+          # What this build is tested against (upgrade test, rehearsal, dependency notes): the
+          # newest published release. What it is numbered from: the highest version already used
+          # by a release or a tag (a pulled release's tag stays), so a number is never reused.
           previous="$(bash .github/scripts/previous-release.sh)"
-          base="${previous#v}"
+          base="$(bash .github/scripts/version-base.sh)"
           base="${base:-0.0.0}"
           IFS=. read -r major minor patch <<< "$base"
           sha7="${GITHUB_SHA::7}"
@@ -125,7 +128,8 @@ jobs:
             echo "| Mode | \`$mode\` |"
             echo "| Branch | \`$BRANCH\` @ \`$sha7\` |"
             echo "| Version | **$version** |"
-            echo "| Previous release | ${previous:-none} |"
+            echo "| Tested against (newest published release) | ${previous:-none} |"
+            echo "| Highest version used so far (releases and tags) | ${base} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Fast checks, alongside the builds, so a typo fails in about a minute.

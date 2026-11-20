@@ -914,6 +914,93 @@ class TestStartApply:
         assert updater.status()["state"] == "staged"
 
 
+class TestAPulledReleaseIsNotInstalled:
+    """A release deleted on GitHub after some copies downloaded it (RELEASING.md, "Pulling a bad
+    release"): the newest signed release then names a LOWER version than the staged copy, which can
+    only mean the staged one was pulled, so it is withdrawn instead of installed."""
+
+    def test_a_staged_copy_newer_than_what_is_published_is_withdrawn(self, staged):
+        assert updater.withdraw_if_pulled("0.1.5") == "0.2.0"
+        assert "staged" not in updater.load_state() and not Path(staged["dir"]).exists()
+
+    @pytest.mark.parametrize("published", ["0.2.0", "0.3.0", None, "not-a-version"])
+    def test_anything_else_keeps_it(self, staged, published):
+        # The same or a newer release is published, or there was no signed answer at all.
+        assert updater.withdraw_if_pulled(published) is None
+        assert updater.load_state()["staged"]["version"] == "0.2.0" and Path(staged["dir"]).exists()
+
+    def test_its_install_counts_and_failure_mark_go_with_it(self, staged):
+        state = updater.load_state()
+        state["attempts"] = {"0.2.0": 1, "0.1.9": 2}
+        state["failed"], state["failed_at"] = "0.2.0", 1.0
+        updater.save_state(state)
+        updater.withdraw_if_pulled("0.1.5")
+        state = updater.load_state()
+        assert state["attempts"] == {"0.1.9": 2} and "failed" not in state
+
+    def test_the_check_withdraws_it_from_a_correctly_signed_manifest_only(self, staged, monkeypatch):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        import base64
+
+        key = Ed25519PrivateKey.generate()
+        public = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
+        monkeypatch.setattr(um, "PUBLIC_KEYS", [public])
+        raw = json.dumps({"format": 1, "version": "0.1.5", "tag": "v0.1.5", "released": "2026-11-20", "notice": "",
+                          "assets": [{"platform": "windows", "name": "Lit-Review-0.1.5-Windows.zip", "size": 1,
+                                      "unpacked_size": 1, "sha256": SHA}]}).encode()
+        good = base64.b64encode(key.sign(um.SIGNATURE_PREFIX + raw))
+        files = {"update-manifest.json": raw, "update-manifest.json.sig": b"bm90IGEgc2lnbmF0dXJl"}
+        monkeypatch.setattr(updater, "_fetch_small", lambda url, limit: files[url.rsplit("/", 1)[-1]])
+
+        with pytest.raises(um.ManifestError):  # a forged answer is refused and withdraws nothing
+            updater.fetch_manifest("0.1.0")
+        assert updater.load_state()["staged"]["version"] == "0.2.0"
+
+        files["update-manifest.json.sig"] = good
+        manifest, _ = updater.fetch_manifest("0.1.0")  # 0.1.5 is newer than 0.1.0: offered as usual
+        assert manifest.version == "0.1.5" and "staged" not in updater.load_state()
+
+    def test_installing_checks_once_more_and_refuses_a_pulled_release(self, staged, monkeypatch):
+        # A staged copy can wait for days, and an automatic install runs at launch before any check.
+        monkeypatch.setattr(updater, "published_version", lambda: "0.1.5")
+        launched = []
+        with pytest.raises(updater.UpdateError, match="0.2.0 was withdrawn"):
+            updater.start_apply(launch=lambda s: launched.append(s))
+        assert launched == [] and "staged" not in updater.load_state()
+        assert updater.status()["state"] == "idle"
+        updater.stop_applying()  # what the launch path does next: the page shows nothing to install
+        assert updater.status()["state"] == "idle"
+
+    def test_installing_still_works_offline(self, staged, monkeypatch):
+        def offline():
+            raise updater.UpdateError("Could not reach GitHub")
+
+        monkeypatch.setattr(updater, "published_version", offline)
+        launched = []
+        updater.start_apply(launch=lambda s: launched.append(s) or "proc")
+        assert launched == [staged] and updater.status()["state"] == "applying"
+
+    def test_the_last_look_is_quick(self, monkeypatch):
+        # It runs while the app is paused for the restart: a slow GitHub must not hold it up long.
+        seen = []
+
+        def fake_open(url, headers=None, stream=False, timeout=None):
+            seen.append(timeout)
+            return Resp(404)
+
+        monkeypatch.setattr(updater, "_open", fake_open)
+        with pytest.raises(um.ManifestError):
+            updater.published_version()
+        assert seen == [updater.PREINSTALL_CHECK_TIMEOUT] and sum(updater.PREINSTALL_CHECK_TIMEOUT) <= 10
+
+    def test_installing_goes_ahead_when_it_is_still_the_newest(self, staged, monkeypatch):
+        monkeypatch.setattr(updater, "published_version", lambda: "0.2.0")
+        launched = []
+        updater.start_apply(launch=lambda s: launched.append(s) or "proc")
+        assert launched == [staged]
+
+
 class TestAfterRestart:
     def test_marker_is_written_only_by_the_version_that_was_staged(self, staged, monkeypatch):
         monkeypatch.setattr(updater.version, "__version__", "0.1.0")

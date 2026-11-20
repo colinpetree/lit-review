@@ -250,13 +250,14 @@ def _host_ok(url):
     return parsed.scheme == "https" and parsed.hostname in ALLOWED_HOSTS
 
 
-def _open(url, headers=None, stream=False):
+def _open(url, headers=None, stream=False, timeout=source_http.REQUEST_TIMEOUT):
     """GET `url`, following redirects by hand so every hop is checked against the allowlist."""
     for _ in range(MAX_REDIRECTS + 1):
         if not _host_ok(url):
             raise UpdateError(f"refusing to fetch from {urlparse(url).hostname}")
         try:
-            response = source_http.get("GitHub", url, headers=dict(headers or {}), stream=stream, allow_redirects=False)
+            response = source_http.get("GitHub", url, timeout=timeout, headers=dict(headers or {}), stream=stream,
+                                       allow_redirects=False)
         except source_http.SourceError as exc:
             raise UpdateError(str(exc)) from exc
         if response.status_code in (301, 302, 303, 307, 308):
@@ -274,15 +275,69 @@ def _open(url, headers=None, stream=False):
 
 def fetch_manifest(running=None):
     """The verified Manifest for a release newer than the running version, or UpdateError /
-    ManifestError. Asks github.com directly (not the rate-limited API)."""
+    ManifestError. Asks github.com directly (not the rate-limited API). On the way it forgets a
+    staged copy whose release has since been pulled (withdraw_if_pulled)."""
     running = running or version.__version__
     raw = _fetch_small(manifest_url("update-manifest.json"), um.MAX_MANIFEST_BYTES)
     signature = _fetch_small(manifest_url("update-manifest.json.sig"), 4096)
+    withdraw_if_pulled(_signed_version(raw, signature))
     return um.load(raw, signature, running), raw
 
 
-def _fetch_small(url, limit):
-    response = _open(url)
+def _signed_version(raw, signature):
+    """The version a correctly signed manifest names, or None (bad signature, unreadable)."""
+    if not um.verify_signature(raw, signature):
+        return None
+    try:
+        return um.parse(raw).version
+    except um.ManifestError:
+        return None
+
+
+# The last look before installing runs while the app is paused for the restart, so it must be quick:
+# a slow GitHub means "could not ask", and the install goes ahead as it would offline.
+PREINSTALL_CHECK_TIMEOUT = (3, 5)
+
+
+def published_version(timeout=PREINSTALL_CHECK_TIMEOUT):
+    """The version of the newest published, correctly signed release, or None. Raises UpdateError
+    (or anything the network does) when it cannot be asked within `timeout` per request."""
+    raw = _fetch_small(manifest_url("update-manifest.json"), um.MAX_MANIFEST_BYTES, timeout)
+    signature = _fetch_small(manifest_url("update-manifest.json.sig"), 4096, timeout)
+    return _signed_version(raw, signature)
+
+
+def withdraw_if_pulled(published):
+    """A release that was pulled (deleted on GitHub after it was published) must not install on
+    computers that had already downloaded it. The newest signed release only ever names a LOWER
+    version than the staged copy when the staged copy's release was pulled (versions are never
+    reused, see .github/scripts/version-base.sh), so then the staged copy is deleted and forgotten.
+    Returns the withdrawn version, or None. `published` None (no answer, or no valid signature)
+    changes nothing: only a signed answer can withdraw anything."""
+    latest = parse_version(published) if published else None
+    if latest is None:
+        return None
+    with _state_lock:
+        state = load_state()
+        staged = state.get("staged")
+        theirs = parse_version(staged.get("version")) if isinstance(staged, dict) else None
+        if theirs is None or theirs <= latest:
+            return None
+        withdrawn = staged["version"]
+        discard_staged(state)
+        if isinstance(state.get("attempts"), dict):
+            state["attempts"].pop(withdrawn, None)
+        if state.get("failed") == withdrawn:
+            state.pop("failed", None)
+            state.pop("failed_at", None)
+        save_state(state)
+    log.warning("Version %s was withdrawn after it was downloaded (the newest release is %s): not installing it.",
+                withdrawn, published)
+    return withdrawn
+
+
+def _fetch_small(url, limit, timeout=None):
+    response = _open(url) if timeout is None else _open(url, timeout=timeout)
     try:
         if response.status_code == 404:
             raise um.ManifestError("the latest release has no signed update manifest")
@@ -870,7 +925,19 @@ def acknowledge_installed():
 
 def start_apply(*, launch=launch_helper):
     """The "Install and restart" button: start the helper for what is staged. The caller (the
-    route) has quiesced the server and quits afterwards. Raises UpdateError if nothing is ready."""
+    route) has quiesced the server and quits afterwards. Raises UpdateError if nothing is ready.
+
+    First, one last look at what is published, because a staged copy can wait days (and an
+    automatic install runs at launch, before any check): if its release was pulled meanwhile, it
+    is withdrawn instead of installed. If GitHub cannot be asked (offline), it installs as before."""
+    try:
+        pulled = withdraw_if_pulled(published_version())
+    except Exception as exc:  # noqa: BLE001 - offline or GitHub unreachable: a best-effort check only
+        log.info("Could not check the release is still published before installing: %s", source_http.redact(str(exc)))
+        pulled = None
+    if pulled:
+        _set(state="idle", latest=None, notice="", url=None, required=False, progress=0.0, error="")
+        raise UpdateError(f"Version {pulled} was withdrawn after it was downloaded, so it was not installed.")
     with _state_lock:
         state = load_state()
         entry = state.get("staged")

@@ -466,10 +466,13 @@ saves confirmed good calls as well.
 
 ## Distribution / packaging
 
-Status: built. A pushed tag (`v0.1.0`) builds a Windows zip and, for each Mac, a disk image (what people
-install from) and a zip (for the in-app updater) on GitHub Actions and makes a
-draft release (`.github/workflows/release.yml`); the `packaging-release` skill (`.claude/skills/packaging-release/SKILL.md`) is the working
-description and `INSTALL.md` is the user's guide. What was decided: a hidden app with a tray / menu-bar
+Status: built. GitHub Actions builds and tests every pull request and every merge to `main`
+(`.github/workflows/ci.yml` with `build-test.yml`): a Windows zip and, for each Mac, a disk image (what people
+install from) and a zip (for the in-app updater). Each passing merge to `main` is built as the next patch
+version and kept as a "Candidate" draft; "Publish release" (`release.yml`) ships it after the maintainer
+approves, and GitHub signs the update manifest (first done with v0.1.4, November 2026). `RELEASING.md` is the
+maintainer's guide, the `packaging-release` skill (`.claude/skills/packaging-release/SKILL.md`) is the working
+description, and `INSTALL.md` is the user's guide. What was decided: a hidden app with a tray / menu-bar
 icon (no console), unsigned builds (ad-hoc signed on Mac) with a first-launch guide, targets Windows plus
 macOS Apple Silicon and Intel, a public repo, an always-on update check with a signed in-app update (`packaging-release` skill, "Updates"; `RELEASING.md`), and
 the FSL-1.1-MIT license (free for any use except a competing commercial product; each version becomes MIT
@@ -494,8 +497,9 @@ acceptable UX. Plan:
   must be built on that OS. Solved with a GitHub Actions workflow matrixed across
   `windows-latest`, `macos-latest` (Apple Silicon), and optionally an Intel Mac
   runner/`macos-13` — GitHub-hosted runners are free for this use case, so no need to
-  own all target machines. Workflow builds on tag push, attaches each
-  OS's zipped `--onedir` output as an asset on a GitHub Release.
+  own all target machines. (Original plan: build on a tag push and attach each OS's zipped
+  `--onedir` output to a GitHub Release. Built instead: CI builds every change, and releases are
+  promoted from a tested Candidate by "Publish release"; see the Status paragraph above.)
 - **Distribution**: users download the release asset for their OS directly from the
   GitHub Releases page — no `git clone`, no terminal.
 - **Update checks**: superseded by the signed in-app updater (see `packaging-release` skill, "Updates"). The app always checks

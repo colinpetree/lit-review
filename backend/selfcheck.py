@@ -44,14 +44,29 @@ def _check_sdk_clients():
 
 
 def _check_certificates():
+    """Both ways the app checks certificates work in this build. `requests` (the paper sources,
+    the updater) uses certifi's bundled file. The AI SDKs send through httpx2, which on Windows
+    and macOS asks the operating system's own certificate store through `truststore` (it loads
+    the system's libraries by ctypes, so a build can lack a piece without failing to start).
+
+    This checks the build, never this computer's settings: httpx2 uses a file named by
+    SSL_CERT_FILE or SSL_CERT_DIR instead of the system store when one is set, which is a choice
+    the user made and works. The updater runs this on the user's computer and refuses an update
+    that fails it, so a check of which context httpx2 picks here would block updates for them."""
+    import ssl
+
     import certifi
-    import httpx
+    import httpx2
     import requests
 
     for path in (certifi.where(), requests.utils.DEFAULT_CA_BUNDLE_PATH):
         if not os.path.isfile(path):
             raise FileNotFoundError(f"certificate bundle missing: {path}")
-    httpx.Client().close()  # loads the certificate store
+    if sys.platform in ("win32", "darwin"):
+        import truststore
+
+        truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    httpx2.Client().close()
 
 
 def _check_storage():

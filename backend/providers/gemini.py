@@ -2,7 +2,7 @@
 
 import json
 
-import httpx
+import httpx2
 from google import genai
 from google.genai import errors, types
 
@@ -50,7 +50,9 @@ def _generate(client, **kwargs):
                 retryable=True,
             ) from exc
         raise LLMError(f"Gemini API error: {message or exc.code}", retryable=bool(exc.code and exc.code >= 500)) from exc
-    except httpx.TransportError as exc:
+    except httpx2.TransportError as exc:
+        # google-genai sends through httpx2 (a fork of httpx under its own name since 3.x; its
+        # errors are not httpx's) and passes its connection errors through unwrapped.
         raise LLMError("Failed to reach Gemini. Check your network connection.", retryable=True) from exc
 
 

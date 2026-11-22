@@ -326,6 +326,26 @@ class TestSelfCheck:
         assert report["ok"] is False
         assert "anyio" in report["checks"]["sdk clients"]
 
+    @pytest.mark.skipif(sys.platform not in ("win32", "darwin"), reason="the system store is used on Windows and macOS only")
+    def test_a_build_that_cannot_use_the_systems_certificates_fails(self, monkeypatch):
+        import truststore
+
+        def broken(*args):
+            raise OSError("could not load the system's certificate library")
+
+        monkeypatch.setattr(truststore, "SSLContext", broken)
+        with pytest.raises(OSError, match="certificate library"):
+            selfcheck._check_certificates()
+
+    @pytest.mark.parametrize("variable", ["SSL_CERT_FILE", "SSL_CERT_DIR"])
+    def test_a_computer_with_its_own_certificate_setting_still_passes(self, monkeypatch, variable):
+        # The updater runs the self-check on the user's computer, so it must not fail because of
+        # a setting there (common on company networks): that would block every update for them.
+        import certifi
+
+        monkeypatch.setenv(variable, certifi.where() if variable == "SSL_CERT_FILE" else str(Path(certifi.where()).parent))
+        selfcheck._check_certificates()
+
     def test_the_flag_runs_it_without_starting_the_app(self, monkeypatch):
         monkeypatch.setattr(selfcheck, "run", lambda: 7)
         assert app_module.main(["--self-check"]) == 7

@@ -1,4 +1,4 @@
-# Lit Review — Project Plan
+# Lit Review: Project Plan
 
 ## Problem
 
@@ -6,7 +6,7 @@ Literature review for a STEM PhD is slow: broad keyword searches return hundreds
 loosely-relevant papers, and manually reading abstracts to find the handful that are
 actually novel/relevant is tedious. Goal: an app that takes a research question or topic,
 pulls a wide candidate set from real scholarly databases, and uses an LLM to filter/rank
-that set down to a small, high-yield shortlist — with reasoning attached, not a black-box
+that set down to a small, high-yield shortlist, with reasoning attached, not a black-box
 score. Also useful beyond active lit review: any researcher wanting to stay current on new
 publications in their field can run the same search periodically to surface recent
 additions.
@@ -16,7 +16,7 @@ Discovery must come from real API results; the LLM's job is judging relevance/no
 those real abstracts, to avoid hallucinated citations.
 
 **Primary user**: any STEM graduate student or researcher doing literature review or
-tracking new publications in their field — the UX, setup, and packaging decisions throughout
+tracking new publications in their field. The UX, setup, and packaging decisions throughout
 this plan are optimized for someone who has never used a command line or downloaded code
 from GitHub before. Test data/candidates span multiple fields on purpose, so the design
 can't assume one discipline's databases or vocabulary: engineering (physical sciences), biology, and health/medicine. Secondary user: the maintainer, who
@@ -107,10 +107,10 @@ paper. See Phase 4 below for the design rationale.
 4. **Dedupe**: match across sources by DOI, fall back to title+year fuzzy match.
 5. **Relevance/novelty scoring**: LLM scores each candidate abstract against the original
    research question. Score should include a short rationale, not just a number, so the user
-   can sanity-check the ranking. Batch this — don't do one LLM call per paper if avoidable, to
+   can sanity-check the ranking. Batch this: don't do one LLM call per paper if avoidable, to
    control cost. Record token usage (input/output) and computed $ cost for every LLM call
    made during the run (query expansion + scoring), even though this won't be surfaced in
-   the main UI — see Cost tracking below.
+   the main UI; see Cost tracking below.
 6. **Shortlist**: sort by score, surface top K (e.g. 15-25) with rationale, citation count,
    year, source link. Everything else stays available but collapsed, not discarded.
 7. **Iteration**: originally planned as per-paper "yes/no/maybe" labels. Replaced by saved
@@ -119,7 +119,7 @@ paper. See Phase 4 below for the design rationale.
 
 ## Architecture
 
-Local-only, OS-agnostic (Windows/Mac/Linux), launched on demand by the machine owner —
+Local-only, OS-agnostic (Windows/Mac/Linux), launched on demand by the machine owner,
 no networking beyond outbound calls to the scholarly APIs and whichever AI provider is
 selected. Single-user and never exposed off localhost, but loopback is shared by every
 account on the computer and by every website open in the user's browser, so the app is
@@ -135,10 +135,10 @@ guarded (built; details and rationale in CLAUDE.md, "Architecture"):
   running, so Stop then Resume or a second tab cannot pay for the same work twice.
 - **Unusable data folder**: found at launch and explained plainly rather than as a traceback.
 
-- **Backend**: Python + Flask (existing, working stack — reused as-is from the other
+- **Backend**: Python + Flask (existing, working stack, reused as-is from the other
   project). Runs a local dev/WSGI server bound to `127.0.0.1` on a fixed or
   auto-selected port; app entry point opens the user's default browser to that URL via
-  `webbrowser.open()`, so there's no separate "installer" UX — just run the script.
+  `webbrowser.open()`, so there's no separate "installer" UX: just run the script.
 - **Frontend**: React 19 + Vite + Tailwind v3 + react-router, with lucide icons and
   self-hosted Source Sans 3 / Source Code Pro fonts. Pages: Paper Datasets
   (+ detail, with a New Dataset dialog), Grading Prompts (+ detail), Paper Evaluations (+ run results, with a New Evaluation dialog) and
@@ -154,7 +154,7 @@ guarded (built; details and rationale in CLAUDE.md, "Architecture"):
 - **Cost tracking**: every LLM call (query expansion + scoring) logs provider, model,
   input/output token counts, and computed $ cost against whichever dataset or analysis
   run it belongs to (see `LlmCall` in Data model below). Not necessarily shown anywhere
-  in the main results UI — the user doesn't need to think about it per search — but kept
+  in the main results UI (the user doesn't need to think about it per search), but kept
   in the DB so a separate view (e.g. a simple "usage" page, or just a direct query against
   the SQLite file) can show total spend over time. This is what makes the still-open
   per-search cost cap/estimate question (see Open questions) answerable from real data
@@ -194,7 +194,7 @@ guarded (built; details and rationale in CLAUDE.md, "Architecture"):
   per-search LLM cost/latency, but adds a second API/key to manage and a coordination
   question (Cohere's ranking vs. the LLM's own judgment could disagree on what's
   "relevant"). Not worth designing in before real usage data shows per-search LLM
-  cost is actually a problem — revisit in Phase 4 if so.
+  cost is actually a problem; revisit in Phase 4 if so.
 
 ## Data model (Phase 3)
 
@@ -487,21 +487,21 @@ acceptable UX. Plan:
 
 - **Packaging**: PyInstaller `--onedir` bundles the Flask backend + all Python deps +
   the built React/Vite/Tailwind static assets into a folder containing the executable
-  plus its supporting files per OS (`.exe` on Windows, binary on macOS/Linux) — no
+  plus its supporting files per OS (`.exe` on Windows, binary on macOS/Linux), no
   Python install required on the user's machine. Double-click the executable to
   launch; app opens the default browser to `127.0.0.1:<port>` itself. `--onedir`
   chosen over `--onefile` because `--onefile` silently re-extracts itself to a temp
   dir on *every* launch, which is slower and worse for an app the user double-clicks
-  repeatedly — a zipped folder is still a normal GitHub Releases download/unzip flow.
+  repeatedly; a zipped folder is still a normal GitHub Releases download/unzip flow.
 - **Cross-platform builds**: PyInstaller can't cross-compile, so each OS's executable
   must be built on that OS. Solved with a GitHub Actions workflow matrixed across
   `windows-latest`, `macos-latest` (Apple Silicon), and optionally an Intel Mac
-  runner/`macos-13` — GitHub-hosted runners are free for this use case, so no need to
+  runner/`macos-13`; GitHub-hosted runners are free for this use case, so no need to
   own all target machines. (Original plan: build on a tag push and attach each OS's zipped
   `--onedir` output to a GitHub Release. Built instead: CI builds every change, and releases are
   promoted from a tested Candidate by "Publish release"; see the Status paragraph above.)
 - **Distribution**: users download the release asset for their OS directly from the
-  GitHub Releases page — no `git clone`, no terminal.
+  GitHub Releases page, no `git clone`, no terminal.
 - **Update checks**: superseded by the signed in-app updater (see `packaging-release` skill, "Updates"). The app always checks
   GitHub for a signed release manifest, downloads a newer version in the background and installs it when the
   user clicks, or at the next start if they turned on automatic installing. The original v1 idea (a notice and
@@ -509,21 +509,24 @@ acceptable UX. Plan:
   swaps the folders after the app has quit.
 - **Lessons carried over from a prior project** (Flask +
   React/Tailwind, already has a working PyInstaller setup at
-  `backend/pyinstaller.spec`) — real gotchas worth not rediscovering the hard way:
+  `backend/pyinstaller.spec`): real gotchas worth not rediscovering the hard way:
   - *Hidden imports via `collect_all()`*: PyInstaller's static import analysis misses
     packages that load bindings dynamically at runtime. That repo runs `collect_all()`
     for `cryptography`, `anthropic`, `pydantic`, `pydantic_core`, `anyio`, and others,
     merging the returned `datas`/`binaries`/`hiddenimports` into the `Analysis` call.
     Expect the same treatment for `anthropic`, `openai`, and `google-genai` (and
-    possibly `pydantic`/`anyio` as transitive deps) — verify by actually running the
+    possibly `pydantic`/`anyio` as transitive deps); verify by actually running the
     frozen executable, not just a successful build, since these failures are runtime
     `ImportError`s a clean build won't catch.
   - *`certifi` cert bundle must be bundled as data, not just code*: `requests`/
     `anthropic`-style HTTPS calls fail cert verification once frozen unless `certifi`'s
     `cacert.pem` is included via `collect_data_files('certifi')`. This will bite every
-    one of our 3 AI providers plus OpenAlex/Semantic Scholar calls if skipped — easy to
+    one of our 3 AI providers plus OpenAlex/Semantic Scholar calls if skipped, easy to
     miss because dev mode works fine (uses the system Python's certifi) and it only
-    breaks in the packaged build.
+    breaks in the packaged build. (All three AI SDKs now send through `httpx2`, the last
+    being google-genai 3.x. On Windows and macOS `httpx2` checks certificates against the
+    system's own store through `truststore`; certifi's file is still what `requests` uses
+    for the paper sources and the updater.)
   - *Dynamic class-path loading*: not directly applicable (no gunicorn for a local
     desktop app), but the general lesson carries: anything selected by a string/
     class-path at runtime (rather than a static `import`) needs an explicit
@@ -531,17 +534,17 @@ acceptable UX. Plan:
     frozen.
   - *Not reused from that repo*: its frontend is React Router v7 in full SSR
     "framework mode" (streamed HTML, bot detection, CSP hash injection) built for a
-    deployed public site — overkill for this app's local single-page UI. Reuse its
+    deployed public site, overkill for this app's local single-page UI. Reuse its
     Tailwind/PostCSS config only, not its build pipeline. Likewise its backend deps
     (`flask-sqlalchemy`, `flask-login`, `psycopg2`, `gunicorn`, `stripe`, `authlib`)
     are for a multi-user deployed site with auth/payments and mostly don't apply here.
 
 ## Resolved decisions
 
-- **Hosting**: local-only, launched on demand by the machine owner — not deployed/hosted
+- **Hosting**: local-only, launched on demand by the machine owner, not deployed/hosted
   anywhere (no EC2, no server). Single-user, no auth/multi-tenancy needed.
 - **Distribution**: packaged as a standalone executable per OS via PyInstaller + GitHub
-  Actions, downloaded from GitHub Releases — no command line or `git clone` required of
+  Actions, downloaded from GitHub Releases, no command line or `git clone` required of
   the end user (see Distribution / packaging above).
 - **AI provider**: the user supplies their own API key, persisted to a single
   cross-platform encrypted local file (see Architecture, not the OS-native

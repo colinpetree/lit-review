@@ -90,7 +90,11 @@ gitignored.
   The Mac bundle's version keys get only the numeric part (`BUNDLE_VERSION` in `pyinstaller.spec`).
   `GET /api/about` returns the version and the data and log folders (Settings, "Software and Updates").
 - **`--self-check`** (`selfcheck.py`): imports every provider module (from `llm.PROVIDERS`), builds each
-  SDK client with a dummy key, loads the certificate stores, checks `static/index.html`, and writes JSON
+  SDK client with a dummy key, loads the certificate stores (certifi's file for `requests`; for the AI SDKs,
+  which send through `httpx2`, the system's own store through `truststore` on Windows and macOS; it checks
+  that `truststore` works in the build, not which store httpx2 picks, since a user's `SSL_CERT_FILE` or
+  `SSL_CERT_DIR` rightly changes that and the updater runs the self-check on their computer), checks
+  `static/index.html`, and writes JSON
   to `LIT_REVIEW_SELFCHECK_FILE`, exit code 0/1 (a windowed exe has no stdout). It cannot see
   everything lazy, so the release checklist also makes one real call per provider and per source.
 - **Updates** (`updater.py`, `update_manifest.py`, `app_settings.py`, `packaging/update_helper.py`).

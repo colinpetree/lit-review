@@ -2,7 +2,7 @@
 a refusal or an unreadable answer is not retried, since asking again would only be billed again."""
 
 import anthropic
-import httpx
+import httpx2
 import openai
 import pytest
 from google.genai import errors as genai_errors
@@ -11,7 +11,7 @@ from providers import LLMError, anthropic as anthropic_provider, gemini, openai_
 
 
 def response(status):
-    return httpx.Response(status, request=httpx.Request("POST", "http://localhost/test"))
+    return httpx2.Response(status, request=httpx2.Request("POST", "http://localhost/test"))
 
 
 def raising(exc):
@@ -51,7 +51,7 @@ class TestAnthropic:
     def test_rate_limits_and_server_trouble_are_worth_retrying(self):
         assert self.error(anthropic.RateLimitError("slow down", response=response(429), body=None)).retryable
         assert self.error(anthropic.InternalServerError("overloaded", response=response(529), body=None)).retryable
-        assert self.error(anthropic.APIConnectionError(request=httpx.Request("POST", "http://localhost/x"))).retryable
+        assert self.error(anthropic.APIConnectionError(request=httpx2.Request("POST", "http://localhost/x"))).retryable
 
     def test_a_rejected_key_or_bad_request_is_not(self):
         assert not self.error(anthropic.AuthenticationError("no", response=response(401), body=None)).retryable
@@ -65,7 +65,7 @@ class TestOpenAI:
     def test_rate_limits_and_server_trouble_are_worth_retrying(self):
         assert self.error(openai.RateLimitError("slow down", response=response(429), body=None)).retryable
         assert self.error(openai.InternalServerError("oops", response=response(500), body=None)).retryable
-        assert self.error(openai.APIConnectionError(request=httpx.Request("POST", "http://localhost/x"))).retryable
+        assert self.error(openai.APIConnectionError(request=httpx2.Request("POST", "http://localhost/x"))).retryable
 
     def test_a_rejected_key_or_bad_request_is_not(self):
         assert not self.error(openai.AuthenticationError("no", response=response(401), body=None)).retryable
@@ -79,7 +79,7 @@ class TestGemini:
     def test_rate_limits_server_trouble_and_dropped_connections_are_worth_retrying(self):
         assert self.error(genai_errors.APIError(429, {"error": {"message": "slow"}})).retryable
         assert self.error(genai_errors.APIError(503, {"error": {"message": "busy"}})).retryable
-        assert self.error(httpx.ConnectError("gone")).retryable
+        assert self.error(httpx2.ConnectError("gone")).retryable
 
     def test_a_rejected_key_is_not(self):
         assert not self.error(genai_errors.APIError(401, {"error": {"message": "no"}})).retryable

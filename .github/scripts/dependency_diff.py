@@ -2,7 +2,7 @@
 Markdown for the release notes and the workflow's job summary.
 
 Why: backend/requirements.txt pins only the packages it lists. The packages
-those pull in (httpx, pydantic, google-auth, ...) are not pinned, and every
+those pull in (httpx2, pydantic, google-auth, ...) are not pinned, and every
 build installs fresh, so a release can pick up a new version of one with
 nobody noticing. Showing exactly what moved is the next best thing to a lock.
 Copied from personal-website's .github/scripts/dependency-diff.py, with one

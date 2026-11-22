@@ -63,7 +63,7 @@ def no_retry_waits(monkeypatch):
 def block_network(monkeypatch):
     """Fail any attempt to reach somewhere other than this machine: connecting
     (blocking or not), sending a UDP datagram, or looking up a hostname. This
-    catches the provider SDKs too (they use httpx, not requests). Looking up the
+    catches the provider SDKs too (they use httpx2, not requests). Looking up the
     name is blocked as well, so a test fails the same way with or without
     internet access."""
     real = {

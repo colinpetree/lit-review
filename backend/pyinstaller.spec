@@ -39,8 +39,9 @@ COLLECT_ALL = [
     "pydantic",
     "pydantic_core",
     "anyio",
-    "httpx",
-    "httpcore",
+    "httpx2",  # what all three AI SDKs send through (google-genai since 3.x; httpx is gone)
+    "httpcore2",
+    "truststore",  # httpx2's certificate check on Windows and macOS: the system's own store
     "cryptography",
     "certifi",
     "pystray",
@@ -66,7 +67,7 @@ if sys.platform == "win32":
 elif sys.platform == "darwin":
     hiddenimports += ["webview.platforms.cocoa", "WebKit", "Quartz", "Security", "UniformTypeIdentifiers"]
 
-datas += collect_data_files("certifi")  # HTTPS fails once frozen without the certificate bundle
+datas += collect_data_files("certifi")  # requests' HTTPS fails once frozen without the certificate bundle
 datas += [(str(SPEC_DIR / "static"), "static")]  # the built frontend
 for tray_image in ("tray.png", "trayTemplate.png"):  # Windows tray icon, macOS menu-bar icon
     if (ICON_DIR / tray_image).is_file():

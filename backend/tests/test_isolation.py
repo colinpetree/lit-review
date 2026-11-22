@@ -74,12 +74,12 @@ def test_loopback_is_still_allowed():
 
 @pytest.mark.parametrize("url", ["https://example.com", "http://93.184.216.34"])
 def test_provider_sdk_traffic_is_blocked(url):
-    import httpx
+    import httpx2  # what all three AI SDKs send through
 
     # RuntimeError specifically: any other error (such as a DNS failure while
     # offline) would mean the guard was not what stopped the request.
     with pytest.raises(RuntimeError, match="reach the network"):
-        httpx.get(url, timeout=1)
+        httpx2.get(url, timeout=1)
 
 
 def test_requests_library_traffic_is_blocked():
